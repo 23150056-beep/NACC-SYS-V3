@@ -1,0 +1,498 @@
+from django.db.models import Q
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from accounts.models import Role
+from accounts.permissions import CanManageInstruments, ProgressRecordAccess
+from activity.models import ActivityLog
+from activity.services import log_activity
+from clinical.models import (
+    InstrumentCatalog, AgencyFormTemplate, ConsentRecord,
+    ClinicalInterviewRecord, ProblemEntry, PreAssessment,
+    PsychologicalReport, RemarkNote, TreatmentPlan, ResultEntry, CaseReferral,
+    OpinionnaireInvite,
+)
+from clinical.serializers import (
+    InstrumentCatalogSerializer, AgencyFormTemplateSerializer,
+    ConsentRecordSerializer, ClinicalInterviewRecordSerializer,
+    ProblemEntrySerializer, PreAssessmentSerializer,
+    PsychologicalReportSerializer, RemarkNoteSerializer,
+    TreatmentPlanSerializer, ResultEntrySerializer, CaseReferralSerializer,
+    OpinionnaireInviteSerializer,
+)
+from clinical.services import extract_pdf_text
+
+
+def _role(request):
+    return getattr(getattr(request.user, "role", None), "role_name", None)
+
+
+class InstrumentCatalogViewSet(viewsets.ModelViewSet):
+    """Title-only instrument catalog. Psychologists manage their own entries,
+    admins manage all (catalog governance)."""
+    permission_classes = [CanManageInstruments]
+    pagination_class = None
+    serializer_class = InstrumentCatalogSerializer
+
+    def get_queryset(self):
+        qs = InstrumentCatalog.objects.all()
+        if self.request.query_params.get("include_inactive") != "true":
+            qs = qs.filter(active=True)
+        if _role(self.request) == Role.PSYCHOLOGIST:
+            qs = qs.filter(Q(owner=self.request.user) | Q(owner__isnull=True))
+        return qs
+
+    def _log(self, obj, action_name):
+        log_activity(self.request.user, action_name, ActivityLog.RECORD,
+                     entity_type="Instrument", entity_label=obj.title, entity_id=obj.id)
+
+    def _assert_can_write(self, obj):
+        # Shared (owner=None) catalog entries are admin-managed; psychologists
+        # may only modify instruments they own.
+        if _role(self.request) == Role.PSYCHOLOGIST and obj.owner_id != self.request.user.id:
+            raise PermissionDenied(
+                "Shared instruments are managed by the administrator.")
+
+    def perform_create(self, serializer):
+        if _role(self.request) == Role.PSYCHOLOGIST:
+            obj = serializer.save(owner=self.request.user)
+        else:
+            # No owner selected means agency-wide shared instrument.
+            obj = serializer.save(owner=serializer.validated_data.get("owner"))
+        self._log(obj, ActivityLog.CREATED)
+
+    def perform_update(self, serializer):
+        self._assert_can_write(serializer.instance)
+        if _role(self.request) == Role.PSYCHOLOGIST:
+            # Force the owner so a psychologist can't self-promote their own
+            # instrument into the admin-only shared pool via owner=null (or
+            # hand it off to another user) by supplying "owner" in the body.
+            obj = serializer.save(owner=self.request.user)
+        else:
+            obj = serializer.save()
+        self._log(obj, ActivityLog.UPDATED)
+
+    def perform_destroy(self, instance):
+        self._assert_can_write(instance)
+        instance.delete()
+
+    @action(detail=True, methods=["post"])
+    def deactivate(self, request, pk=None):
+        obj = self.get_object()
+        self._assert_can_write(obj)
+        obj.active = False
+        obj.save(update_fields=["active", "updated_at"])
+        self._log(obj, ActivityLog.ARCHIVED)
+        return Response({"active": False}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    def activate(self, request, pk=None):
+        obj = self.get_object()
+        self._assert_can_write(obj)
+        obj.active = True
+        obj.save(update_fields=["active", "updated_at"])
+        return Response({"active": True}, status=status.HTTP_200_OK)
+
+
+class AgencyFormTemplateViewSet(viewsets.ModelViewSet):
+    """Agency-authored form templates (consent, clinical interview, …).
+    Same ownership rules as the catalog; attestation enforced by the serializer."""
+    permission_classes = [CanManageInstruments]
+    pagination_class = None
+    serializer_class = AgencyFormTemplateSerializer
+
+    def get_queryset(self):
+        qs = AgencyFormTemplate.objects.all()
+        if self.request.query_params.get("include_inactive") != "true":
+            qs = qs.filter(active=True)
+        form_type = self.request.query_params.get("type")
+        if form_type:
+            qs = qs.filter(form_type=form_type)
+        if _role(self.request) == Role.PSYCHOLOGIST:
+            qs = qs.filter(Q(owner=self.request.user) | Q(owner__isnull=True))
+        return qs
+
+    def _log(self, obj, action_name):
+        log_activity(self.request.user, action_name, ActivityLog.RECORD,
+                     entity_type="AgencyForm", entity_label=obj.title, entity_id=obj.id)
+
+    def _assert_can_write(self, obj):
+        # Shared (owner=None) official forms are admin-managed; psychologists
+        # may only modify templates they own.
+        if _role(self.request) == Role.PSYCHOLOGIST and obj.owner_id != self.request.user.id:
+            raise PermissionDenied(
+                "Official agency forms can only be edited by an administrator.")
+
+    def perform_create(self, serializer):
+        if _role(self.request) == Role.PSYCHOLOGIST:
+            obj = serializer.save(owner=self.request.user)
+        else:
+            obj = serializer.save(owner=serializer.validated_data.get("owner") or self.request.user)
+        self._log(obj, ActivityLog.CREATED)
+
+    def perform_update(self, serializer):
+        self._assert_can_write(serializer.instance)
+        if _role(self.request) == Role.PSYCHOLOGIST:
+            # Force the owner so a psychologist can't self-promote their own
+            # template into the admin-only shared pool via owner=null (or
+            # hand it off to another user) by supplying "owner" in the body.
+            obj = serializer.save(owner=self.request.user)
+        else:
+            obj = serializer.save()
+        self._log(obj, ActivityLog.UPDATED)
+
+    def perform_destroy(self, instance):
+        self._assert_can_write(instance)
+        instance.delete()
+
+    @action(detail=True, methods=["post"])
+    def deactivate(self, request, pk=None):
+        obj = self.get_object()
+        self._assert_can_write(obj)
+        obj.active = False
+        obj.save(update_fields=["active", "updated_at"])
+        self._log(obj, ActivityLog.ARCHIVED)
+        return Response({"active": False}, status=status.HTTP_200_OK)
+
+
+class _ChildScopedClinicalViewSet(viewsets.ModelViewSet):
+    """Shared behavior for per-child clinical records (consent, interview,
+    problems): read admin/staff/psychologist (psychologist scoped to assigned
+    children); write admin or the child's assigned psychologist."""
+    permission_classes = [ProgressRecordAccess]
+    pagination_class = None
+    model = None
+    author_field = None  # set by subclass: who recorded the row
+
+    def get_queryset(self):
+        qs = self.model.objects.select_related("child")
+        child_id = self.request.query_params.get("child")
+        if child_id:
+            if not str(child_id).isdigit():
+                return qs.none()
+            qs = qs.filter(child_id=child_id)
+        if _role(self.request) == Role.PSYCHOLOGIST:
+            qs = qs.filter(child__assigned_psychologist=self.request.user)
+        return qs
+
+    def _assert_can_write(self, child):
+        role = _role(self.request)
+        if role == Role.ADMINISTRATOR:
+            return
+        if role == Role.PSYCHOLOGIST and child.assigned_psychologist_id == self.request.user.id:
+            return
+        raise PermissionDenied("You can only manage clinical records for your assigned children.")
+
+    def perform_create(self, serializer):
+        self._assert_can_write(serializer.validated_data["child"])
+        obj = serializer.save(**{self.author_field: self.request.user})
+        log_activity(self.request.user, ActivityLog.CREATED, ActivityLog.RECORD,
+                     entity_type=self.model.__name__, entity_label=obj.child.fullname,
+                     entity_id=obj.id, recipient=obj.child.assigned_psychologist)
+
+    def perform_update(self, serializer):
+        self._assert_can_write(serializer.instance.child)
+        obj = serializer.save()
+        log_activity(self.request.user, ActivityLog.UPDATED, ActivityLog.RECORD,
+                     entity_type=self.model.__name__, entity_label=obj.child.fullname,
+                     entity_id=obj.id, recipient=obj.child.assigned_psychologist)
+
+
+class PreAssessmentViewSet(_ChildScopedClinicalViewSet):
+    model = PreAssessment
+    serializer_class = PreAssessmentSerializer
+    author_field = "psychologist"
+
+    def get_queryset(self):
+        return super().get_queryset().prefetch_related("instruments").select_related("consent", "interview")
+
+    def create(self, request, *args, **kwargs):
+        """Resume the psychologist's own in-progress pre-assessment for this
+        child instead of starting a duplicate — the wizard calls this every
+        time it's (re)opened for a child, including after navigating away."""
+        child_id = request.data.get("child")
+        if child_id and str(child_id).isdigit():
+            # Through get_queryset() so assignment scoping still applies if the
+            # child has since been reassigned away from this psychologist.
+            existing = self.get_queryset().filter(
+                child_id=child_id, psychologist=request.user,
+                status=PreAssessment.IN_PROGRESS,
+            ).first()
+            if existing:
+                return Response(self.get_serializer(existing).data, status=status.HTTP_200_OK)
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        self._assert_can_write(serializer.validated_data["child"])
+        obj = serializer.save(psychologist=self.request.user, status=PreAssessment.IN_PROGRESS)
+        log_activity(self.request.user, ActivityLog.CREATED, ActivityLog.RECORD,
+                     entity_type="PreAssessment", entity_label=obj.child.fullname,
+                     entity_id=obj.id, recipient=obj.child.assigned_psychologist)
+
+    @action(detail=True, methods=["post"])
+    def complete(self, request, pk=None):
+        """Mark the pre-assessment completed. Requires a SIGNED consent and at
+        least one instrument title selected."""
+        obj = self.get_object()
+        self._assert_can_write(obj.child)
+        if obj.status == PreAssessment.COMPLETED:
+            return Response({"detail": "Already completed."}, status=status.HTTP_400_BAD_REQUEST)
+        if not obj.consent or obj.consent.status != ConsentRecord.SIGNED:
+            return Response({"consent": "A signed consent is required before completing the pre-assessment."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if obj.instruments.count() == 0:
+            return Response({"instruments": "Select at least one instrument title."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        from django.utils import timezone as tz
+        obj.status = PreAssessment.COMPLETED
+        obj.completed_at = tz.now()
+        obj.save(update_fields=["status", "completed_at", "updated_at"])
+        log_activity(request.user, ActivityLog.UPDATED, ActivityLog.RECORD,
+                     entity_type="PreAssessment", entity_label=obj.child.fullname,
+                     entity_id=obj.id, recipient=obj.child.assigned_psychologist)
+        return Response(PreAssessmentSerializer(obj).data)
+
+
+class ConsentRecordViewSet(_ChildScopedClinicalViewSet):
+    model = ConsentRecord
+    serializer_class = ConsentRecordSerializer
+    author_field = "recorded_by"
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    @action(detail=True, methods=["get"])
+    def download(self, request, pk=None):
+        """Authenticated serving of the signed-consent scan. Served inline
+        (not as an attachment) so the frontend can preview it in a blob
+        viewer/iframe instead of triggering a file download."""
+        from django.http import FileResponse
+        obj = self.get_object()
+        if not obj.scan:
+            return Response({"detail": "No scan attached to this consent."},
+                            status=status.HTTP_404_NOT_FOUND)
+        try:
+            handle = obj.scan.open("rb")
+        except (FileNotFoundError, ValueError):
+            return Response({"detail": "File is missing from storage."},
+                            status=status.HTTP_404_NOT_FOUND)
+        return FileResponse(handle, as_attachment=False,
+                            filename=obj.scan.name.rsplit("/", 1)[-1])
+
+
+class ClinicalInterviewRecordViewSet(_ChildScopedClinicalViewSet):
+    model = ClinicalInterviewRecord
+    serializer_class = ClinicalInterviewRecordSerializer
+    author_field = "interviewer"
+
+
+class ProblemEntryViewSet(_ChildScopedClinicalViewSet):
+    model = ProblemEntry
+    serializer_class = ProblemEntrySerializer
+    author_field = "logged_by"
+
+
+class PsychologicalReportViewSet(_ChildScopedClinicalViewSet):
+    model = PsychologicalReport
+    serializer_class = PsychologicalReportSerializer
+    author_field = "author"
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def perform_create(self, serializer):
+        self._assert_can_write(serializer.validated_data["child"])
+        upload = serializer.validated_data["file"]
+        extracted = ""
+        if upload.name.lower().endswith(".pdf"):
+            extracted = extract_pdf_text(upload)
+        obj = serializer.save(author=self.request.user,
+                              original_filename=upload.name,
+                              extracted_text=extracted)
+        log_activity(self.request.user, ActivityLog.CREATED, ActivityLog.RECORD,
+                     entity_type="PsychologicalReport", entity_label=obj.child.fullname,
+                     entity_id=obj.id, recipient=obj.child.assigned_psychologist)
+
+    @action(detail=True, methods=["get"])
+    def download(self, request, pk=None):
+        """Authenticated file serving — MEDIA_URL is never exposed directly."""
+        from django.http import FileResponse
+        obj = self.get_object()  # queryset scoping already applied
+        try:
+            handle = obj.file.open("rb")
+        except (FileNotFoundError, ValueError):
+            return Response({"detail": "File is missing from storage."},
+                            status=status.HTTP_404_NOT_FOUND)
+        return FileResponse(handle, as_attachment=True,
+                            filename=obj.original_filename or obj.file.name.rsplit("/", 1)[-1])
+
+
+class CaseReferralViewSet(viewsets.ModelViewSet):
+    """The social worker's side of the split-view document area:
+    write admin/staff, read all three roles (psychologist scoped to
+    assigned children)."""
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+    serializer_class = CaseReferralSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_queryset(self):
+        qs = CaseReferral.objects.select_related("child", "uploaded_by")
+        child_id = self.request.query_params.get("child")
+        if child_id:
+            if not str(child_id).isdigit():
+                return qs.none()
+            qs = qs.filter(child_id=child_id)
+        if _role(self.request) == Role.PSYCHOLOGIST:
+            qs = qs.filter(child__assigned_psychologist=self.request.user)
+        return qs
+
+    def _assert_can_write(self):
+        if _role(self.request) not in (Role.ADMINISTRATOR, Role.STAFF):
+            raise PermissionDenied("Only social workers or administrators upload case referrals.")
+
+    def perform_create(self, serializer):
+        self._assert_can_write()
+        upload = serializer.validated_data["file"]
+        extracted = ""
+        if upload.name.lower().endswith(".pdf"):
+            extracted = extract_pdf_text(upload)
+        obj = serializer.save(uploaded_by=self.request.user,
+                              original_filename=upload.name,
+                              extracted_text=extracted)
+        log_activity(self.request.user, ActivityLog.CREATED, ActivityLog.RECORD,
+                     entity_type="CaseReferral", entity_label=obj.child.fullname,
+                     entity_id=obj.id, recipient=obj.child.assigned_psychologist)
+
+    def perform_update(self, serializer):
+        self._assert_can_write()
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._assert_can_write()
+        instance.delete()
+
+    @action(detail=True, methods=["get"])
+    def download(self, request, pk=None):
+        from django.http import FileResponse
+        obj = self.get_object()
+        try:
+            handle = obj.file.open("rb")
+        except (FileNotFoundError, ValueError):
+            return Response({"detail": "File is missing from storage."},
+                            status=status.HTTP_404_NOT_FOUND)
+        return FileResponse(handle, as_attachment=True,
+                            filename=obj.original_filename or obj.file.name.rsplit("/", 1)[-1])
+
+
+class RemarkNoteViewSet(_ChildScopedClinicalViewSet):
+    model = RemarkNote
+    serializer_class = RemarkNoteSerializer
+    author_field = "author"
+
+
+class TreatmentPlanViewSet(_ChildScopedClinicalViewSet):
+    model = TreatmentPlan
+    serializer_class = TreatmentPlanSerializer
+    author_field = "author"
+
+
+class ResultEntryViewSet(_ChildScopedClinicalViewSet):
+    model = ResultEntry
+    serializer_class = ResultEntrySerializer
+    author_field = "entered_by"
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("instrument", "entered_by", "child")
+
+
+class OpinionnaireInviteViewSet(viewsets.ModelViewSet):
+    """QR survey invites. Created by staff/admin (intake) or the assigned
+    psychologist; answers arrive through the public token endpoints."""
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+    serializer_class = OpinionnaireInviteSerializer
+    http_method_names = ["get", "post", "delete", "head", "options"]
+
+    def get_queryset(self):
+        qs = OpinionnaireInvite.objects.select_related("child", "template")
+        child_id = self.request.query_params.get("child")
+        if child_id:
+            if not str(child_id).isdigit():
+                return qs.none()
+            qs = qs.filter(child_id=child_id)
+        if _role(self.request) == Role.PSYCHOLOGIST:
+            qs = qs.filter(child__assigned_psychologist=self.request.user)
+        return qs
+
+    def _assert_can_write(self, child):
+        role = _role(self.request)
+        if role in (Role.ADMINISTRATOR, Role.STAFF):
+            return
+        if role == Role.PSYCHOLOGIST and child.assigned_psychologist_id == self.request.user.id:
+            return
+        raise PermissionDenied("You cannot create survey invites for this child.")
+
+    def perform_create(self, serializer):
+        from datetime import timedelta
+        from django.utils import timezone
+        self._assert_can_write(serializer.validated_data["child"])
+        obj = serializer.save(created_by=self.request.user,
+                              expires_at=timezone.now() + timedelta(days=7))
+        log_activity(self.request.user, ActivityLog.CREATED, ActivityLog.RECORD,
+                     entity_type="OpinionnaireInvite", entity_label=obj.child.fullname,
+                     entity_id=obj.id, recipient=obj.child.assigned_psychologist)
+
+    def perform_destroy(self, instance):
+        self._assert_can_write(instance.child)
+        instance.delete()
+
+
+class PublicOpinionnaireView(viewsets.ViewSet):
+    """Unauthenticated, token-gated survey endpoints for the child's device.
+    Exposes the agency form fields and the child's FIRST NAME only."""
+    permission_classes = []
+    authentication_classes = []
+
+    def _get_invite(self, token):
+        try:
+            return OpinionnaireInvite.objects.select_related("child", "template").get(token=token)
+        except OpinionnaireInvite.DoesNotExist:
+            return None
+
+    def retrieve(self, request, pk=None):
+        invite = self._get_invite(pk)
+        if invite is None:
+            return Response({"detail": "This survey link is not valid."},
+                            status=status.HTTP_404_NOT_FOUND)
+        if not invite.is_open:
+            return Response({"detail": "This survey link has expired or was already answered."},
+                            status=status.HTTP_410_GONE)
+        return Response({
+            "first_name": (invite.child.fullname or "").split(" ")[0],
+            "title": invite.template.title,
+            "fields": invite.template.fields,
+        })
+
+    @action(detail=True, methods=["post"])
+    def submit(self, request, pk=None):
+        from django.utils import timezone
+        invite = self._get_invite(pk)
+        if invite is None:
+            return Response({"detail": "This survey link is not valid."},
+                            status=status.HTTP_404_NOT_FOUND)
+        if not invite.is_open:
+            return Response({"detail": "This survey link has expired or was already answered."},
+                            status=status.HTTP_410_GONE)
+        answers = request.data.get("answers")
+        if not isinstance(answers, dict) or not answers:
+            return Response({"answers": "Provide the survey answers."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        # Keep only answers for fields defined on the template; cap length.
+        labels = {f.get("label") for f in (invite.template.fields or [])}
+        cleaned = {k: str(v)[:2000] for k, v in answers.items() if k in labels}
+        invite.answers = cleaned
+        invite.status = OpinionnaireInvite.SUBMITTED
+        invite.submitted_at = timezone.now()
+        invite.save(update_fields=["answers", "status", "submitted_at"])
+        return Response({"status": "submitted"})

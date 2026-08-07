@@ -1,0 +1,396 @@
+"""V2 report endpoints: per-child chart view, cross-child monitoring, agency
+summary, and the (interim) dashboard — all sourced from clinical records."""
+
+from rest_framework import generics, status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from accounts.models import Role
+from accounts.permissions import CanViewResults, IsAdminOrStaff
+from children.models import Child, TerminationRecord
+from children.serializers import ChildSerializer
+from clinical import reports
+from clinical.models import (
+    PreAssessment, ResultEntry, RemarkNote, TreatmentPlan,
+    PsychologicalReport, ProblemEntry, CaseReferral, OpinionnaireInvite,
+)
+from clinical.serializers import (
+    PreAssessmentSerializer, ResultEntrySerializer, RemarkNoteSerializer,
+    TreatmentPlanSerializer, PsychologicalReportSerializer, ProblemEntrySerializer,
+    CaseReferralSerializer, OpinionnaireInviteSerializer, ClinicalInterviewRecordSerializer,
+)
+
+
+def _role(request):
+    return getattr(getattr(request.user, "role", None), "role_name", None)
+
+
+class ChildReportView(generics.GenericAPIView):
+    """Chart view of one child: profile + pre-assessment log + clinical interviews
+    + result entries + report files + remarks + treatment plan + open problems."""
+    permission_classes = [CanViewResults]
+
+    def get(self, request, child_id):
+        try:
+            child = Child.objects.prefetch_related("pre_assessments__instruments").get(pk=child_id)
+        except Child.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        role = _role(request)
+        if role == Role.PSYCHOLOGIST and child.assigned_psychologist_id != request.user.id:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        pas = child.pre_assessments.all().select_related("consent", "interview", "psychologist")
+        results = child.result_entries.select_related("instrument", "entered_by")
+        remarks = child.remarks.select_related("author")
+        plans = child.treatment_plans.select_related("author")
+        files = child.psych_reports.select_related("author")
+        problems = child.problems.all()
+        case_referrals = child.case_referrals.select_related("uploaded_by")
+        opinionnaires = child.opinionnaire_invites.select_related("template")
+        interviews = child.clinical_interviews.select_related("template", "interviewer")
+
+        # Carry-history control: a newly assigned psychologist without history
+        # sees only records they authored themselves.
+        if role == Role.PSYCHOLOGIST and not child.assignee_sees_history:
+            pas = pas.filter(psychologist=request.user)
+            results = results.filter(entered_by=request.user)
+            remarks = remarks.filter(author=request.user)
+            plans = plans.filter(author=request.user)
+            files = files.filter(author=request.user)
+            interviews = interviews.filter(interviewer=request.user)
+
+        return Response({
+            "child": ChildSerializer(child).data,
+            "pre_assessments": PreAssessmentSerializer(pas, many=True).data,
+            "interviews": ClinicalInterviewRecordSerializer(interviews, many=True).data,
+            "result_entries": ResultEntrySerializer(results, many=True).data,
+            "remarks": RemarkNoteSerializer(remarks, many=True).data,
+            "treatment_plans": TreatmentPlanSerializer(plans, many=True).data,
+            "reports": PsychologicalReportSerializer(files, many=True).data,
+            "problems": ProblemEntrySerializer(problems, many=True).data,
+            "case_referrals": CaseReferralSerializer(case_referrals, many=True).data,
+            "opinionnaires": OpinionnaireInviteSerializer(opinionnaires, many=True).data,
+        })
+
+
+class MonitoringListView(generics.GenericAPIView):
+    """Cross-child monitoring table, role-scoped. V2 columns: last activity /
+    next appointment / flags — no engine scores exist."""
+    permission_classes = [CanViewResults]
+
+    def get(self, request):
+        role = _role(request)
+        children = (Child.objects.exclude(status=Child.INACTIVE)
+                    .select_related("assigned_psychologist")
+                    .prefetch_related("pre_assessments__instruments", "consents"))
+        if role == Role.PSYCHOLOGIST:
+            children = children.filter(assigned_psychologist=request.user)
+        children = list(children)
+        ids = [c.id for c in children]
+
+        from django.utils import timezone as tz
+        from scheduling.models import Appointment
+        next_appt = {}
+        for a in (Appointment.objects
+                  .filter(child_id__in=ids, status=Appointment.SCHEDULED, start__gte=tz.now())
+                  .order_by("start")):
+            next_appt.setdefault(a.child_id, a.start)
+
+        latest_result = {}
+        for r in ResultEntry.objects.filter(child_id__in=ids).order_by("date", "id"):
+            latest_result[r.child_id] = r
+        last_remark = {}
+        for r in RemarkNote.objects.filter(child_id__in=ids).order_by("date", "id"):
+            last_remark[r.child_id] = r.date
+        report_counts = {}
+        for r in PsychologicalReport.objects.filter(child_id__in=ids):
+            report_counts[r.child_id] = report_counts.get(r.child_id, 0) + 1
+
+        rows = []
+        for c in children:
+            completed = [p for p in c.pre_assessments.all() if p.status == "completed"]
+            last_pa = max((p.date for p in completed), default=None)
+            res = latest_result.get(c.id)
+            candidates = [d for d in (last_pa,
+                                      last_remark.get(c.id),
+                                      res.date if res else None) if d]
+            last_activity = max(candidates) if candidates else None
+            psy = c.assigned_psychologist
+            rows.append({
+                "child_id": c.id,
+                "child_name": c.fullname,
+                "case_ref": f"C-{c.id:04d}",
+                "case_type": c.case_type or None,
+                "psychologist_name": (getattr(psy, "fullname", "") or getattr(psy, "username", "")) or None,
+                "case_status": c.case_status,
+                "pre_assessment_status": c.pre_assessment_status(),
+                "latest_classification": (res.classification or None) if res else None,
+                "last_activity": last_activity.isoformat() if last_activity else None,
+                "next_session": (tz.localtime(next_appt[c.id]).strftime("%Y-%m-%d %H:%M")
+                                 if c.id in next_appt else None),
+                "report_count": report_counts.get(c.id, 0),
+                "pre_assessment_count": len(completed),
+            })
+        rows.sort(key=lambda r: (r["child_name"] or "").lower())
+        return Response(rows)
+
+
+def _nacc_service_users():
+    """Point-in-time census block mirroring the "Service Users" section of
+    NACC-SAMD-GF-000 (June 2025). Always computed over ACTIVE children —
+    unlike the rest of the summary, it is NOT filtered by the `range` param."""
+    from django.utils import timezone as tz
+    today = tz.localdate()
+
+    def age_of(birth_date):
+        if not birth_date:
+            return None
+        return today.year - birth_date.year - (
+            (today.month, today.day) < (birth_date.month, birth_date.day))
+
+    bands = [
+        ("Infants and Young Children (0-6)", 0, 6),
+        ("Middle Childhood (7-11)", 7, 11),
+        ("Adolescents (12-17)", 12, 17),
+        ("Young Adults (18+)", 18, None),
+    ]
+    age_rows = {label: {"label": label, "male": 0, "female": 0, "total": 0} for label, _, _ in bands}
+    unspecified_age_row = {"label": "Unspecified age", "male": 0, "female": 0, "total": 0}
+    has_unspecified_age = False
+
+    category_counts = {}
+    unspecified_category_count = 0
+
+    for c in Child.objects.filter(status=Child.ACTIVE):
+        age = age_of(c.birth_date)
+        row = None
+        if age is not None:
+            for label, lo, hi in bands:
+                if age >= lo and (hi is None or age <= hi):
+                    row = age_rows[label]
+                    break
+        if row is None:
+            row = unspecified_age_row
+            has_unspecified_age = True
+        if c.gender == "Male":
+            row["male"] += 1
+        elif c.gender == "Female":
+            row["female"] += 1
+        row["total"] += 1
+
+        if c.case_category:
+            category_counts[c.case_category] = category_counts.get(c.case_category, 0) + 1
+        else:
+            unspecified_category_count += 1
+
+    age_groups = [age_rows[label] for label, _, _ in bands]
+    if has_unspecified_age:
+        age_groups.append(unspecified_age_row)
+
+    # Preserve the official form order; drop zero-count categories.
+    case_categories = [
+        {"label": label, "count": category_counts[label]}
+        for label, _ in Child.CASE_CATEGORY_CHOICES
+        if category_counts.get(label)
+    ]
+    if unspecified_category_count:
+        case_categories.append({"label": "Unspecified", "count": unspecified_category_count})
+
+    return {"age_groups": age_groups, "case_categories": case_categories}
+
+
+def _summary_csv(data):
+    import csv
+    from django.http import HttpResponse
+    resp = HttpResponse(content_type="text/csv")
+    resp["Content-Disposition"] = 'attachment; filename="agency-summary.csv"'
+    w = csv.writer(resp)
+    w.writerow(["Metric", "Value"])
+    w.writerow(["Completed pre-assessments", data["total"]])
+    w.writerow(["Children seen", data["children"]])
+    w.writerow(["Pending pre-assessments", data["pending_pre_assessments"]])
+    w.writerow([])
+    w.writerow(["Case type", "Count"])
+    for k, v in data["by_case_type"].items():
+        w.writerow([k, v])
+    w.writerow([])
+    w.writerow(["Psychologist", "Sessions"])
+    for p in data["per_psychologist"]:
+        w.writerow([p["name"], p["count"]])
+    w.writerow([])
+    w.writerow(["Termination reason", "Count"])
+    for k, v in data["terminations_by_reason"].items():
+        w.writerow([k, v])
+    w.writerow([])
+    w.writerow(["NACC Service Users by Age Group"])
+    w.writerow(["Age Group", "Male", "Female", "Total"])
+    for row in data["nacc_service_users"]["age_groups"]:
+        w.writerow([row["label"], row["male"], row["female"], row["total"]])
+    w.writerow([])
+    w.writerow(["NACC Service Users by Case Category"])
+    w.writerow(["Category", "Count"])
+    for row in data["nacc_service_users"]["case_categories"]:
+        w.writerow([row["label"], row["count"]])
+    return resp
+
+
+class SummaryReportView(generics.GenericAPIView):
+    """Agency Summary (admin + staff): census KPIs over a date range."""
+    permission_classes = [IsAdminOrStaff]
+
+    def get(self, request):
+        rng = request.query_params.get("range", "monthly")
+        qs = (PreAssessment.objects.filter(status=PreAssessment.COMPLETED)
+              .select_related("child", "psychologist").order_by("date", "id"))
+        frm, to = request.query_params.get("from"), request.query_params.get("to")
+        if frm:
+            qs = qs.filter(date__gte=frm)
+        if to:
+            qs = qs.filter(date__lte=to)
+        data = reports.summary(list(qs), rng)
+
+        term_qs = TerminationRecord.objects.all()
+        if frm:
+            term_qs = term_qs.filter(date__gte=frm)
+        if to:
+            term_qs = term_qs.filter(date__lte=to)
+        by_reason = {}
+        for t in term_qs:
+            by_reason[t.reason_category] = by_reason.get(t.reason_category, 0) + 1
+        data["terminations_by_reason"] = by_reason
+        data["pending_pre_assessments"] = (PreAssessment.objects
+                                           .exclude(status=PreAssessment.COMPLETED).count())
+        # Per-psychologist active caseload (children assigned).
+        caseload = {}
+        for c in (Child.objects.filter(status=Child.ACTIVE)
+                  .select_related("assigned_psychologist")):
+            if not c.assigned_psychologist_id:
+                continue
+            name = (getattr(c.assigned_psychologist, "fullname", "")
+                    or getattr(c.assigned_psychologist, "username", ""))
+            caseload[name] = caseload.get(name, 0) + 1
+        data["caseload_per_psychologist"] = [
+            {"name": k, "caseload": v}
+            for k, v in sorted(caseload.items(), key=lambda kv: -kv[1])]
+        data["nacc_service_users"] = _nacc_service_users()
+
+        # NB: `format` is reserved by DRF content negotiation, so use `export`.
+        if request.query_params.get("export") == "csv":
+            return _summary_csv(data)
+        return Response(data)
+
+
+class DashboardView(generics.GenericAPIView):
+    """Census Dashboard (athena pattern): census counts, today's schedule
+    strip, availability at a glance, intake vs termination trend, pending
+    pre-assessments, deterministic care-gap alerts — all role-scoped."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.utils import timezone as tz
+        from clinical.care_gaps import compute_alerts
+        from scheduling.models import Appointment, AvailabilityBlock
+
+        role = _role(request)
+        rng = request.query_params.get("range", "monthly")
+
+        scoped_children = Child.objects.all()
+        pas = (PreAssessment.objects.filter(status=PreAssessment.COMPLETED)
+               .select_related("child", "psychologist"))
+        appts_today = (Appointment.objects
+                       .filter(start__date=tz.localdate())
+                       .exclude(status=Appointment.CANCELLED)
+                       .select_related("child", "psychologist").order_by("start"))
+        pending = PreAssessment.objects.exclude(status=PreAssessment.COMPLETED)
+        blocks = AvailabilityBlock.objects.filter(active=True).select_related("psychologist")
+        if role == Role.PSYCHOLOGIST:
+            scoped_children = scoped_children.filter(assigned_psychologist=request.user)
+            pas = pas.filter(child__assigned_psychologist=request.user)
+            appts_today = appts_today.filter(psychologist=request.user)
+            pending = pending.filter(child__assigned_psychologist=request.user)
+            blocks = blocks.filter(psychologist=request.user)
+        pas = list(pas.order_by("date", "id"))
+
+        active = scoped_children.filter(status=Child.ACTIVE)
+        inactive_count = scoped_children.filter(status=Child.INACTIVE).count()
+
+        # Census: ACTIVE children per case type (the interview's
+        # "active/adoption, active/foster care" view) + case-tracker stages.
+        census_by_case_type = {}
+        by_case_status = {Child.STAGE_PRE_ASSESSMENT: 0, Child.STAGE_COUNSELING: 0}
+        counseling_per_psy = {}
+        for c in active.select_related("assigned_psychologist"):
+            ct = c.case_type or "Unspecified"
+            census_by_case_type[ct] = census_by_case_type.get(ct, 0) + 1
+            if c.case_status in by_case_status:
+                by_case_status[c.case_status] += 1
+            if c.case_status == Child.STAGE_COUNSELING and c.assigned_psychologist_id:
+                name = (getattr(c.assigned_psychologist, "fullname", "")
+                        or getattr(c.assigned_psychologist, "username", ""))
+                counseling_per_psy[name] = counseling_per_psy.get(name, 0) + 1
+
+        # Intake vs termination trend (follows the range selector, last 6 buckets).
+        intake, term = {}, {}
+        for c in scoped_children:
+            b = reports.bucket(c.created_at.date(), rng)
+            intake[b] = intake.get(b, 0) + 1
+        term_qs = TerminationRecord.objects.all()
+        if role == Role.PSYCHOLOGIST:
+            term_qs = term_qs.filter(child__assigned_psychologist=request.user)
+        for t in term_qs:
+            b = reports.bucket(t.date, rng)
+            term[b] = term.get(b, 0) + 1
+        months = sorted(set(intake) | set(term))[-6:]
+        intake_vs_termination = [
+            {"bucket": m, "intake": intake.get(m, 0), "terminations": term.get(m, 0)}
+            for m in months]
+
+        today_weekday = tz.localdate().weekday()
+        availability_today = [{
+            "psychologist": (getattr(b.psychologist, "fullname", "")
+                             or getattr(b.psychologist, "username", "")),
+            "start": str(b.start_time)[:5], "end": str(b.end_time)[:5],
+            "capacity": b.capacity,
+        } for b in blocks
+            if (b.date == tz.localdate()) or (b.date is None and b.weekday == today_weekday)]
+
+        def age(c):
+            if not c.birth_date:
+                return None
+            days = (tz.localdate() - c.birth_date).days
+            return max(0, days // 365)
+
+        schedule_strip = [{
+            "id": a.id,
+            "child_id": a.child_id,
+            "child_name": a.child.fullname,
+            "age": age(a.child),
+            "time": tz.localtime(a.start).strftime("%H:%M"),
+            "purpose": a.purpose,
+            "status": a.status,
+            "psychologist": (getattr(a.psychologist, "fullname", "")
+                             or getattr(a.psychologist, "username", "")),
+        } for a in appts_today]
+
+        agg = reports.summary(pas, rng)
+        return Response({
+            "census": {
+                "active": active.count(),
+                "inactive": inactive_count,
+                "by_case_type": census_by_case_type,
+                "by_case_status": by_case_status,
+            },
+            "counseling_per_psychologist": [
+                {"name": k, "count": v}
+                for k, v in sorted(counseling_per_psy.items(), key=lambda kv: -kv[1])],
+            "total_children": active.count(),
+            "unassessed": max(0, active.count() - len({p.child_id for p in pas})),
+            "pending_pre_assessments": pending.count(),
+            "today_schedule": schedule_strip,
+            "availability_today": availability_today,
+            "intake_vs_termination": intake_vs_termination,
+            "trend": agg["trend"][-6:],
+            "per_psychologist": agg["per_psychologist"],
+            "by_case_type": agg["by_case_type"],
+            "care_gaps": compute_alerts(scoped_children),
+        })

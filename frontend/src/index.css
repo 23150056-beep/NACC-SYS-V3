@@ -1,0 +1,415 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   RACCO I Design System — color, type, spacing, motion tokens.
+   Derived from the official NACC/RACCO I seal & wordmark.
+   ============================================================ */
+:root {
+  /* ---- Brand primaries (sampled from the seal) ---- */
+  --heart-blue: #0a1fcf;
+  --heart-red: #ee1c25;
+  --heart-amber: #ffac2a;
+  --paper-sky: #bbe1f4;
+
+  /* ---- Primary: RACCO Royal Blue ---- */
+  --blue-50: #eef1fd;
+  --blue-100: #dce2fb;
+  --blue-200: #bcc6f6;
+  --blue-300: #93a3ee;
+  --blue-400: #6276e3;
+  --blue-500: #3a4ed6;
+  --blue-600: #2236c4;
+  --blue-700: #1b2aa3;
+  --blue-800: #182585;
+  --blue-900: #16216a;
+  --blue-950: #0d1444;
+
+  /* ---- Heart Red (alert / official seal) ---- */
+  --red-50: #fdecec;
+  --red-100: #fbd6d7;
+  --red-200: #f6b0b2;
+  --red-300: #f08387;
+  --red-400: #e84e54;
+  --red-500: #ee1c25;
+  --red-600: #cc121b;
+  --red-700: #a71117;
+  --red-800: #851318;
+  --red-900: #6e1418;
+
+  /* ---- Amber (warmth / accent / the child) ---- */
+  --amber-50: #fff7e8;
+  --amber-100: #ffeac4;
+  --amber-200: #ffd587;
+  --amber-300: #ffc154;
+  --amber-400: #ffac2a;
+  --amber-500: #f59314;
+  --amber-600: #d6760a;
+  --amber-700: #ad590d;
+  --amber-800: #8c4711;
+  --amber-900: #733b12;
+
+  /* ---- Sky (watercolor surface tints) ---- */
+  --sky-50: #f3f9fd;
+  --sky-100: #e6f3fb;
+  --sky-200: #cfe8f7;
+  --sky-300: #bbe1f4;
+  --sky-400: #8fc9e8;
+
+  /* ---- Warm neutrals (slate w/ a faint blue cast) ---- */
+  --ink-0: #ffffff;
+  --ink-25: #fbfcfe;
+  --ink-50: #f4f6fa;
+  --ink-100: #e9edf4;
+  --ink-200: #d6dde8;
+  --ink-300: #b6c0d1;
+  --ink-400: #8b97ad;
+  --ink-500: #65718a;
+  --ink-600: #4c576e;
+  --ink-700: #3a4356;
+  --ink-800: #283041;
+  --ink-900: #18202e;
+  --ink-950: #0e131d;
+
+  /* ---- Semantic ---- */
+  --success-50: #e9f8ef;
+  --success-100: #c8edd6;
+  --success-500: #1f9d57;
+  --success-600: #167a43;
+  --success-700: #115e34;
+
+  --warning-50: #fff7e8;
+  --warning-100: #ffeac4;
+  --warning-500: #e08a00;
+  --warning-600: #b96f00;
+  --warning-700: #8c5400;
+
+  --danger-50: var(--red-50);
+  --danger-100: var(--red-100);
+  --danger-500: var(--red-500);
+  --danger-600: var(--red-600);
+  --danger-700: var(--red-700);
+
+  --info-50: var(--blue-50);
+  --info-100: var(--blue-100);
+  --info-500: var(--blue-500);
+  --info-600: var(--blue-600);
+  --info-700: var(--blue-700);
+
+  /* ---- Semantic aliases ---- */
+  --brand: var(--blue-600);
+  --brand-strong: var(--blue-700);
+  --brand-soft: var(--blue-50);
+  --accent: var(--amber-400);
+  --accent-ink: var(--amber-700);
+
+  --bg-app: var(--ink-50);
+  --bg-app-tint: var(--sky-50);
+  --surface: var(--ink-0);
+  --surface-raised: var(--ink-0);
+  --surface-sunken: var(--ink-50);
+  --surface-brand: var(--blue-600);
+  --surface-brand-soft: var(--blue-50);
+  --surface-accent-soft: var(--amber-50);
+
+  --text-strong: var(--ink-900);
+  --text-body: var(--ink-700);
+  --text-muted: var(--ink-500);
+  --text-faint: var(--ink-400);
+  --text-on-brand: #ffffff;
+  --text-link: var(--blue-600);
+
+  --border: var(--ink-200);
+  --border-strong: var(--ink-300);
+  --border-brand: var(--blue-200);
+  --ring: color-mix(in srgb, var(--blue-500) 22%, transparent);
+
+  /* Role accent chips */
+  --role-admin: var(--blue-600);
+  --role-staff: var(--amber-500);
+  --role-psychologist: var(--red-500);
+
+  /* Assessment severity scale */
+  --sev-standard: var(--success-500);
+  --sev-moderate: var(--warning-500);
+  --sev-high: var(--red-500);
+
+  /* ---- Typography ---- */
+  --font-display: 'Baloo 2', 'Segoe UI', system-ui, sans-serif;
+  --font-sans: 'Nunito Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SFMono-Regular', ui-monospace, monospace;
+
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-md: 16px;
+  --text-lg: 18px;
+  --text-xl: 21px;
+  --text-2xl: 25px;
+  --text-3xl: 31px;
+  --text-4xl: 38px;
+  --text-5xl: 47px;
+  --text-6xl: 60px;
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --fw-extrabold: 800;
+
+  --lh-tight: 1.1;
+  --lh-snug: 1.25;
+  --lh-normal: 1.5;
+  --lh-relaxed: 1.65;
+
+  --tracking-tight: -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.02em;
+  --tracking-caps: 0.08em;
+
+  /* ---- Spacing (4px base) ---- */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 64px;
+  --space-11: 80px;
+  --space-12: 96px;
+
+  /* ---- Radii ---- */
+  --radius-xs: 4px;
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 24px;
+  --radius-pill: 999px;
+  --radius-card: var(--radius-lg);
+  --radius-control: var(--radius-md);
+
+  /* ---- Shadows (soft, cool-blue tinted) ---- */
+  --shadow-xs: 0 1px 2px rgba(22, 33, 106, 0.06);
+  --shadow-sm: 0 1px 3px rgba(22, 33, 106, 0.08), 0 1px 2px rgba(22, 33, 106, 0.05);
+  --shadow-md: 0 4px 12px rgba(22, 33, 106, 0.09), 0 2px 4px rgba(22, 33, 106, 0.05);
+  --shadow-lg: 0 12px 28px rgba(22, 33, 106, 0.12), 0 4px 10px rgba(22, 33, 106, 0.06);
+  --shadow-xl: 0 24px 48px rgba(22, 33, 106, 0.16), 0 8px 16px rgba(22, 33, 106, 0.07);
+  --shadow-brand: 0 6px 18px rgba(34, 54, 196, 0.28);
+  --shadow-focus: 0 0 0 3px var(--ring);
+  --shadow-inner: inset 0 1px 2px rgba(22, 33, 106, 0.07);
+
+  --border-width: 1px;
+  --border-width-strong: 1.5px;
+
+  /* ---- Motion ---- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+  --transition-base: all var(--dur-base) var(--ease-out);
+
+  /* ---- Layout ---- */
+  --sidebar-w: 264px;
+  --topbar-h: 64px;
+  --content-max: 1200px;
+  --field-h: 42px;
+  --field-h-sm: 34px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--body-size, var(--text-base));
+  line-height: var(--lh-normal);
+  color: var(--text-body);
+  background: var(--bg-app);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  height: 100vh;
+  overflow: hidden;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5 {
+  font-family: var(--font-display);
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+  line-height: var(--lh-snug);
+  margin: 0;
+}
+
+a {
+  color: var(--text-link);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* Accessibility: visible keyboard focus only on keyboard nav */
+button,
+a,
+input,
+select,
+textarea,
+[tabindex] {
+  outline: none;
+}
+button:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-radius: var(--radius-sm);
+  position: relative;
+  z-index: 1;
+}
+tr:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--ring);
+  border-radius: 0;
+}
+
+/* Utility classes consumed by the kit */
+.racco-eyebrow {
+  font-family: var(--font-sans);
+  font-weight: var(--fw-bold);
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.racco-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.racco-sky-wash {
+  background:
+    radial-gradient(120% 120% at 0% 0%, var(--sky-100) 0%, transparent 55%),
+    radial-gradient(120% 120% at 100% 100%, var(--blue-50) 0%, transparent 55%),
+    var(--sky-50);
+}
+
+/* Thin, sky-tinted scrollbars */
+.racco-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-300) transparent;
+}
+.racco-scroll::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+.racco-scroll::-webkit-scrollbar-thumb {
+  background: var(--ink-200);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.racco-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-300);
+  background-clip: padding-box;
+}
+.racco-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes racco-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes racco-slide-left {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes racco-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+::selection {
+  background: var(--blue-200);
+  color: var(--blue-900);
+}
+
+/* Print: hide app chrome, expand the report to full width for clean PDFs. */
+@media print {
+  aside,
+  header,
+  .racco-no-print {
+    display: none !important;
+  }
+  main {
+    overflow: visible !important;
+  }
+  .racco-print-area {
+    padding: 0 !important;
+  }
+  body {
+    background: #fff !important;
+  }
+}
+
+/* Opposite of .racco-no-print: content meant ONLY for the printed page (e.g. a
+   condensed summary standing in for a large interactive screen). Hidden on
+   screen, shown on print. Used by the SAMD readiness "Print summary" view. */
+.racco-print-only {
+  display: none;
+}
+@media print {
+  .racco-print-only {
+    display: block !important;
+  }
+}
+
+/* Centered case-modal two-column body; collapses on small screens. */
+.racco-case-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px 24px; align-items: start; }
+@media (max-width: 760px) { .racco-case-grid { grid-template-columns: 1fr; } }
