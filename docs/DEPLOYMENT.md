@@ -1,4 +1,9 @@
-# NACC SYS V2 — Office PC Deployment & Backup Guide
+# NACC SYS V3 — Office PC (On-Premises) Deployment & Backup Guide
+
+> **V3's primary deployment target is the cloud** — see
+> [`CLOUD-DEPLOYMENT.md`](CLOUD-DEPLOYMENT.md). This document covers the
+> on-premises single-PC path, which remains supported and unchanged. Choose it
+> when the agency wants case data to stay physically on its own hardware.
 
 Target: a single office PC/server at RACCO I (Windows, 8–16 GB RAM).
 Stack: Django 5.1 + PostgreSQL + React (built static) + optional Ollama.
@@ -11,7 +16,7 @@ Stack: Django 5.1 + PostgreSQL + React (built static) + optional Ollama.
 ### Database
 ```powershell
 # in psql as the postgres superuser:
-CREATE DATABASE nacc_v2;
+CREATE DATABASE nacc_v3;
 ```
 
 ### Backend
@@ -46,7 +51,10 @@ to `http://<server-ip>:8000/api` for other machines on the network.
 winget install ollama.ollama
 ollama pull qwen2.5:7b-instruct     # ~5 GB; needs ~8 GB free RAM
 ```
-Then in the app: Settings → Local AI Layer → enable the master switch.
+Then in the app: Settings → AI Assistance → enable the master switch and leave
+the runtime provider set to **On-premises (Ollama)**. That provider restricts
+the endpoint to loopback, so case data never leaves this machine — which is the
+whole point of choosing the on-premises path.
 If the machine has only 8 GB RAM, keep AI off during heavy use — every
 feature works without it (care-gap alerts are deterministic and always on).
 
@@ -56,7 +64,7 @@ Two things hold all data: the PostgreSQL database and the media folder.
 
 ```powershell
 # database
-pg_dump -U postgres -d nacc_v2 -F c -f "D:\backups\nacc_v2_$(Get-Date -Format yyyyMMdd).dump"
+pg_dump -U postgres -d nacc_v3 -F c -f "D:\backups\nacc_v3_$(Get-Date -Format yyyyMMdd).dump"
 # uploaded files (reports, consent scans, photos)
 Copy-Item backend\media "D:\backups\media_$(Get-Date -Format yyyyMMdd)" -Recurse
 ```
@@ -66,8 +74,8 @@ RA 10173 duty of care).
 ## 3. Restore
 
 ```powershell
-psql -U postgres -c "DROP DATABASE IF EXISTS nacc_v2; CREATE DATABASE nacc_v2;"
-pg_restore -U postgres -d nacc_v2 "D:\backups\nacc_v2_YYYYMMDD.dump"
+psql -U postgres -c "DROP DATABASE IF EXISTS nacc_v3; CREATE DATABASE nacc_v3;"
+pg_restore -U postgres -d nacc_v3 "D:\backups\nacc_v3_YYYYMMDD.dump"
 Copy-Item "D:\backups\media_YYYYMMDD\*" backend\media -Recurse -Force
 ```
 

@@ -1,0 +1,35 @@
+server {
+    listen       ${PORT};
+    server_name  _;
+    root         /usr/share/nginx/html;
+    index        index.html;
+
+    # The platform terminates TLS in front of this container, so don't leak
+    # the server version and let the platform own the security headers it sets.
+    server_tokens off;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    # Vite fingerprints everything under /assets/, so those files are safe to
+    # cache forever — the filename changes whenever the content does.
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # index.html must NOT be cached: it is the file that points at the current
+    # fingerprinted bundle, so a stale copy pins users to a deleted build.
+    location = /index.html {
+        add_header Cache-Control "no-cache, must-revalidate";
+    }
+
+    # React Router owns the URL space. A deep link like /children/12 is not a
+    # file on disk, so every unmatched path has to fall through to index.html
+    # or a page refresh anywhere but "/" would 404.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

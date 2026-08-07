@@ -1,0 +1,76 @@
+# NACC SYS V3 — full stack, one command.
+#
+#   cp backend/.env.example backend/.env   # then set DJANGO_SECRET_KEY
+#   docker compose up --build
+#
+#   frontend  http://localhost:5173
+#   backend   http://localhost:8000
+#   health    http://localhost:8000/healthz/
+#
+# This runs the same images the cloud runs, so "works on my machine" and
+# "works on Render" stop being different questions.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: nacc_v3
+      POSTGRES_USER: nacc
+      POSTGRES_PASSWORD: nacc_dev_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # The backend must not start migrating against a Postgres that is still
+    # initialising, so compose waits on this probe rather than on the container
+    # merely existing.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nacc -d nacc_v3"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgres://nacc:nacc_dev_password@db:5432/nacc_v3
+      DJANGO_DEBUG: "False"
+      # Local-only key. Production sets a real one from the platform's secret
+      # store — see docs/CLOUD-DEPLOYMENT.md.
+      DJANGO_SECRET_KEY: local-compose-only-not-for-production-use
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,backend
+      CORS_ALLOWED_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      CSRF_TRUSTED_ORIGINS: http://localhost:5173,http://localhost:8000
+      # No TLS terminator in front of compose, so the redirect would loop.
+      SECURE_SSL_REDIRECT: "False"
+      RUN_SEED: "true"
+      # Uncomment to exercise the hosted AI provider locally:
+      # AI_HOSTED_API_KEY: ${AI_HOSTED_API_KEY}
+    volumes:
+      # Compose keeps uploads on a local volume; cloud deploys set USE_S3=true
+      # instead, because a container filesystem does not survive a redeploy.
+      - media:/app/media
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:8000/api
+    environment:
+      PORT: "5173"
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+
+volumes:
+  pgdata:
+  media:

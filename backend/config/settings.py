@@ -1,20 +1,59 @@
 """
 Django settings for config project (NACC-RACCO I system).
+
+V3 is cloud-hosted. Everything that differs between a laptop, a staging
+deploy and production comes from environment variables — the container image
+is identical in all three. Defaults are the *development* values so that a
+bare `python manage.py runserver` still works with no .env at all; production
+overrides them explicitly (see docs/CLOUD-DEPLOYMENT.md).
 """
 
 import os
 from pathlib import Path
 from datetime import timedelta
+
+import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-SECRET_KEY = os.getenv(
-    "DJANGO_SECRET_KEY", "dev-insecure-secret-key-change-me-in-production"
-)
-DEBUG = os.getenv("DJANGO_DEBUG", "True") == "True"
-ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+
+def env_bool(name, default=False):
+    return os.getenv(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
+
+
+def env_list(name, default=""):
+    return [item.strip() for item in os.getenv(name, default).split(",") if item.strip()]
+
+
+DEBUG = env_bool("DJANGO_DEBUG", True)
+
+# The dev key is a known constant, so a production deploy that forgets to set
+# DJANGO_SECRET_KEY must fail loudly at boot rather than silently signing
+# session cookies and JWTs with a public value.
+DEV_SECRET_KEY = "dev-insecure-secret-key-change-me-in-production"
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", DEV_SECRET_KEY)
+if not DEBUG and SECRET_KEY == DEV_SECRET_KEY:
+    raise ImproperlyConfigured(
+        "DJANGO_SECRET_KEY must be set to a unique random value when "
+        "DJANGO_DEBUG=False. Generate one with: "
+        "python -c \"from django.core.management.utils import get_random_secret_key as k; print(k())\""
+    )
+
+ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
+
+# Render injects the service's public hostname at runtime; the same trick works
+# for any platform that exposes its hostname through an env var.
+for _host_var in ("RENDER_EXTERNAL_HOSTNAME", "PLATFORM_EXTERNAL_HOSTNAME"):
+    _host = os.getenv(_host_var)
+    if _host and _host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_host)
+
+# Container platforms health-check the app over its internal IP, which never
+# matches ALLOWED_HOSTS. /healthz/ is exempted in config.health instead of
+# opening up the host allowlist.
 
 
 # Application definition
@@ -40,6 +79,9 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # WhiteNoise serves collected static files (the Django admin, mainly)
+    # directly from the app container — no separate web server or CDN needed.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -70,17 +112,30 @@ WSGI_APPLICATION = "config.wsgi.application"
 
 
 # Database
-# PostgreSQL is the V2 target. Set DB_ENGINE=postgres (plus DB_* credentials)
-# in .env; without it the app falls back to SQLite so dev never blocks.
-if os.getenv("DB_ENGINE", "sqlite") == "postgres":
+# Cloud platforms hand out a single DATABASE_URL, so that wins when present.
+# The DB_ENGINE=postgres path is kept for on-premises installs that predate V3,
+# and SQLite remains the zero-config fallback so tests and a fresh checkout
+# never block on a database server.
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+if DATABASE_URL:
+    DATABASES = {
+        "default": dj_database_url.parse(
+            DATABASE_URL,
+            conn_max_age=int(os.getenv("DB_CONN_MAX_AGE", "600")),
+            conn_health_checks=True,
+            ssl_require=env_bool("DB_SSL_REQUIRE", False),
+        )
+    }
+elif os.getenv("DB_ENGINE", "sqlite") == "postgres":
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.getenv("DB_NAME", "nacc_v2"),
+            "NAME": os.getenv("DB_NAME", "nacc_v3"),
             "USER": os.getenv("DB_USER", "postgres"),
             "PASSWORD": os.getenv("DB_PASSWORD", ""),
             "HOST": os.getenv("DB_HOST", "localhost"),
             "PORT": os.getenv("DB_PORT", "5432"),
+            "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "600")),
         }
     }
 else:
@@ -110,18 +165,57 @@ USE_I18N = True
 USE_TZ = True
 
 
-# Static files
+# Static files (Django admin + DRF browsable API assets).
 STATIC_URL = "static/"
+STATIC_ROOT = Path(os.getenv("STATIC_ROOT", BASE_DIR / "staticfiles"))
 
-# Uploaded files (psychological reports, signed consent scans).
-# Served only through authenticated API endpoints — MEDIA_URL is not
-# exposed via urlpatterns.
+# Uploaded files (psychological reports, signed consent scans, child photos).
+# Served only through authenticated API endpoints — MEDIA_URL is not exposed
+# via urlpatterns, and the S3 bucket below stays private for the same reason.
 MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", BASE_DIR / "media"))
 MEDIA_URL = "media/"
 FILE_UPLOAD_MAX_MEMORY_SIZE = int(
     os.getenv("FILE_UPLOAD_MAX_MB", "15")
 ) * 1024 * 1024
 DATA_UPLOAD_MAX_MEMORY_SIZE = FILE_UPLOAD_MAX_MEMORY_SIZE
+
+# Cloud containers have ephemeral disks: anything written to MEDIA_ROOT is lost
+# on the next deploy. USE_S3=true switches uploads to S3-compatible object
+# storage (AWS S3, Cloudflare R2, Backblaze B2, Supabase Storage...). All file
+# access in the app goes through Django's storage API, so nothing else changes.
+USE_S3 = env_bool("USE_S3", False)
+if USE_S3:
+    _default_storage = {
+        "BACKEND": "storages.backends.s3.S3Storage",
+        "OPTIONS": {
+            "bucket_name": os.getenv("AWS_STORAGE_BUCKET_NAME"),
+            "region_name": os.getenv("AWS_S3_REGION_NAME", "auto"),
+            "endpoint_url": os.getenv("AWS_S3_ENDPOINT_URL") or None,
+            "access_key": os.getenv("AWS_ACCESS_KEY_ID"),
+            "secret_key": os.getenv("AWS_SECRET_ACCESS_KEY"),
+            # Child data: the bucket must never be publicly readable, and any
+            # URL the storage backend hands out must be short-lived and signed.
+            "default_acl": None,
+            "querystring_auth": True,
+            "querystring_expire": int(os.getenv("AWS_S3_URL_EXPIRY", "300")),
+            "file_overwrite": False,
+            "signature_version": "s3v4",
+            "addressing_style": os.getenv("AWS_S3_ADDRESSING_STYLE", "virtual"),
+        },
+    }
+else:
+    _default_storage = {"BACKEND": "django.core.files.storage.FileSystemStorage"}
+
+STORAGES = {
+    "default": _default_storage,
+    "staticfiles": {
+        "BACKEND": (
+            "config.storages.WhiteNoiseStaticFilesStorage"
+            if not DEBUG
+            else "django.contrib.staticfiles.storage.StaticFilesStorage"
+        )
+    },
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -146,13 +240,69 @@ LOGIN_MAX_ATTEMPTS = 5       # failed attempts for one email+IP before that comb
 LOGIN_IP_MAX_ATTEMPTS = 20   # failed attempts from one IP (any/many emails) before the IP locks
 LOGIN_LOCKOUT_MINUTES = 15   # both the rolling counting window and the lock duration
 
-CORS_ALLOWED_ORIGINS = os.getenv(
+CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
-).split(",")
+)
+CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
+for _host_var in ("RENDER_EXTERNAL_HOSTNAME", "PLATFORM_EXTERNAL_HOSTNAME"):
+    _host = os.getenv(_host_var)
+    if _host and f"https://{_host}" not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(f"https://{_host}")
 
-# Privacy hardening: the Data Privacy Act compliance story depends on the AI
-# runtime staying on this machine ("data never leaves the building"). The
-# Ollama endpoint URL is admin-editable in Settings, so we reject non-loopback
-# hosts by default. Only set this to true if the agency knowingly hosts
-# Ollama elsewhere on its own on-premises network.
-ALLOW_REMOTE_OLLAMA = os.getenv("ALLOW_REMOTE_OLLAMA", "false").lower() == "true"
+
+# HTTPS / transport hardening. Only applied outside DEBUG so local development
+# over plain http:// keeps working.
+if not DEBUG:
+    # The app sits behind the platform's TLS terminator, so Django learns the
+    # original scheme from the proxy header rather than the socket.
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", True)
+    SECURE_REDIRECT_EXEMPT = [r"^healthz/?$"]
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "31536000"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = "same-origin"
+    X_FRAME_OPTIONS = "DENY"
+
+
+# Logging: containers have no log files, only stdout/stderr, which the platform
+# collects. Keep it plain so the platform's log viewer stays readable.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "standard"},
+    },
+    "root": {"handlers": ["console"], "level": os.getenv("DJANGO_LOG_LEVEL", "INFO")},
+    "loggers": {
+        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+    },
+}
+
+
+# --- AI layer -------------------------------------------------------------
+#
+# V2's compliance story was "the AI runtime never leaves this machine", which a
+# loopback-only Ollama URL enforced. V3 runs in the cloud, so the same promise
+# is kept by *contract* instead: an admin picks a provider in Settings, and the
+# credential for the hosted provider lives only in the server environment —
+# never in the database, never in the API response. See the data-residency
+# section of docs/CLOUD-DEPLOYMENT.md.
+
+# On-premises Ollama: still loopback-only unless the agency knowingly hosts it
+# elsewhere on its own network.
+ALLOW_REMOTE_OLLAMA = env_bool("ALLOW_REMOTE_OLLAMA", False)
+
+# Hosted provider (Anthropic). With no API key configured the hosted provider
+# reports itself unavailable and every AI feature degrades to "off" — exactly
+# like an unreachable Ollama. The system is fully functional either way.
+AI_HOSTED_API_KEY = os.getenv("AI_HOSTED_API_KEY", "")
+AI_HOSTED_BASE_URL = os.getenv("AI_HOSTED_BASE_URL", "")  # blank = provider default
+AI_HOSTED_MAX_TOKENS = int(os.getenv("AI_HOSTED_MAX_TOKENS", "8000"))
+AI_HOSTED_TIMEOUT = float(os.getenv("AI_HOSTED_TIMEOUT", "120"))

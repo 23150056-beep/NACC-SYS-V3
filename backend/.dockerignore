@@ -1,0 +1,20 @@
+# Never copy secrets or local state into the image
+.env
+.env.*
+!.env.example
+*.sqlite3
+db.sqlite3
+media/
+staticfiles/
+
+# Local virtualenvs — the image installs its own dependencies
+.venv/
+venv/
+env/
+
+__pycache__/
+*.py[cod]
+*.log
+.pytest_cache/
+.coverage
+htmlcov/

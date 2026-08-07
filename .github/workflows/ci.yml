@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  # A new push supersedes the run already in flight for the same branch.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests (PostgreSQL)
+    runs-on: ubuntu-latest
+
+    services:
+      # Tests run against real PostgreSQL, not the SQLite fallback — migrations
+      # and queries that pass on SQLite can still fail on the engine production
+      # actually uses.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: nacc_v3_test
+          POSTGRES_USER: nacc
+          POSTGRES_PASSWORD: nacc_ci_password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nacc"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://nacc:nacc_ci_password@localhost:5432/nacc_v3_test
+      # Exercise the production settings branch (security headers, WhiteNoise
+      # manifest storage), not just the DEBUG one.
+      DJANGO_DEBUG: "False"
+      DJANGO_SECRET_KEY: ci-only-secret-key-not-used-in-any-deployment-abcdefghijklmnop
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
+      # There is no TLS terminator in front of the test client, so the redirect
+      # would turn every request into a 301 before the view ever runs. Same
+      # reason docker-compose disables it locally.
+      SECURE_SSL_REDIRECT: "False"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Django system checks (deployment profile)
+        working-directory: backend
+        run: python manage.py check --deploy --fail-level ERROR
+
+      - name: Verify no missing migrations
+        working-directory: backend
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Collect static files
+        working-directory: backend
+        run: python manage.py collectstatic --noinput
+
+      - name: Run test suite
+        working-directory: backend
+        run: python manage.py test --verbosity 2
+
+  frontend:
+    name: Frontend lint and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+        env:
+          VITE_API_BASE_URL: http://localhost:8000/api
+
+  images:
+    name: Container images build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Catches Dockerfile breakage before a deploy does. Build only — the
+      # images are not pushed anywhere from CI.
+      - name: Build backend image
+        run: docker build -f backend/Dockerfile -t nacc-backend:ci ./backend
+
+      - name: Build frontend image
+        run: |
+          docker build -f frontend/Dockerfile \
+            --build-arg VITE_API_BASE_URL=http://localhost:8000/api \
+            -t nacc-frontend:ci ./frontend

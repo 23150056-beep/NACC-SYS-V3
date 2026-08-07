@@ -25,15 +25,34 @@ def _role(request):
 
 
 class AISettingSerializer(serializers.ModelSerializer):
+    # Whether the server environment holds a credential for the hosted
+    # provider. The key itself is never exposed — this is only so the Settings
+    # screen can tell an administrator "selecting Hosted will not work yet"
+    # instead of letting them switch into a silently dead configuration.
+    hosted_key_configured = serializers.SerializerMethodField()
+
     class Meta:
         model = AISetting
         fields = ["enabled", "feature_brief", "feature_doc_intelligence",
                   "feature_remark_polish", "feature_census_narrative",
-                  "ollama_url", "model_name", "updated_at"]
+                  "provider", "ollama_url", "model_name", "hosted_model",
+                  "hosted_key_configured", "updated_at"]
 
-    def validate_ollama_url(self, value):
-        # DPA compliance depends on the AI runtime staying on this machine —
-        # reject non-loopback hosts unless the server env explicitly opts in.
+    def get_hosted_key_configured(self, obj):
+        return bool(django_settings.AI_HOSTED_API_KEY)
+
+    def validate(self, attrs):
+        # The loopback guard is Ollama-specific: it exists because an
+        # on-premises Ollama endpoint is the one AI setting that could silently
+        # ship child data to an arbitrary host chosen from the UI. The hosted
+        # provider has no such hole — its endpoint and credential come from the
+        # server environment, not from anything an administrator can type — so
+        # ollama_url is simply irrelevant while that provider is selected.
+        provider = attrs.get("provider", getattr(self.instance, "provider", AISetting.OLLAMA))
+        if provider != AISetting.OLLAMA or "ollama_url" not in attrs:
+            return attrs
+
+        value = attrs["ollama_url"]
         # Re-validation is CHANGE-only: the frontend's settings form always
         # resends the whole `ai` object on every save (full-object update
         # pattern), so re-checking an untouched ollama_url on every unrelated
@@ -41,15 +60,17 @@ class AISettingSerializer(serializers.ModelSerializer):
         # that legitimately configured a remote Ollama host before this
         # guard existed. Only enforce the loopback restriction when the
         # value is genuinely changing (or there's no instance yet).
-        if self.instance is None or value != self.instance.ollama_url:
-            host = (urlparse(value).hostname or "").lower()
-            if host in ("localhost", "127.0.0.1", "::1") or django_settings.ALLOW_REMOTE_OLLAMA:
-                return value
-            raise serializers.ValidationError(
-                "AI must run on this machine (Data Privacy Act commitment). "
-                "Use http://localhost:11434, or set ALLOW_REMOTE_OLLAMA=true in the "
-                "server environment if the agency knowingly hosts Ollama elsewhere on-premises.")
-        return value
+        if self.instance is not None and value == self.instance.ollama_url:
+            return attrs
+
+        host = (urlparse(value).hostname or "").lower()
+        if host in ("localhost", "127.0.0.1", "::1") or django_settings.ALLOW_REMOTE_OLLAMA:
+            return attrs
+        raise serializers.ValidationError({"ollama_url": [
+            "On-premises AI must run on this machine (Data Privacy Act commitment). "
+            "Use http://localhost:11434, set ALLOW_REMOTE_OLLAMA=true in the server "
+            "environment if the agency knowingly hosts Ollama elsewhere on its own "
+            "network, or switch the provider to Hosted for a cloud deployment."]})
 
 
 class AISettingView(generics.RetrieveUpdateAPIView):

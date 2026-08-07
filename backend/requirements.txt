@@ -6,3 +6,11 @@ python-dotenv==1.0.1
 psycopg[binary]==3.2.4
 PyMuPDF==1.27.2.3
 Pillow==12.2.0
+
+# --- V3 cloud runtime ---
+gunicorn==26.0.0            # WSGI server (the cloud replacement for runserver)
+whitenoise==6.12.0          # static files straight from the app container
+dj-database-url==3.1.2      # DATABASE_URL parsing (Render/Railway/Fly/Heroku style)
+django-storages==1.14.6     # S3-compatible media storage (uploads survive redeploys)
+boto3==1.43.66              # S3 driver used by django-storages
+anthropic==0.120.2          # hosted AI provider (optional; Ollama still supported)

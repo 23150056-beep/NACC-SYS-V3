@@ -1,7 +1,11 @@
 from django.contrib import admin
 from django.urls import path, include
 
+from config.health import healthz
+
 urlpatterns = [
+    # Unauthenticated liveness/readiness probe for the cloud platform.
+    path("healthz/", healthz, name="healthz"),
     path("admin/", admin.site.urls),
     path("api/", include("accounts.urls")),
     path("api/", include("children.urls")),
