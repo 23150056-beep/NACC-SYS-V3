@@ -33,7 +33,6 @@ services:
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     plan: free
-    region: singapore          # closest region to RACCO I (Philippines)
     healthCheckPath: /healthz/
     envVars:
       - key: DATABASE_URL
