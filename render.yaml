@@ -7,12 +7,22 @@
 #
 # After the first deploy, set RUN_SEED=false on the API service (the seed is
 # idempotent, but there is no reason to run it on every boot).
+#
+# ⚠️  This blueprint is currently on Render's FREE plans. Two consequences:
+#   * The free PostgreSQL instance is DELETED after 30 days, and its data with
+#     it. Upgrade the database before the system holds anything you need to
+#     keep, or take regular pg_dump backups (docs/CLOUD-DEPLOYMENT.md §7).
+#   * The free web service sleeps after ~15 minutes idle, so the first request
+#     after a quiet period takes ~30 seconds while the container wakes.
+# Both are fine for building and demoing; neither is suitable for live case
+# data. To upgrade, change `plan: free` to `plan: basic-256mb` (database) and
+# `plan: starter` (API service).
 
 databases:
   - name: nacc-v3-db
     databaseName: nacc_v3
     user: nacc
-    plan: basic-256mb
+    plan: free
     postgresMajorVersion: "16"
 
 services:
@@ -22,7 +32,7 @@ services:
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
-    plan: starter
+    plan: free
     region: singapore          # closest region to RACCO I (Philippines)
     healthCheckPath: /healthz/
     envVars:
@@ -46,26 +56,26 @@ services:
           property: host
       - key: RUN_SEED
         value: "true"
+      # 2 workers fits Render's 512 MB free instance; raise to 3-4 after
+      # moving to a paid plan with more memory.
       - key: WEB_CONCURRENCY
-        value: "3"
+        value: "2"
 
       # ---- Uploaded files (reports, consent scans, child photos) --------
-      # Render's disk is ephemeral: without S3 every upload is destroyed on
-      # the next deploy. Point these at any S3-compatible bucket and keep the
-      # bucket PRIVATE — the app serves files only through authenticated
-      # endpoints.
+      # ⚠️  USE_S3=false keeps uploads on the container's own disk, which
+      # Render destroys on every deploy and every wake from sleep. Uploaded
+      # reports and consent scans WILL be lost. That is acceptable only while
+      # testing with sample data — never with real case files.
+      #
+      # To switch on object storage: set USE_S3=true here, then add these five
+      # variables in the Render dashboard (any S3-compatible bucket works —
+      # AWS S3, Cloudflare R2, Backblaze B2, Supabase Storage):
+      #   AWS_STORAGE_BUCKET_NAME   AWS_S3_REGION_NAME   AWS_S3_ENDPOINT_URL
+      #   AWS_ACCESS_KEY_ID         AWS_SECRET_ACCESS_KEY
+      # Keep the bucket PRIVATE — the app serves files only through
+      # authenticated endpoints, never from a public URL.
       - key: USE_S3
-        value: "true"
-      - key: AWS_STORAGE_BUCKET_NAME
-        sync: false
-      - key: AWS_S3_REGION_NAME
-        sync: false
-      - key: AWS_S3_ENDPOINT_URL
-        sync: false            # blank for AWS S3; set for R2/B2/Supabase
-      - key: AWS_ACCESS_KEY_ID
-        sync: false
-      - key: AWS_SECRET_ACCESS_KEY
-        sync: false
+        value: "false"
 
       # ---- AI layer (optional; system is fully functional with it off) ---
       # Leave unset to deploy with AI disabled. Set the key, then switch the
