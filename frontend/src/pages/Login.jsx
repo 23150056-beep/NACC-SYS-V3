@@ -4,9 +4,10 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { Button, FormField, Input, Alert, Icon } from '../ui';
 import PasswordChangeGate from '../components/PasswordChangeGate';
+import GoogleSignInButton from '../components/GoogleSignInButton';
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, loginWithGoogle } = useAuth();
   const toast = useToast();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
@@ -40,6 +41,26 @@ export default function Login() {
         setError('Invalid username or password.');
         toast.error('Sign-in failed. Check your credentials.');
       }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitGoogle = async (credential) => {
+    setError('');
+    setBusy(true);
+    try {
+      const u = await loginWithGoogle(credential);
+      toast.success(`Welcome back, ${u?.first_name || u?.fullname || 'there'}`);
+      navigate('/');
+    } catch (err) {
+      // The server's message is deliberately specific about the two cases a
+      // user can act on — an administrator account, or an account that does
+      // not exist here — so surface it rather than a generic failure.
+      const message = err.response?.data?.detail
+        || 'Google sign-in failed. Please try again or use your password.';
+      setError(message);
+      toast.error(message);
     } finally {
       setBusy(false);
     }
@@ -103,6 +124,11 @@ export default function Login() {
               <Button type="submit" variant="primary" size="lg" fullWidth disabled={busy} iconRight={busy ? null : <Icon name="arrow-right" size={18} />}>
                 {busy ? 'Logging in…' : 'Log In'}
               </Button>
+
+              {/* Renders nothing at all when the server has no Google client
+                  configured, so this whole block disappears rather than
+                  leaving a stray divider above empty space. */}
+              <GoogleSignInButton onCredential={submitGoogle} disabled={busy} />
             </form>
           )}
 

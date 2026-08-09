@@ -159,6 +159,13 @@ reproduce a deployment problem.
 | `RUN_SEED` | `false` | `true` on first deploy only. |
 | `DJANGO_LOG_LEVEL` | `INFO` | |
 
+### Google Sign-In (optional — see §9)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `GOOGLE_OAUTH_CLIENT_ID` | — | Unset = feature off, password form only. No frontend rebuild needed to change it. |
+| `GOOGLE_ALLOWED_DOMAINS` | — | Optional agency domain allowlist, e.g. `racco1.gov.ph`. |
+
 ### AI layer (optional)
 
 | Variable | Default | Notes |
@@ -298,10 +305,81 @@ untested backup is not a backup.
 
 ---
 
-## 9. Troubleshooting
+## 9. Google Sign-In (optional)
+
+Staff and psychologists can sign in with a Google account instead of a
+password. Administrators cannot, and this is deliberate: the admin account is
+the agency's way back in, and tying it to a third-party identity provider means
+a Google outage or a lost account locks RACCO I out of its own records.
+
+**Signing in never creates an account.** An Administrator creates the user
+first — correct role, with the person's Google address as their email — and
+Google then replaces the password for that already-authorised account. An
+unknown Google address is refused. For a system holding child case files, the
+alternative ("anyone with a Gmail can get in") is not a door worth opening.
+
+### Create the OAuth client
+
+1. <https://console.cloud.google.com> → create or select a project
+2. **APIs & Services → OAuth consent screen** → **Internal** if the agency has
+   Google Workspace, otherwise **External**. Fill in the app name and support
+   email.
+3. **APIs & Services → Credentials → Create credentials → OAuth client ID**
+   - Application type: **Web application**
+   - **Authorised JavaScript origins**: your frontend URL, exactly, with no
+     trailing slash — e.g. `https://nacc-v3-web.onrender.com`. Add
+     `http://localhost:5173` too if you develop locally.
+   - Authorised redirect URIs: leave empty. Google Identity Services returns
+     the token to the page; there is no redirect leg.
+4. Copy the **Client ID** (ends in `.apps.googleusercontent.com`).
+
+### Configure the API service
+
+| Variable | Value |
+|---|---|
+| `GOOGLE_OAUTH_CLIENT_ID` | the client ID from step 4 |
+| `GOOGLE_ALLOWED_DOMAINS` | optional, e.g. `racco1.gov.ph` — restricts sign-in to agency addresses |
+
+Set these on the **API** service only. There is no client *secret*: the browser
+flow uses an ID token the server verifies against Google's public keys, so
+there is nothing secret to leak. **No frontend rebuild is needed** — the login
+page reads the client ID from `/api/auth/google/config/` at runtime, so turning
+the feature on or off is an API environment change alone.
+
+### Enrol a user
+
+1. Sign in as an Administrator → **User Management** → create the user
+2. Set their **email to their Google address**, and the role to Psychologist
+   or Staff
+3. They open the login page and click **Sign in with Google**
+
+First successful sign-in records Google's stable subject id against the
+account. From then on matching is by that id, not the email — so a Google-side
+address change can neither lock them out nor hand their session to anyone else.
+
+### What is refused
+
+| Situation | Result |
+|---|---|
+| Google address with no account here | Refused — an Administrator must create the account first |
+| Administrator account | Refused — "use email and password" |
+| Archived or deactivated user | Refused |
+| Google email not verified | Refused |
+| Address outside `GOOGLE_ALLOWED_DOMAINS` | Refused |
+
+The first and third produce an identical message on purpose, so an outsider
+cannot use the login page to discover which addresses belong to agency staff.
+
+---
+
+## 10. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| Google button missing on the login page | `GOOGLE_OAUTH_CLIENT_ID` unset on the API | Set it; no frontend rebuild needed. |
+| "Google Sign-In could not load" | Google's script is blocked (firewall, extension, offline) | Password login still works; the message is the intended fallback. |
+| Google sign-in refused for a real staff member | No account here yet, or wrong role, or archived | Admin creates/fixes the account with their Google address as the email. |
+| `origin_mismatch` / `idpiframe_initialization_failed` in the console | Frontend URL not in the OAuth client's Authorised JavaScript origins | Add it exactly, no trailing slash. |
 | Container exits at boot with `ImproperlyConfigured` | `DJANGO_SECRET_KEY` unset with `DJANGO_DEBUG=False` | Set a real key. This failure is deliberate. |
 | `DisallowedHost` in logs | Hostname not in `DJANGO_ALLOWED_HOSTS` | Add it. Render's own hostname is added automatically. |
 | Frontend loads, every API call fails CORS | `CORS_ALLOWED_ORIGINS` missing the frontend origin | Add the exact scheme + host. |

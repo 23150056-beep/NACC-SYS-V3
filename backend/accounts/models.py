@@ -41,6 +41,12 @@ class User(AbstractUser):
     # archives every other admin account and clears the flag (see
     # accounts/serializers.py LoginSerializer).
     admin_takeover_pending = models.BooleanField(default=False)
+    # Google's stable subject identifier, stored the first time this account
+    # signs in with Google. Matching on `sub` rather than email from then on
+    # means a Google-side email change cannot hand someone else's session to
+    # this account, and cannot lock this user out of their own.
+    google_sub = models.CharField(
+        max_length=255, unique=True, null=True, blank=True, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

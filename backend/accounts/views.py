@@ -9,6 +9,9 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import get_user_model
 from django.db.models import Count, Q
 
+from accounts.google_auth import (
+    link_google_account, resolve_google_user, verify_google_credential,
+)
 from accounts.lockout import client_ip, clear_failures, is_locked, register_failure
 from accounts.models import Role
 from accounts.permissions import IsAdministrator, IsAdminOrStaff
@@ -68,6 +71,74 @@ class LoginView(TokenObtainPairView):
                 None, ActivityLog.UPDATED, ActivityLog.SECURITY,
                 entity_type="User",
                 entity_label=f"Login locked for {email} after repeated failures")
+
+
+class GoogleLoginView(generics.GenericAPIView):
+    """Exchange a Google ID token for this system's own JWT pair.
+
+    Returns the same {refresh, access, user} shape as LoginView, so the
+    frontend stores the session identically however the user signed in.
+    """
+
+    # No authenticators on purpose: a stale or expired access token sitting in
+    # the browser must not stop someone from signing in again. The cost is
+    # that DRF would render AuthenticationFailed as 403 (it downgrades 401
+    # when a view exposes no WWW-Authenticate scheme), so the 401 is returned
+    # explicitly below — this is an authentication endpoint and callers, the
+    # frontend included, branch on that status.
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+    serializer_class = None
+
+    def post(self, request):
+        try:
+            claims = verify_google_credential(request.data.get("credential"))
+            user = resolve_google_user(claims)
+        except AuthenticationFailed as exc:
+            return Response({"detail": exc.detail},
+                            status=status.HTTP_401_UNAUTHORIZED)
+
+        newly_linked = link_google_account(user, claims)
+
+        # Reuse LoginSerializer.get_token so the access token carries the same
+        # role claim as a password login — anything reading it downstream
+        # cannot tell the two paths apart.
+        refresh = LoginSerializer.get_token(user)
+
+        if newly_linked:
+            log_activity(
+                user, ActivityLog.UPDATED, ActivityLog.SECURITY,
+                entity_type="User", entity_id=user.id,
+                entity_label="Linked Google account for sign-in")
+        log_activity(user, ActivityLog.LOGIN, ActivityLog.SECURITY)
+
+        return Response({
+            "refresh": str(refresh),
+            "access": str(refresh.access_token),
+            "user": UserSerializer(user).data,
+        }, status=status.HTTP_200_OK)
+
+
+class GoogleAuthConfigView(generics.GenericAPIView):
+    """Tells the login page whether to render the Google button.
+
+    The client ID is public by design (it ships in the page anyway), but
+    serving it from here means the frontend does not need a rebuild to turn
+    Google Sign-In on or off — only the API's environment changes.
+    """
+
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+    serializer_class = None
+
+    def get(self, request):
+        from django.conf import settings as django_settings
+        client_id = django_settings.GOOGLE_OAUTH_CLIENT_ID
+        return Response({
+            "enabled": bool(client_id),
+            "client_id": client_id,
+            "allowed_domains": django_settings.GOOGLE_ALLOWED_DOMAINS,
+        })
 
 
 class MeView(generics.RetrieveAPIView):

@@ -94,6 +94,22 @@ Two things that will bite a cloud deploy if skipped:
 - **Set a real `DJANGO_SECRET_KEY`.** The app refuses to boot with the dev
   default when `DJANGO_DEBUG=False`.
 
+## Sign-in
+
+Two paths, and which one you get depends on your role:
+
+- **Administrator** — email and password only. The admin account is the
+  agency's way back in, so it is deliberately not tied to a third-party
+  identity provider.
+- **Psychologist / Staff** — email and password, **or** Google Sign-In.
+
+Google Sign-In **never creates accounts**. An Administrator creates the user
+first, with the correct role and the person's Google address as their email;
+Google then replaces the password for that already-authorised account. An
+unknown Google address is refused. Set `GOOGLE_OAUTH_CLIENT_ID` on the API to
+switch it on — no frontend rebuild — and see
+[the setup guide](docs/CLOUD-DEPLOYMENT.md#9-google-sign-in-optional).
+
 ## Roles
 
 - **Administrator** — users, settings, catalog governance, AI feature flags, all reports.

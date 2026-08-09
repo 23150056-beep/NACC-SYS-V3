@@ -16,12 +16,26 @@ export function AuthProvider({ children }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const login = async (email, password) => {
-    const { data } = await api.post('/auth/login/', { email, password });
+  // Both sign-in paths return the same {access, refresh, user} envelope, so
+  // the session is stored identically however the user got here.
+  const storeSession = (data) => {
     localStorage.setItem('access', data.access);
     localStorage.setItem('refresh', data.refresh);
     setUser(data.user);
     return data.user;
+  };
+
+  const login = async (email, password) => {
+    const { data } = await api.post('/auth/login/', { email, password });
+    return storeSession(data);
+  };
+
+  // Google Sign-In: `credential` is the ID token from Google Identity
+  // Services. The server verifies it and decides whether it maps to an
+  // existing staff or psychologist account — this never creates one.
+  const loginWithGoogle = async (credential) => {
+    const { data } = await api.post('/auth/google/', { credential });
+    return storeSession(data);
   };
 
   const logout = () => {
@@ -42,7 +56,7 @@ export function AuthProvider({ children }) {
   const updateUser = (patch) => setUser((u) => (u ? { ...u, ...patch } : u));
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, updateUser }}>
+    <AuthContext.Provider value={{ user, loading, login, loginWithGoogle, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

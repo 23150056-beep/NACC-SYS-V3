@@ -235,6 +235,25 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
 }
 
+# --- Google Sign-In (staff and psychologists) -----------------------------
+#
+# Unset = the feature is off and the login page shows only the password form.
+# The client ID is public (it ships inside any page that renders the Google
+# button); it lives in the environment so the feature can be switched on or
+# off without a rebuild.
+#
+# Accounts are never created by signing in — an Administrator creates the user
+# with the correct role first, and Google only replaces the password for that
+# already-authorised account. See accounts/google_auth.py.
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+
+# Optional allowlist of email domains, e.g. "racco1.gov.ph". Empty means any
+# Google address may be used, provided an account already exists for it.
+GOOGLE_ALLOWED_DOMAINS = [
+    d.strip().lower() for d in env_list("GOOGLE_ALLOWED_DOMAINS")
+]
+
+
 # Login brute-force protection (accounts.lockout) — cache-based, no DB models.
 LOGIN_MAX_ATTEMPTS = 5       # failed attempts for one email+IP before that combo locks
 LOGIN_IP_MAX_ATTEMPTS = 20   # failed attempts from one IP (any/many emails) before the IP locks

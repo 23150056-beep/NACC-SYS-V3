@@ -73,6 +73,18 @@ services:
       - key: USE_S3
         value: "false"
 
+      # ---- Google Sign-In (optional; staff and psychologists only) -------
+      # Leave unset to deploy with the password form only. When set, the
+      # login page shows a Google button. Accounts are never auto-created —
+      # an Administrator creates the user first. Admins always use passwords.
+      # The Google Cloud OAuth client needs the frontend URL under
+      # "Authorised JavaScript origins". See docs/CLOUD-DEPLOYMENT.md §10.
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      # Optional: comma-separated agency domains, e.g. racco1.gov.ph
+      - key: GOOGLE_ALLOWED_DOMAINS
+        sync: false
+
       # ---- AI layer (optional; system is fully functional with it off) ---
       # Leave unset to deploy with AI disabled. Set the key, then switch the
       # provider to "Hosted" in Settings → AI Assistance.
