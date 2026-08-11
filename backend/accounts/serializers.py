@@ -19,6 +19,10 @@ class RoleSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     role_name = serializers.CharField(source="role.role_name", read_only=True)
     fullname = serializers.CharField(read_only=True)
+    # Whether this account signs in with Google. Exposed as a boolean rather
+    # than the subject id itself: the directory needs to show *how* someone
+    # gets in, and the raw identifier is of no use to any client.
+    google_linked = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -26,8 +30,15 @@ class UserSerializer(serializers.ModelSerializer):
             "id", "email", "username", "first_name", "last_name",
             "middle_initial", "contact_details", "role", "role_name",
             "fullname", "status", "must_change_password", "admin_takeover_pending",
+            "google_linked", "last_login", "created_at",
         ]
-        read_only_fields = ["must_change_password", "admin_takeover_pending"]
+        read_only_fields = [
+            "must_change_password", "admin_takeover_pending",
+            "google_linked", "last_login", "created_at",
+        ]
+
+    def get_google_linked(self, obj):
+        return bool(obj.google_sub)
 
 
 class UserWriteSerializer(serializers.ModelSerializer):
