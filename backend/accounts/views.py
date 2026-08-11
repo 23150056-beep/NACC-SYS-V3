@@ -169,7 +169,10 @@ class UserViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = User.objects.all().order_by("last_name", "first_name")
-        if self.request.query_params.get("include_archived") != "true":
+        # Hiding archived users is a *list* concern only. Detail routes have to
+        # reach a deactivated account by id — otherwise reactivate/ is
+        # unreachable for exactly the users it exists to serve.
+        if self.action == "list" and self.request.query_params.get("include_archived") != "true":
             qs = qs.exclude(status=User.ARCHIVED)
         return qs
 
@@ -221,6 +224,34 @@ class UserViewSet(viewsets.ModelViewSet):
         user.save(update_fields=["status", "is_active", "updated_at"])
         self._log(user, ActivityLog.ARCHIVED)
         return Response({"status": "archived"}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    def reactivate(self, request, pk=None):
+        """Undo a deactivation. Administrators are deliberately excluded: a
+        deactivated administrator can only come back through a brand-new
+        account (product decision 2026-07-18), and a reactivate route would
+        quietly reopen the handover path that decision closed.
+
+        The old password is left working — an account is usually deactivated
+        when someone leaves, so it is flagged for a forced change instead:
+        whoever comes back signs in once with the old credentials and has to
+        set a new password before they reach any case data."""
+        user = self.get_object()
+        if user.status != User.ARCHIVED:
+            return Response({"detail": "This account is already active."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if user.role and user.role.role_name == Role.ADMINISTRATOR:
+            return Response(
+                {"detail": "A deactivated administrator cannot be reactivated. "
+                           "Create a new administrator account instead."},
+                status=status.HTTP_400_BAD_REQUEST)
+        user.status = User.ACTIVE
+        user.is_active = True
+        user.must_change_password = True
+        user.save(update_fields=["status", "is_active", "must_change_password",
+                                 "updated_at"])
+        self._log(user, ActivityLog.UPDATED)
+        return Response({"status": user.status}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="reset-password")
     def reset_password(self, request, pk=None):

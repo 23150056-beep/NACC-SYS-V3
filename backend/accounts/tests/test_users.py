@@ -57,6 +57,56 @@ class UserManagementTest(APITestCase):
         self.assertIn("admin@racco1.gov.ph", emails)
         self.assertNotIn("staff@racco1.gov.ph", emails)
 
+    def test_list_includes_archived_when_asked(self):
+        self._auth("admin@racco1.gov.ph", "admin1234")
+        self.client.post(f"/api/users/{self.staff.id}/archive/")
+        resp = self.client.get("/api/users/?include_archived=true")
+        emails = [u["email"] for u in resp.data]
+        self.assertIn("staff@racco1.gov.ph", emails)
+
+    def test_reactivate_restores_the_account_and_forces_a_password_change(self):
+        self._auth("admin@racco1.gov.ph", "admin1234")
+        self.client.post(f"/api/users/{self.staff.id}/archive/")
+        # No include_archived= here on purpose: the detail route has to reach a
+        # deactivated user by id or reactivate/ is unusable.
+        resp = self.client.post(f"/api/users/{self.staff.id}/reactivate/")
+        self.assertEqual(resp.status_code, 200)
+        self.staff.refresh_from_db()
+        self.assertEqual(self.staff.status, User.ACTIVE)
+        self.assertTrue(self.staff.is_active)
+        self.assertTrue(self.staff.must_change_password)
+        login = self.client.post("/api/auth/login/", {
+            "email": "staff@racco1.gov.ph", "password": "staff1234"})
+        self.assertEqual(login.status_code, 200)
+        self.assertTrue(login.data["user"]["must_change_password"])
+
+    def test_reactivate_on_an_active_user_is_400(self):
+        self._auth("admin@racco1.gov.ph", "admin1234")
+        resp = self.client.post(f"/api/users/{self.staff.id}/reactivate/")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_reactivate_refuses_administrators(self):
+        """A deactivated admin comes back only as a brand-new account."""
+        self._auth("admin@racco1.gov.ph", "admin1234")
+        other = User.objects.create_user(
+            email="admin2@racco1.gov.ph", username="admin2",
+            password="admin1234", role=self.admin_role)
+        self.client.post(f"/api/users/{other.id}/archive/")
+        resp = self.client.post(f"/api/users/{other.id}/reactivate/")
+        self.assertEqual(resp.status_code, 400)
+        other.refresh_from_db()
+        self.assertEqual(other.status, User.ARCHIVED)
+
+    def test_staff_cannot_reactivate(self):
+        other = User.objects.create_user(
+            email="left@racco1.gov.ph", username="left", password="left1234",
+            role=self.staff_role, status=User.ARCHIVED, is_active=False)
+        self._auth("staff@racco1.gov.ph", "staff1234")
+        resp = self.client.post(f"/api/users/{other.id}/reactivate/")
+        self.assertEqual(resp.status_code, 403)
+        other.refresh_from_db()
+        self.assertEqual(other.status, User.ARCHIVED)
+
     def test_admin_can_list_roles(self):
         self._auth("admin@racco1.gov.ph", "admin1234")
         resp = self.client.get("/api/roles/")
