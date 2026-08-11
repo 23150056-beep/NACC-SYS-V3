@@ -1,6 +1,7 @@
 // RACCO I Design System — primitives ported from the Claude Design workspace kit.
 // Token-driven inline styles; one import surface for every screen.
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import * as Lucide from 'lucide-react';
 
 /* ----------------------------- Icon ----------------------------- */
@@ -415,6 +416,312 @@ export function Tabs({ tabs = [], active, onChange, style = {} }) {
             style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 7, padding: '10px 14px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: 'var(--text-base)', color: on ? 'var(--blue-700)' : 'var(--text-muted)', marginBottom: -1, borderBottom: `2px solid ${on ? 'var(--blue-600)' : 'transparent'}`, transition: 'color var(--dur-fast), border-color var(--dur-fast)' }}>
             {t.label}
             {t.count != null && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600, padding: '1px 7px', borderRadius: 'var(--radius-pill)', background: on ? 'var(--blue-100)' : 'var(--ink-100)', color: on ? 'var(--blue-700)' : 'var(--text-muted)' }}>{t.count}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ----------------------------- Skeleton ----------------------------- *
+ * Loading placeholder shaped like the content it replaces. Tables should
+ * render a few skeleton ROWS rather than a spinner: the layout stops jumping,
+ * and an empty list can no longer be mistaken for "there is nothing here". */
+export function Skeleton({ width = '100%', height = 12, radius = 'var(--radius-xs)', style = {} }) {
+  return <span className="racco-skeleton" aria-hidden="true" style={{ display: 'block', width, height, borderRadius: radius, ...style }} />;
+}
+
+/* ------------------------ Dialog behaviour (a11y) ------------------------ *
+ * Everything a modal/drawer owes the keyboard: focus moves in on open, Tab is
+ * trapped inside, Escape closes (when the dialog allows it), and focus returns
+ * to whatever opened it. Attach the returned ref to the dialog element. */
+const FOCUSABLE_SELECTOR = 'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+/* Dialogs stack — a confirm can open on top of a drawer. Only the topmost one
+ * may answer Escape or trap Tab, or the layer underneath drags focus back out
+ * of the dialog the user is actually looking at. */
+const dialogStack = [];
+
+export function useDialogBehaviour({ active = true, onClose, closeOnEscape = true } = {}) {
+  const ref = useRef(null);
+  // The handlers live in a ref so the effect's only dependency is `active`.
+  // Re-running it would pull focus back to the first control — and callers
+  // legitimately change these mid-dialog (a form flips `closeOnEscape` off the
+  // moment it becomes dirty, i.e. on the user's first keystroke).
+  const latest = useRef({ onClose, closeOnEscape });
+  latest.current = { onClose, closeOnEscape };
+  useEffect(() => {
+    if (!active) return undefined;
+    const token = {};
+    dialogStack.push(token);
+    const opener = document.activeElement;
+    const node = ref.current;
+    const visible = () => Array.from(node?.querySelectorAll(FOCUSABLE_SELECTOR) || [])
+      .filter((el) => el.offsetParent !== null || el === document.activeElement);
+    // Focus the first real control, else the dialog itself, so screen readers
+    // land inside the dialog instead of continuing behind it.
+    (visible()[0] || node)?.focus();
+    const onKey = (e) => {
+      if (dialogStack[dialogStack.length - 1] !== token) return;
+      const { onClose: close, closeOnEscape: escapeCloses } = latest.current;
+      if (e.key === 'Escape' && escapeCloses && close) {
+        e.preventDefault(); e.stopPropagation(); close(); return;
+      }
+      if (e.key !== 'Tab' || !node) return;
+      const items = visible();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === node)) {
+        e.preventDefault(); last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault(); first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      const at = dialogStack.indexOf(token);
+      if (at !== -1) dialogStack.splice(at, 1);
+      if (opener instanceof HTMLElement && document.contains(opener)) opener.focus();
+    };
+  }, [active]);
+  return ref;
+}
+
+/* ----------------------------- Modal ----------------------------- *
+ * `dismissible={false}` for anything the user cannot get back — a one-time
+ * secret, an unsaved form: a stray backdrop click must not destroy it. */
+export function Modal({ open = true, onClose, title, subtitle = null, icon = null, tone = 'neutral', width = 460, dismissible = true, children, footer = null, style = {} }) {
+  const ref = useDialogBehaviour({ active: open, onClose, closeOnEscape: dismissible });
+  const titleId = useId();
+  if (!open) return null;
+  const tones = {
+    neutral: ['var(--ink-100)', 'var(--ink-600)'],
+    brand: ['var(--blue-50)', 'var(--blue-600)'],
+    warning: ['var(--warning-50)', 'var(--warning-600)'],
+    danger: ['var(--red-50)', 'var(--red-600)'],
+    success: ['var(--success-50)', 'var(--success-600)'],
+  };
+  const [chipBg, chipFg] = tones[tone] || tones.neutral;
+  return createPortal(
+    <div
+      onMouseDown={(e) => { if (dismissible && e.target === e.currentTarget) onClose?.(); }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(14,19,29,0.42)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, zIndex: 90, animation: 'racco-fade-in var(--dur-base) var(--ease-out)' }}
+    >
+      <div
+        ref={ref} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
+        style={{ width, maxWidth: '100%', maxHeight: '100%', overflow: 'auto', background: 'var(--surface)', borderRadius: 'var(--radius-xl)', boxShadow: 'var(--shadow-xl)', display: 'flex', flexDirection: 'column', animation: 'racco-pop-in var(--dur-base) var(--ease-out)', ...style }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 13, padding: '22px 22px 0' }}>
+          {icon && <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, flex: 'none', borderRadius: 'var(--radius-md)', background: chipBg, color: chipFg }}>{icon}</span>}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 id={titleId} style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 17, color: 'var(--text-strong)', margin: 0 }}>{title}</h2>
+            {subtitle && <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2 }}>{subtitle}</div>}
+          </div>
+          {dismissible && (
+            <button type="button" onClick={onClose} aria-label="Close" {...hoverLift({ lift: -1, shadow: 'var(--shadow-md)' })} style={iconBtn('var(--text-muted)')}><Icon name="x" size={16} /></button>
+          )}
+        </div>
+        <div style={{ padding: '16px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>{children}</div>
+        {footer && <div style={{ padding: '4px 22px 22px', display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>{footer}</div>}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ----------------------------- ConfirmDialog ----------------------------- *
+ * Replaces window.confirm(). Two things the native dialog cannot do and this
+ * screen needs: name the consequence in the button ("Deactivate", not "OK"),
+ * and demand `confirmPhrase` be typed out for the handful of actions serious
+ * enough that a mis-click must not be enough. */
+export function ConfirmDialog({ open = true, onClose, onConfirm, title, description, confirmLabel = 'Confirm', cancelLabel = 'Cancel', tone = 'danger', icon = null, confirmPhrase = null, confirmHint = null, busy = false, children = null }) {
+  const [typed, setTyped] = useState('');
+  useEffect(() => { if (open) setTyped(''); }, [open]);
+  if (!open) return null;
+  const ready = !confirmPhrase || typed.trim().toLowerCase() === String(confirmPhrase).trim().toLowerCase();
+  const variant = tone === 'danger' ? 'danger' : tone === 'warning' ? 'accent' : 'primary';
+  const defaultConfirmHint = (
+    <>Type <span className="racco-mono" style={{ fontWeight: 800, color: 'var(--text-strong)' }}>{confirmPhrase}</span> to confirm</>
+  );
+  return (
+    <Modal
+      open={open} onClose={onClose} title={title} tone={tone} icon={icon}
+      subtitle={null} width={470}
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>{cancelLabel}</Button>
+        <Button variant={variant} onClick={onConfirm} disabled={!ready || busy}>{confirmLabel}</Button>
+      </>}
+    >
+      {description && <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: 'var(--text-body)' }}>{description}</p>}
+      {children}
+      {/* The label is wrapped in one node on purpose: FormField's label is an
+          inline-flex row with a gap, so loose siblings would be spaced apart
+          in the middle of the sentence. */}
+      {confirmPhrase && (
+        <FormField label={<span>{confirmHint || defaultConfirmHint}</span>}>
+          <Input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={confirmPhrase} autoComplete="off" />
+        </FormField>
+      )}
+    </Modal>
+  );
+}
+
+/* ----------------------------- Drawer ----------------------------- *
+ * Right-hand panel for detail + edit. `dismissible` is expected to be wired to
+ * a dirty check so a click on the backdrop cannot silently bin typed input. */
+export function Drawer({ open = true, onClose, title, subtitle = null, avatar = null, width = 460, dismissible = true, onDismissBlocked = null, children, footer = null, as = 'div', ...rest }) {
+  const close = useCallback(() => {
+    if (dismissible) onClose?.(); else onDismissBlocked?.();
+  }, [dismissible, onClose, onDismissBlocked]);
+  const ref = useDialogBehaviour({ active: open, onClose: close });
+  const titleId = useId();
+  if (!open) return null;
+  const Panel = as;
+  return createPortal(
+    <div
+      onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(14,19,29,0.32)', display: 'flex', justifyContent: 'flex-end', zIndex: 80, animation: 'racco-fade-in var(--dur-base) var(--ease-out)' }}
+    >
+      <Panel
+        ref={ref} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
+        style={{ width, maxWidth: '94%', height: '100%', background: 'var(--surface)', boxShadow: 'var(--shadow-xl)', display: 'flex', flexDirection: 'column', animation: 'racco-slide-left var(--dur-slow) var(--ease-out)' }}
+        {...rest}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+          {avatar}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 id={titleId} style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 17, color: 'var(--text-strong)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h2>
+            {subtitle && <div style={{ fontSize: 12.5, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle}</div>}
+          </div>
+          <button type="button" onClick={close} aria-label="Close" {...hoverLift({ lift: -1, shadow: 'var(--shadow-md)' })} style={iconBtn('var(--text-muted)')}><Icon name="x" size={17} /></button>
+        </div>
+        <div className="racco-scroll" style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 15 }}>{children}</div>
+        {footer && <div style={{ padding: 16, borderTop: '1px solid var(--border)', display: 'flex', gap: 10 }}>{footer}</div>}
+      </Panel>
+    </div>,
+    document.body,
+  );
+}
+
+/* ----------------------------- Menu ----------------------------- *
+ * Row-level action menu. One neutral trigger instead of a stripe of coloured
+ * icon buttons: at ten rows those stripes are the loudest thing on the page,
+ * and colour then means "there is a button here" rather than "this is
+ * destructive". Rendered in a portal with fixed coordinates so an overflow
+ * container cannot clip it. */
+export function Menu({ items = [], label = 'More actions', trigger = null, align = 'right', size = 30 }) {
+  const btnRef = useRef(null);
+  const listRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const enabled = items.filter((i) => !i.disabled && !i.separator);
+
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const place = () => {
+      const r = btnRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const w = 252;
+      const h = listRef.current?.offsetHeight || items.length * 38 + 12;
+      const below = window.innerHeight - r.bottom;
+      setPos({
+        top: below < h + 12 && r.top > h + 12 ? r.top - h - 6 : r.bottom + 6,
+        left: Math.max(8, Math.min(window.innerWidth - w - 8, align === 'right' ? r.right - w : r.left)),
+        width: w,
+      });
+    };
+    place();
+    // Any scroll or resize moves the trigger out from under a fixed menu, so
+    // close rather than chase it.
+    const bail = () => setOpen(false);
+    window.addEventListener('scroll', bail, true);
+    window.addEventListener('resize', bail);
+    return () => { window.removeEventListener('scroll', bail, true); window.removeEventListener('resize', bail); };
+  }, [open, align, items.length]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => {
+      if (!listRef.current?.contains(e.target) && !btnRef.current?.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); btnRef.current?.focus(); return; }
+      const focusables = Array.from(listRef.current?.querySelectorAll('button:not([disabled])') || []);
+      if (!focusables.length) return;
+      const i = focusables.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown') { e.preventDefault(); focusables[(i + 1) % focusables.length].focus(); }
+      if (e.key === 'ArrowUp') { e.preventDefault(); focusables[(i - 1 + focusables.length) % focusables.length].focus(); }
+      if (e.key === 'Tab') { e.preventDefault(); setOpen(false); btnRef.current?.focus(); }
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey, true); };
+  }, [open]);
+
+  useEffect(() => {
+    if (open && pos) listRef.current?.querySelector('button:not([disabled])')?.focus();
+  }, [open, pos]);
+
+  return (
+    <>
+      <button
+        ref={btnRef} type="button" aria-label={label} aria-haspopup="menu" aria-expanded={open}
+        disabled={!enabled.length}
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+        onMouseEnter={(e) => { if (!open) e.currentTarget.style.background = 'var(--ink-100)'; }}
+        onMouseLeave={(e) => { if (!open) e.currentTarget.style.background = 'transparent'; }}
+        style={{ ...iconBtn('var(--text-muted)', size), border: '1px solid transparent', background: open ? 'var(--ink-100)' : 'transparent', color: open ? 'var(--text-strong)' : 'var(--text-muted)', opacity: enabled.length ? 1 : 0.35, cursor: enabled.length ? 'pointer' : 'not-allowed' }}
+      >
+        {trigger || <Icon name="more-horizontal" size={17} />}
+      </button>
+      {open && createPortal(
+        <div
+          ref={listRef} role="menu" aria-label={label}
+          onClick={(e) => e.stopPropagation()}
+          style={{ position: 'fixed', top: pos?.top ?? -9999, left: pos?.left ?? -9999, width: pos?.width ?? 252, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', padding: 5, zIndex: 95, animation: 'racco-pop-in var(--dur-fast) var(--ease-out)' }}
+        >
+          {items.map((item, idx) => (item.separator ? (
+            <div key={`sep-${idx}`} role="separator" style={{ height: 1, background: 'var(--border)', margin: '5px 4px' }} />
+          ) : (
+            <button
+              key={item.id || item.label} type="button" role="menuitem" disabled={item.disabled}
+              title={item.hint || undefined}
+              onClick={() => { setOpen(false); item.onSelect?.(); }}
+              onMouseEnter={(e) => { if (!item.disabled) e.currentTarget.style.background = item.tone === 'danger' ? 'var(--red-50)' : 'var(--ink-50)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '8px 10px', border: 'none', background: 'transparent', borderRadius: 'var(--radius-sm)', cursor: item.disabled ? 'not-allowed' : 'pointer', textAlign: 'left', fontFamily: 'var(--font-sans)', fontWeight: 600, fontSize: 13.5, color: item.disabled ? 'var(--text-faint)' : item.tone === 'danger' ? 'var(--red-600)' : 'var(--text-body)', opacity: item.disabled ? 0.75 : 1 }}
+            >
+              {item.icon && <Icon name={item.icon} size={15} />}
+              <span style={{ flex: 1 }}>{item.label}</span>
+            </button>
+          )))}
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+/* ----------------------------- FilterPills ----------------------------- *
+ * Counted status filter. The counts are the point: they double as the summary
+ * of the collection, so the toolbar answers "how many need attention?" without
+ * a separate row of stat tiles. */
+export function FilterPills({ options = [], value, onChange, label = 'Filter', style = {} }) {
+  return (
+    <div role="tablist" aria-label={label} style={{ display: 'flex', gap: 7, flexWrap: 'wrap', ...style }}>
+      {options.map((o) => {
+        const on = o.key === value;
+        return (
+          <button
+            key={o.key} role="tab" aria-selected={on} type="button" onClick={() => onChange?.(o.key)}
+            {...hoverLift({ lift: -1, shadow: 'var(--shadow-md)' })}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 13px', cursor: 'pointer', borderRadius: 'var(--radius-pill)', fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: 12.5, border: `1px solid ${on ? 'var(--blue-500)' : 'var(--border)'}`, background: on ? 'var(--blue-50)' : 'var(--surface)', color: on ? 'var(--blue-700)' : 'var(--text-body)', transition: 'var(--transition-base)' }}
+          >
+            {o.dot && <span style={{ width: 7, height: 7, borderRadius: '50%', background: o.dot, flex: 'none' }} />}
+            {o.label}
+            {o.count != null && <span className="racco-mono" style={{ fontSize: 11, fontWeight: 700, color: on ? 'var(--blue-600)' : 'var(--text-faint)' }}>{o.count}</span>}
           </button>
         );
       })}

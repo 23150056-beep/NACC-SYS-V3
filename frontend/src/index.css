@@ -368,6 +368,27 @@ tr:focus-visible {
     opacity: 1;
   }
 }
+
+/* Loading placeholder. Used by <Skeleton> to hold a table's shape while its
+   rows are in flight, so an empty list never reads as "no records". */
+.racco-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--ink-100) 0%,
+    var(--ink-50) 42%,
+    var(--ink-100) 84%
+  );
+  background-size: 220% 100%;
+  animation: racco-shimmer 1.5s var(--ease-in-out) infinite;
+}
+@keyframes racco-shimmer {
+  from {
+    background-position: 160% 0;
+  }
+  to {
+    background-position: -60% 0;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.001ms !important;

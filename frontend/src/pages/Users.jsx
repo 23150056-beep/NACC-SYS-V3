@@ -1,43 +1,179 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import { useActivity } from '../context/ActivityContext';
-import { Card, Button, Badge, Alert, Input, Select, FormField, Avatar, RoleBadge, EmptyState, Icon, iconBtn, hoverLift, PAGE, Tabs } from '../ui';
+import {
+  Card, Button, Alert, Input, Select, FormField, Avatar, RoleBadge, EmptyState,
+  Icon, iconBtn, hoverLift, PAGE, Tabs, Skeleton, Modal, ConfirmDialog, Drawer,
+  Menu, FilterPills,
+} from '../ui';
 import { useToast } from '../context/ToastContext';
 import CredentialHandoffs from './CredentialHandoffs';
 
 // No password field: the server generates a temporary password on create and
 // returns it exactly once — admins never choose another user's password.
 const EMPTY = { email: '', first_name: '', last_name: '', middle_initial: '', contact_details: '', role: '' };
+const EDITABLE = ['first_name', 'middle_initial', 'last_name', 'email', 'contact_details', 'role'];
+
+/* An account's lifecycle is not one field — it is `status`, plus
+ * `must_change_password`, plus `admin_takeover_pending`. The directory is the
+ * one place those have to be read as a single state, so derive it here and let
+ * every other part of the screen (column, filter, drawer) share the answer. */
+const LIFECYCLE = {
+  active: { label: 'Active', dot: 'var(--success-500)', note: 'Has signed in and set their own password.' },
+  pending: { label: 'Pending first sign-in', dot: 'var(--warning-500)', note: 'Holding a temporary password — they must set their own before they reach any case data.' },
+  takeover: { label: 'Takeover pending', dot: 'var(--red-500)', note: 'At this administrator’s first sign-in, every other administrator account is deactivated.' },
+  deactivated: { label: 'Deactivated', dot: 'var(--ink-400)', note: 'Cannot sign in. Everything they recorded is retained.' },
+};
+
+const statusOf = (u) => (
+  u.status === 'archived' ? 'deactivated'
+    : u.admin_takeover_pending ? 'takeover'
+      : u.must_change_password ? 'pending'
+        : 'active');
+
+// Filter buckets are mutually exclusive so the counts add up to the total —
+// nothing in this directory is hidden without a number next to it.
+const BUCKET_OF = { active: 'active', pending: 'pending', takeover: 'pending', deactivated: 'deactivated' };
+
+const DATE_ONLY = { day: 'numeric', month: 'short', year: 'numeric' };
+const exactDate = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { ...DATE_ONLY, hour: 'numeric', minute: '2-digit' }) : '');
+const sinceLabel = (iso) => {
+  if (!iso) return null;
+  const secs = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (secs < 90) return 'Just now';
+  if (secs < 3600) return `${Math.round(secs / 60)} min ago`;
+  if (secs < 86400) return `${Math.round(secs / 3600)} hr ago`;
+  if (secs < 604800) return `${Math.round(secs / 86400)} d ago`;
+  return new Date(iso).toLocaleDateString(undefined, DATE_ONLY);
+};
+
+const SORT_ORDER = { active: 0, takeover: 1, pending: 2, deactivated: 3 };
+const nameOf = (u) => (u.fullname || u.username || u.email || '');
+const compare = (a, b, key) => {
+  if (key === 'role') return (a.role_name || '').localeCompare(b.role_name || '') || nameOf(a).localeCompare(nameOf(b));
+  if (key === 'status') return SORT_ORDER[statusOf(a)] - SORT_ORDER[statusOf(b)] || nameOf(a).localeCompare(nameOf(b));
+  if (key === 'signin') return Number(!!a.google_linked) - Number(!!b.google_linked) || nameOf(a).localeCompare(nameOf(b));
+  if (key === 'last') return new Date(a.last_login).getTime() - new Date(b.last_login).getTime();
+  return nameOf(a).localeCompare(nameOf(b));
+};
+
+/* "Never signed in" is not an old date, so it must not ride the sort
+ * direction: pinned to the bottom both ways, the way a null is in any data
+ * table. Applied outside the asc/desc multiplier — inside it, flipping the
+ * column would push every never-used account to the top. */
+const pinnedLast = (a, b, key) => {
+  if (key !== 'last') return 0;
+  const av = a.last_login || null;
+  const bv = b.last_login || null;
+  if (av && bv) return 0;
+  if (!av && !bv) return nameOf(a).localeCompare(nameOf(b));
+  return av ? -1 : 1;
+};
+
+const COLUMNS = [
+  { key: 'name', label: 'User', dir: 'asc' },
+  { key: 'role', label: 'Role', dir: 'asc' },
+  { key: 'status', label: 'Status', dir: 'asc' },
+  { key: 'signin', label: 'Sign-in', dir: 'desc' },
+  { key: 'last', label: 'Last sign-in', dir: 'desc' },
+];
+
+const TH = { textAlign: 'left', padding: '11px 16px', fontSize: 11, fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)', whiteSpace: 'nowrap', background: 'var(--surface)', position: 'sticky', top: 0, zIndex: 2, borderBottom: '1px solid var(--border)' };
+const TD = { padding: '13px 16px', fontSize: 13, color: 'var(--text-body)', verticalAlign: 'middle' };
+
+function StatusCell({ state }) {
+  const s = LIFECYCLE[state];
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 700, color: state === 'active' ? 'var(--text-body)' : 'var(--text-strong)', whiteSpace: 'nowrap' }}>
+      <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.dot, flex: 'none', boxShadow: state === 'takeover' ? '0 0 0 3px var(--red-50)' : 'none' }} />
+      {s.label}
+    </span>
+  );
+}
+
+function SignInCell({ google }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+      <Icon name={google ? 'badge-check' : 'key-round'} size={14} style={{ color: google ? 'var(--blue-500)' : 'var(--text-faint)' }} />
+      {google ? 'Google' : 'Password'}
+    </span>
+  );
+}
+
+function Fact({ label, children }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, fontSize: 13 }}>
+      <span style={{ width: 108, flex: 'none', color: 'var(--text-muted)' }}>{label}</span>
+      <span style={{ flex: 1, minWidth: 0, color: 'var(--text-strong)', fontWeight: 600 }}>{children}</span>
+    </div>
+  );
+}
 
 export default function Users() {
   const [tab, setTab] = useState('users');
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  const [q, setQ] = useState('');
+  const [bucket, setBucket] = useState('all');
+  const [roleFilter, setRoleFilter] = useState('');
+  const [sort, setSort] = useState({ key: 'name', dir: 'asc' });
+
   const [form, setForm] = useState(null);
+  const [pristine, setPristine] = useState(null);
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  // { kind, user } — every destructive action goes through one dialog rather
+  // than window.confirm(), so the button can name the consequence.
+  const [confirm, setConfirm] = useState(null);
+  const [busy, setBusy] = useState(false);
+
   // Holds { user, temp_password } while the just-generated temp password is
   // on screen. Closing the modal discards it for good — the API never
   // returns it again, so there is nothing to keep in state afterward.
   const [resetResult, setResetResult] = useState(null);
+
   const { refresh: refreshActivity } = useActivity();
   const toast = useToast();
 
-  const load = () => api.get('/users/').then((r) => setUsers(r.data));
+  // include_archived: deactivated accounts belong in the directory. Hiding
+  // them made "this person is gone" indistinguishable from "this person was
+  // never here", and left no way back for an account archived by mistake.
+  const load = async () => {
+    try {
+      const r = await api.get('/users/', { params: { include_archived: 'true' } });
+      setUsers(r.data);
+      setLoadError('');
+    } catch (err) {
+      setLoadError(err.response?.data?.detail || 'Could not load the user directory.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     load();
-    api.get('/roles/').then((r) => setRoles(r.data));
+    api.get('/roles/').then((r) => setRoles(r.data)).catch(() => setRoles([]));
   }, []);
 
-  const openCreate = () => { setError(''); setForm({ ...EMPTY }); };
-  const openEdit = (u) => { setError(''); setForm({ ...EMPTY, ...u }); };
+  const openCreate = () => { setError(''); setPristine({ ...EMPTY }); setForm({ ...EMPTY }); };
+  const openEdit = (u) => { setError(''); setPristine({ ...EMPTY, ...u }); setForm({ ...EMPTY, ...u }); };
+
+  const dirty = !!form && !!pristine && EDITABLE.some((k) => String(form[k] ?? '') !== String(pristine[k] ?? ''));
+  const closeForm = () => { setForm(null); setPristine(null); setError(''); };
 
   const save = async (e) => {
     e.preventDefault();
     setError('');
+    setSaving(true);
     try {
       const payload = { ...form };
       delete payload.role_name; delete payload.fullname;
       delete payload.must_change_password; delete payload.admin_takeover_pending;
+      delete payload.google_linked; delete payload.last_login; delete payload.created_at;
       if (form.id) {
         await api.put(`/users/${form.id}/`, payload);
         toast.success('User updated');
@@ -48,35 +184,45 @@ export default function Users() {
         // password now — the server can never show it again.
         setResetResult({ user: data, temp_password: data.temp_password });
       }
-      setForm(null);
+      closeForm();
       load();
       refreshActivity();
     } catch (err) {
-      setError(JSON.stringify(err.response?.data || 'Save failed'));
+      const body = err.response?.data;
+      setError(typeof body === 'string' ? body
+        : body ? Object.entries(body).map(([k, v]) => `${k}: ${[].concat(v).join(' ')}`).join('\n')
+          : 'Save failed.');
       toast.error('Could not save the user. Please try again.');
+    } finally {
+      setSaving(false);
     }
   };
 
-  const archive = async (u) => {
-    if (!window.confirm(`Deactivate ${u.fullname || u.email}?`)) return;
+  const runConfirmed = async () => {
+    const { kind, user: u } = confirm;
+    if (kind === 'discard') { setConfirm(null); closeForm(); return; }
+    setBusy(true);
     try {
-      await api.post(`/users/${u.id}/archive/`);
-      toast.success(`${u.fullname || u.email} deactivated`);
+      if (kind === 'archive') {
+        await api.post(`/users/${u.id}/archive/`);
+        toast.success(`${nameOf(u)} deactivated`);
+      } else if (kind === 'reactivate') {
+        await api.post(`/users/${u.id}/reactivate/`);
+        toast.success(`${nameOf(u)} reactivated — they must set a new password at next sign-in`);
+      } else if (kind === 'reset') {
+        const { data } = await api.post(`/users/${u.id}/reset-password/`);
+        setResetResult({ user: u, temp_password: data.temp_password });
+      }
+      setConfirm(null);
+      // These can all be launched from inside the drawer; leaving it open
+      // would show account facts the action just invalidated.
+      closeForm();
       load();
       refreshActivity();
     } catch (err) {
-      toast.error('Could not deactivate the user.');
-    }
-  };
-
-  const resetPassword = async (u) => {
-    if (!window.confirm(`Issue a new temporary password for ${u.fullname || u.email}? Their current password will stop working immediately.`)) return;
-    try {
-      const { data } = await api.post(`/users/${u.id}/reset-password/`);
-      setResetResult({ user: u, temp_password: data.temp_password });
-      refreshActivity();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Could not reset the password.');
+      toast.error(err.response?.data?.detail || 'That did not go through. Please try again.');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -88,7 +234,67 @@ export default function Users() {
 
   const toneFor = (role) => (role === 'Administrator' ? 'brand' : role === 'Psychologist' ? 'red' : 'amber');
 
-  const pendingHandoffs = users.filter((u) => u.must_change_password).length;
+  const counts = useMemo(() => {
+    const c = { all: users.length, active: 0, pending: 0, deactivated: 0 };
+    users.forEach((u) => { c[BUCKET_OF[statusOf(u)]] += 1; });
+    return c;
+  }, [users]);
+
+  const pendingHandoffs = users.filter((u) => u.must_change_password && u.status !== 'archived').length;
+
+  const visible = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    const rows = users.filter((u) => {
+      if (bucket !== 'all' && BUCKET_OF[statusOf(u)] !== bucket) return false;
+      if (roleFilter && String(u.role) !== String(roleFilter)) return false;
+      if (!needle) return true;
+      return [u.fullname, u.username, u.email, u.contact_details, u.role_name]
+        .some((v) => v && String(v).toLowerCase().includes(needle));
+    });
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    return rows.sort((a, b) => pinnedLast(a, b, sort.key) || dir * compare(a, b, sort.key));
+  }, [users, q, bucket, roleFilter, sort]);
+
+  const filtered = q.trim() || bucket !== 'all' || roleFilter;
+  const clearFilters = () => { setQ(''); setBucket('all'); setRoleFilter(''); };
+
+  const toggleSort = (col) => setSort((s) => (
+    s.key === col.key ? { key: col.key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: col.key, dir: col.dir }));
+
+  const menuItems = (u) => {
+    const archived = statusOf(u) === 'deactivated';
+    const isAdmin = u.role_name === 'Administrator';
+    return [
+      { id: 'edit', label: 'Edit details', icon: 'pencil', onSelect: () => openEdit(u) },
+      {
+        id: 'reset',
+        label: 'Issue temporary password',
+        icon: 'key-round',
+        disabled: archived,
+        hint: archived ? 'Reactivate the account first.' : undefined,
+        onSelect: () => setConfirm({ kind: 'reset', user: u }),
+      },
+      { separator: true },
+      archived
+        ? {
+          id: 'reactivate',
+          label: 'Reactivate account',
+          icon: 'user-check',
+          disabled: isAdmin,
+          hint: isAdmin ? 'A deactivated administrator can only return as a brand-new account.' : undefined,
+          onSelect: () => setConfirm({ kind: 'reactivate', user: u }),
+        }
+        : {
+          id: 'archive',
+          label: 'Deactivate account',
+          icon: 'user-x',
+          tone: 'danger',
+          onSelect: () => setConfirm({ kind: 'archive', user: u }),
+        },
+    ];
+  };
+
+  const formRole = roles.find((r) => String(r.id) === String(form?.role))?.role_name;
 
   return (
     <div style={{ ...PAGE, position: 'relative' }}>
@@ -99,58 +305,166 @@ export default function Users() {
         ]}
         active={tab}
         onChange={setTab}
-        style={{ marginBottom: 16 }}
+        style={{ marginBottom: 18 }}
       />
 
       {tab === 'handoffs' ? (
         <CredentialHandoffs />
       ) : (
         <>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
+            <div style={{ width: 340, maxWidth: '100%' }}>
+              <Input
+                value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search users"
+                placeholder="Search name, email, contact or role…"
+                leading={<Icon name="search" size={16} />}
+                trailing={q ? (
+                  <button type="button" aria-label="Clear search" onClick={() => setQ('')} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-faint)', display: 'inline-flex', padding: 0 }}>
+                    <Icon name="x" size={15} />
+                  </button>
+                ) : null}
+              />
+            </div>
             <Button variant="primary" onClick={openCreate} iconLeft={<Icon name="user-plus" size={17} />}>Add User</Button>
           </div>
 
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <FilterPills
+                label="Filter users by account status"
+                value={bucket}
+                onChange={setBucket}
+                options={[
+                  { key: 'all', label: 'All', count: counts.all },
+                  { key: 'active', label: 'Active', count: counts.active, dot: LIFECYCLE.active.dot },
+                  { key: 'pending', label: 'Pending first sign-in', count: counts.pending, dot: LIFECYCLE.pending.dot },
+                  { key: 'deactivated', label: 'Deactivated', count: counts.deactivated, dot: LIFECYCLE.deactivated.dot },
+                ]}
+              />
+              <div style={{ width: 178 }}>
+                <Select size="sm" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} aria-label="Filter by role">
+                  <option value="">All roles</option>
+                  {roles.map((r) => <option key={r.id} value={r.id}>{r.role_name}</option>)}
+                </Select>
+              </div>
+            </div>
+            <div aria-live="polite" style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
+              Showing <strong style={{ color: 'var(--text-strong)' }}>{visible.length}</strong> of {users.length} accounts
+            </div>
+          </div>
+
           <Card padding="0">
-            {users.length === 0 ? (
-              <EmptyState icon={<Icon name="users" size={24} />} title="No users yet" description="Add agency accounts to get started." />
+            {loadError ? (
+              <div style={{ padding: 20 }}>
+                <Alert tone="danger" title="The directory could not be loaded" icon={<Icon name="wifi-off" size={18} />}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start' }}>
+                    <span>{loadError} Nothing has been changed — this is a display problem, not missing accounts.</span>
+                    <Button variant="secondary" size="sm" onClick={() => { setLoading(true); load(); }} iconLeft={<Icon name="refresh-cw" size={15} />}>Try again</Button>
+                  </div>
+                </Alert>
+              </div>
             ) : (
-              <div className="racco-scroll" style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', minWidth: 680, borderCollapse: 'collapse' }}>
+              <div className="racco-scroll" style={{ overflow: 'auto', maxHeight: 'max(340px, calc(100vh - 340px))' }}>
+                <table style={{ width: '100%', minWidth: 880, borderCollapse: 'collapse' }}>
                   <thead>
-                    <tr style={{ background: 'var(--ink-50)', borderBottom: '1px solid var(--border)' }}>
-                      {['Name', 'Email', 'Contact', 'Role', 'Actions'].map((h) => (
-                        <th key={h} scope="col" style={{ textAlign: 'left', padding: '12px 16px', fontSize: 11, fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{h}</th>
-                      ))}
+                    <tr>
+                      {COLUMNS.map((c) => {
+                        const on = sort.key === c.key;
+                        return (
+                          <th key={c.key} scope="col" aria-sort={on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'} style={TH}>
+                            <button
+                              type="button" onClick={() => toggleSort(c)}
+                              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-strong)'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.color = on ? 'var(--blue-700)' : 'var(--text-muted)'; }}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', font: 'inherit', letterSpacing: 'inherit', textTransform: 'inherit', color: on ? 'var(--blue-700)' : 'var(--text-muted)' }}
+                            >
+                              {c.label}
+                              <Icon name={on ? (sort.dir === 'asc' ? 'chevron-up' : 'chevron-down') : 'chevrons-up-down'} size={13} style={{ opacity: on ? 1 : 0.4 }} />
+                            </button>
+                          </th>
+                        );
+                      })}
+                      <th scope="col" style={{ ...TH, width: 56 }}><span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>Actions</span></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {users.map((u) => (
-                      <tr key={u.id} style={{ borderBottom: '1px solid var(--ink-100)' }}>
-                        <td style={{ padding: '12px 16px' }}>
+                    {loading && Array.from({ length: 5 }).map((_, i) => (
+                      <tr key={`skeleton-${i}`} style={{ borderBottom: '1px solid var(--ink-100)' }}>
+                        <td style={TD}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-                            <Avatar name={u.fullname || u.username || u.email} tone={toneFor(u.role_name)} size="sm" />
-                            <span style={{ fontWeight: 700, fontSize: 13.5, color: 'var(--text-strong)' }}>{u.fullname || u.username}</span>
+                            <Skeleton width={30} height={30} radius="50%" />
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+                              <Skeleton width="52%" height={11} />
+                              <Skeleton width="72%" height={9} />
+                            </div>
                           </div>
                         </td>
-                        <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--text-body)' }} className="racco-mono">{u.email}</td>
-                        <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--text-muted)' }} className="racco-mono">{u.contact_details || '—'}</td>
-                        <td style={{ padding: '12px 16px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                            {u.role_name ? <RoleBadge role={u.role_name} /> : '—'}
-                            {u.admin_takeover_pending && <Badge tone="warning" size="sm" dot>Takeover pending</Badge>}
-                          </div>
-                        </td>
-                        <td style={{ padding: '12px 16px' }}>
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            <button title="Edit user" aria-label={`Edit ${u.fullname || u.email}`} onClick={() => openEdit(u)} {...hoverLift({ lift: -1, shadow: 'var(--shadow-md)' })} style={iconBtn('var(--blue-600)')}><Icon name="pencil" size={15} /></button>
-                            {/* Archived users never appear in this list (see load()), but guard
-                                anyway in case a future view surfaces them here too. */}
-                            <button title="Reset password" aria-label={`Reset password for ${u.fullname || u.email}`} disabled={u.status === 'archived'} onClick={() => resetPassword(u)} {...hoverLift({ lift: -1, shadow: 'var(--shadow-md)' })} style={{ ...iconBtn('var(--amber-500)'), ...(u.status === 'archived' ? { opacity: 0.4, cursor: 'not-allowed' } : {}) }}><Icon name="key-round" size={15} /></button>
-                            <button title="Deactivate user" aria-label={`Deactivate ${u.fullname || u.email}`} onClick={() => archive(u)} {...hoverLift({ lift: -1, shadow: 'var(--shadow-md)' })} style={iconBtn('var(--red-500)')}><Icon name="user-x" size={15} /></button>
-                          </div>
-                        </td>
+                        <td style={TD}><Skeleton width={92} height={18} radius="var(--radius-pill)" /></td>
+                        <td style={TD}><Skeleton width={80} height={11} /></td>
+                        <td style={TD}><Skeleton width={64} height={11} /></td>
+                        <td style={TD}><Skeleton width={70} height={11} /></td>
+                        <td style={TD}><Skeleton width={18} height={11} /></td>
                       </tr>
                     ))}
+
+                    {!loading && visible.map((u) => {
+                      const state = statusOf(u);
+                      const off = state === 'deactivated';
+                      return (
+                        <tr
+                          key={u.id} tabIndex={0} role="button"
+                          aria-label={`${nameOf(u)} — ${u.role_name || 'no role'}, ${LIFECYCLE[state].label}. Open account.`}
+                          onClick={() => openEdit(u)}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEdit(u); } }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--blue-50)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                          style={{ borderBottom: '1px solid var(--ink-100)', cursor: 'pointer', transition: 'background var(--dur-fast) var(--ease-out)', opacity: off ? 0.66 : 1 }}
+                        >
+                          <td style={TD}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 11, minWidth: 0 }}>
+                              <Avatar name={nameOf(u)} tone={off ? 'neutral' : toneFor(u.role_name)} size="sm" />
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontWeight: 700, fontSize: 13.5, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nameOf(u)}</div>
+                                <div className="racco-mono" style={{ fontSize: 11.5, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td style={TD}>{u.role_name ? <RoleBadge role={u.role_name} size="sm" /> : <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>
+                          <td style={TD} title={LIFECYCLE[state].note}><StatusCell state={state} /></td>
+                          <td style={TD}><SignInCell google={u.google_linked} /></td>
+                          <td style={{ ...TD, whiteSpace: 'nowrap' }} title={exactDate(u.last_login)}>
+                            {u.last_login
+                              ? <span style={{ color: 'var(--text-body)' }}>{sinceLabel(u.last_login)}</span>
+                              : <span style={{ color: 'var(--text-faint)' }}>Never</span>}
+                          </td>
+                          <td style={{ ...TD, textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                            <Menu label={`Actions for ${nameOf(u)}`} items={menuItems(u)} />
+                          </td>
+                        </tr>
+                      );
+                    })}
+
+                    {!loading && visible.length === 0 && (
+                      <tr>
+                        <td colSpan={6} style={{ padding: 0 }}>
+                          {filtered ? (
+                            <EmptyState
+                              icon={<Icon name="search-x" size={24} />}
+                              title="No accounts match those filters"
+                              description="Try a different name or email, or widen the status and role filters."
+                              action={<Button variant="secondary" size="sm" onClick={clearFilters} iconLeft={<Icon name="rotate-ccw" size={15} />}>Clear filters</Button>}
+                            />
+                          ) : (
+                            <EmptyState
+                              icon={<Icon name="users" size={24} />}
+                              title="No accounts yet"
+                              description="Add the agency's administrators, psychologists and staff. Each one gets a temporary password to hand over."
+                              action={<Button variant="primary" size="sm" onClick={openCreate} iconLeft={<Icon name="user-plus" size={15} />}>Add the first user</Button>}
+                            />
+                          )}
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -160,80 +474,167 @@ export default function Users() {
       )}
 
       {form && (
-        <div onClick={() => setForm(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(14,19,29,0.32)', display: 'flex', justifyContent: 'flex-end', zIndex: 70, animation: 'racco-fade-in var(--dur-base) var(--ease-out)' }}>
-          <form onSubmit={save} onClick={(e) => e.stopPropagation()} style={{ width: 420, maxWidth: '92%', height: '100%', background: 'var(--surface)', boxShadow: 'var(--shadow-xl)', display: 'flex', flexDirection: 'column', animation: 'racco-slide-left var(--dur-slow) var(--ease-out)' }}>
-            <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--ink-50)' }}>
-              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 17, color: 'var(--text-strong)' }}>{form.id ? 'Edit User' : 'Add User'}</div>
-              <button type="button" onClick={() => setForm(null)} aria-label="Close" {...hoverLift({ lift: -1, shadow: 'var(--shadow-md)' })} style={iconBtn('var(--text-muted)')}><Icon name="x" size={17} /></button>
+        <Drawer
+          as="form" onSubmit={save} noValidate
+          title={form.id ? nameOf(form) : 'Add User'}
+          subtitle={form.id ? form.email : 'A new agency account'}
+          avatar={form.id ? <Avatar name={nameOf(form)} tone={toneFor(form.role_name)} size="md" /> : null}
+          dismissible={!dirty}
+          onClose={closeForm}
+          onDismissBlocked={() => setConfirm({ kind: 'discard' })}
+          footer={<>
+            <Button type="button" variant="ghost" onClick={() => (dirty ? setConfirm({ kind: 'discard' }) : closeForm())}>Cancel</Button>
+            <Button type="submit" variant="primary" disabled={saving} style={{ flex: 1 }} iconLeft={<Icon name="save" size={16} />}>
+              {saving ? 'Saving…' : form.id ? 'Save changes' : 'Create user'}
+            </Button>
+          </>}
+        >
+          {error && <Alert tone="danger" icon={<Icon name="alert-triangle" size={18} />}><span style={{ whiteSpace: 'pre-line' }}>{error}</span></Alert>}
+
+          {/* Account facts first: what an admin opens a row to check is almost
+              always the state of the account, not the spelling of the name. */}
+          {form.id && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '14px 16px', background: 'var(--ink-50)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
+              <div className="racco-eyebrow" style={{ fontSize: 10 }}>Account</div>
+              <Fact label="Status"><StatusCell state={statusOf(form)} /></Fact>
+              <Fact label="Signs in with"><SignInCell google={form.google_linked} /></Fact>
+              <Fact label="Last sign-in">{form.last_login ? exactDate(form.last_login) : <span style={{ color: 'var(--text-faint)', fontWeight: 500 }}>Never</span>}</Fact>
+              <Fact label="Added">{form.created_at ? new Date(form.created_at).toLocaleDateString(undefined, DATE_ONLY) : '—'}</Fact>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                {LIFECYCLE[statusOf(form)].note}
+              </div>
+              {/* The same actions as the row menu, so opening an account to
+                  check it does not mean closing it again to act on it. */}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {statusOf(form) === 'deactivated' ? (
+                  <Button
+                    variant="secondary" size="sm" iconLeft={<Icon name="user-check" size={15} />}
+                    disabled={form.role_name === 'Administrator'}
+                    title={form.role_name === 'Administrator' ? 'A deactivated administrator can only return as a brand-new account.' : undefined}
+                    onClick={() => setConfirm({ kind: 'reactivate', user: form })}
+                  >Reactivate</Button>
+                ) : (
+                  <>
+                    <Button variant="secondary" size="sm" iconLeft={<Icon name="key-round" size={15} />} onClick={() => setConfirm({ kind: 'reset', user: form })}>Temporary password</Button>
+                    <Button variant="ghost" size="sm" iconLeft={<Icon name="user-x" size={15} />} style={{ color: 'var(--red-600)' }} onClick={() => setConfirm({ kind: 'archive', user: form })}>Deactivate</Button>
+                  </>
+                )}
+              </div>
             </div>
-            <div className="racco-scroll" style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
-              {error && <Alert tone="danger" icon={<Icon name="alert-triangle" size={18} />}>{error}</Alert>}
-              {[['first_name', 'First Name'], ['middle_initial', 'Middle Initial'], ['last_name', 'Last Name'], ['email', 'Email'], ['contact_details', 'Contact Details']].map(([k, label]) => (
-                <FormField key={k} label={label}>
-                  <Input value={form[k] || ''} onChange={(e) => setForm({ ...form, [k]: e.target.value })} type={k === 'email' ? 'email' : 'text'} />
-                </FormField>
-              ))}
-              {/* A role cannot be changed once assigned (adviser). */}
-              {form.id && form.role ? (
-                <FormField label="Role" hint="A role cannot be changed once it has been assigned.">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 42, padding: '0 13px', borderRadius: 'var(--radius-md)', background: 'var(--ink-50)', border: '1px solid var(--border)', color: 'var(--text-strong)', fontWeight: 700, fontSize: 14 }}>
-                    {form.role_name || roles.find((r) => String(r.id) === String(form.role))?.role_name || '—'}
-                    <Icon name="lock" size={13} style={{ color: 'var(--text-faint)', marginLeft: 'auto' }} />
-                  </div>
-                </FormField>
-              ) : (
-                <FormField label="Role">
-                  <Select value={form.role || ''} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-                    <option value="">— Select role —</option>
-                    {roles.map((r) => <option key={r.id} value={r.id}>{r.role_name}</option>)}
-                  </Select>
-                </FormField>
-              )}
-              {/* Single-admin handover warning (product decision 2026-07-18). */}
-              {!form.id && roles.find((r) => String(r.id) === String(form.role))?.role_name === 'Administrator' && (
-                <Alert tone="warning" icon={<Icon name="alert-triangle" size={18} />}>
-                  Admin handover: when this new administrator logs in for the
-                  first time, every other administrator account — including
-                  yours — is deactivated immediately. A deactivated
-                  administrator can only return with a brand-new account.
-                </Alert>
-              )}
-              {!form.id && (
-                <Alert tone="info" icon={<Icon name="key-round" size={18} />}>
-                  A temporary password is generated automatically when you save.
-                  It is shown once — hand it to the user, and they must set their
-                  own password at first login.
-                </Alert>
-              )}
-            </div>
-            <div style={{ padding: 16, borderTop: '1px solid var(--border)' }}>
-              <Button type="submit" variant="primary" fullWidth iconLeft={<Icon name="save" size={16} />}>Save User</Button>
-            </div>
-          </form>
-        </div>
+          )}
+
+          {[['first_name', 'First name'], ['middle_initial', 'Middle initial'], ['last_name', 'Last name'], ['email', 'Email'], ['contact_details', 'Contact details']].map(([k, label]) => (
+            <FormField key={k} label={label} hint={k === 'email' ? 'Also their username — and, for staff and psychologists, the Google address they sign in with.' : undefined}>
+              <Input value={form[k] || ''} onChange={(e) => setForm({ ...form, [k]: e.target.value })} type={k === 'email' ? 'email' : 'text'} />
+            </FormField>
+          ))}
+
+          {/* A role cannot be changed once assigned (adviser). */}
+          {form.id && form.role ? (
+            <FormField label="Role" hint="A role cannot be changed once it has been assigned.">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 42, padding: '0 13px', borderRadius: 'var(--radius-md)', background: 'var(--ink-50)', border: '1px solid var(--border)', color: 'var(--text-strong)', fontWeight: 700, fontSize: 14 }}>
+                {form.role_name || formRole || '—'}
+                <Icon name="lock" size={13} style={{ color: 'var(--text-faint)', marginLeft: 'auto' }} />
+              </div>
+            </FormField>
+          ) : (
+            <FormField label="Role">
+              <Select value={form.role || ''} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+                <option value="">— Select role —</option>
+                {roles.map((r) => <option key={r.id} value={r.id}>{r.role_name}</option>)}
+              </Select>
+            </FormField>
+          )}
+
+          {/* Single-admin handover warning (product decision 2026-07-18). */}
+          {!form.id && formRole === 'Administrator' && (
+            <Alert tone="warning" icon={<Icon name="alert-triangle" size={18} />}>
+              Admin handover: when this new administrator logs in for the
+              first time, every other administrator account — including
+              yours — is deactivated immediately. A deactivated
+              administrator can only return with a brand-new account.
+            </Alert>
+          )}
+          {!form.id && (
+            <Alert tone="info" icon={<Icon name="key-round" size={18} />}>
+              A temporary password is generated automatically when you save.
+              It is shown once — hand it to the user, and they must set their
+              own password at first login.
+            </Alert>
+          )}
+        </Drawer>
+      )}
+
+      {confirm?.kind === 'discard' && (
+        <ConfirmDialog
+          onClose={() => setConfirm(null)} onConfirm={runConfirmed}
+          tone="warning" icon={<Icon name="alert-triangle" size={19} />}
+          title="Discard unsaved changes?"
+          description="The edits in this panel have not been saved yet."
+          cancelLabel="Keep editing" confirmLabel="Discard"
+        />
+      )}
+
+      {confirm?.kind === 'archive' && (
+        <ConfirmDialog
+          onClose={() => setConfirm(null)} onConfirm={runConfirmed} busy={busy}
+          tone="danger" icon={<Icon name="user-x" size={19} />}
+          title={`Deactivate ${nameOf(confirm.user)}?`}
+          description="They lose access immediately and any signed-in session ends. Everything they recorded is kept, and you can reactivate the account later."
+          confirmLabel="Deactivate" cancelLabel="Cancel"
+          // Deactivating an administrator is the one action here that can lock
+          // the agency out of its own system, so it costs more than a click.
+          confirmPhrase={confirm.user.role_name === 'Administrator' ? confirm.user.email : null}
+          confirmHint={confirm.user.role_name === 'Administrator' ? <>This is an <strong>administrator</strong>. Type their email to confirm</> : null}
+        >
+          {confirm.user.role_name === 'Administrator' && (
+            <Alert tone="danger" icon={<Icon name="shield-alert" size={18} />}>
+              If this is the last active administrator, nobody will be able to
+              manage users, settings or catalogues afterwards.
+            </Alert>
+          )}
+        </ConfirmDialog>
+      )}
+
+      {confirm?.kind === 'reactivate' && (
+        <ConfirmDialog
+          onClose={() => setConfirm(null)} onConfirm={runConfirmed} busy={busy}
+          tone="brand" icon={<Icon name="user-check" size={19} />}
+          title={`Reactivate ${nameOf(confirm.user)}?`}
+          description="They can sign in again with their previous password, and will be required to set a new one before reaching any case data."
+          confirmLabel="Reactivate" cancelLabel="Cancel"
+        />
+      )}
+
+      {confirm?.kind === 'reset' && (
+        <ConfirmDialog
+          onClose={() => setConfirm(null)} onConfirm={runConfirmed} busy={busy}
+          tone="warning" icon={<Icon name="key-round" size={19} />}
+          title="Issue a temporary password?"
+          description={`${nameOf(confirm.user)}'s current password stops working the moment you confirm. The new one is shown once — have a way to hand it over ready.`}
+          confirmLabel="Issue password" cancelLabel="Cancel"
+        />
       )}
 
       {resetResult && (
-        <div onClick={() => setResetResult(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(14,19,29,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 80, animation: 'racco-fade-in var(--dur-base) var(--ease-out)' }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ width: 440, maxWidth: '92%', background: 'var(--surface)', borderRadius: 'var(--radius-xl)', boxShadow: 'var(--shadow-xl)', padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 17, color: 'var(--text-strong)' }}>Temporary Password</div>
-                <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{resetResult.user.fullname || resetResult.user.email}</div>
-              </div>
-              <button type="button" onClick={() => setResetResult(null)} aria-label="Close" {...hoverLift({ lift: -1, shadow: 'var(--shadow-md)' })} style={iconBtn('var(--text-muted)')}><Icon name="x" size={17} /></button>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', background: 'var(--ink-50)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
-              <span className="racco-mono" style={{ flex: 1, fontSize: 17, fontWeight: 700, color: 'var(--text-strong)', letterSpacing: '0.04em' }}>{resetResult.temp_password}</span>
-              <button type="button" title="Copy" aria-label="Copy temporary password" onClick={copyTempPassword} {...hoverLift({ lift: -1, shadow: 'var(--shadow-md)' })} style={iconBtn('var(--blue-600)')}><Icon name="copy" size={15} /></button>
-            </div>
-            <Alert tone="warning" icon={<Icon name="alert-triangle" size={18} />}>
-              Give this to the user — they'll be required to set a new password at next login.
-              This password will not be shown again; generate a new one if it's lost.
-            </Alert>
-            <Button type="button" variant="secondary" fullWidth onClick={() => setResetResult(null)}>Done</Button>
+        // Not dismissible: a stray click on the backdrop would destroy a
+        // secret the server will never show again.
+        <Modal
+          open onClose={() => setResetResult(null)} dismissible={false} width={460}
+          tone="warning" icon={<Icon name="key-round" size={19} />}
+          title="Temporary password"
+          subtitle={nameOf(resetResult.user)}
+          footer={<Button type="button" variant="primary" onClick={() => setResetResult(null)}>I've handed it over</Button>}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', background: 'var(--ink-50)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
+            <span className="racco-mono" style={{ flex: 1, fontSize: 18, fontWeight: 700, color: 'var(--text-strong)', letterSpacing: '0.04em', wordBreak: 'break-all' }}>{resetResult.temp_password}</span>
+            <button type="button" title="Copy" aria-label="Copy temporary password" onClick={copyTempPassword} {...hoverLift({ lift: -1, shadow: 'var(--shadow-md)' })} style={iconBtn('var(--blue-600)')}><Icon name="copy" size={15} /></button>
           </div>
-        </div>
+          <Alert tone="warning" icon={<Icon name="alert-triangle" size={18} />}>
+            Give this to the user — they'll be required to set a new password at next login.
+            This password will not be shown again; generate a new one if it's lost.
+          </Alert>
+        </Modal>
       )}
     </div>
   );
