@@ -84,8 +84,11 @@ See **[`docs/CLOUD-DEPLOYMENT.md`](docs/CLOUD-DEPLOYMENT.md)** — Render
 blueprint, any-Docker-host instructions, the full environment variable
 reference, backups, and the security checklist.
 
-One-click on Render: the repo ships [`render.yaml`](render.yaml), which
-declares the database, API service, and frontend.
+One-click on Render: the repo ships [`render.yaml`](render.yaml), which declares
+the API service and the frontend. The database is deliberately **not** declared
+there — it is a managed Postgres elsewhere (currently Neon), because Render's
+free instance is deleted 30 days after creation. See
+[§2a](docs/CLOUD-DEPLOYMENT.md#2a-the-database-lives-outside-render).
 
 Two things that will bite a cloud deploy if skipped:
 

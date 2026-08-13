@@ -8,23 +8,17 @@
 # After the first deploy, set RUN_SEED=false on the API service (the seed is
 # idempotent, but there is no reason to run it on every boot).
 #
-# ⚠️  This blueprint is currently on Render's FREE plans. Two consequences:
-#   * The free PostgreSQL instance is DELETED after 30 days, and its data with
-#     it. Upgrade the database before the system holds anything you need to
-#     keep, or take regular pg_dump backups (docs/CLOUD-DEPLOYMENT.md §7).
-#   * The free web service sleeps after ~15 minutes idle, so the first request
-#     after a quiet period takes ~30 seconds while the container wakes.
-# Both are fine for building and demoing; neither is suitable for live case
-# data. To upgrade, change `plan: free` to `plan: basic-256mb` (database) and
-# `plan: starter` (API service).
-
-databases:
-  - name: nacc-v3-db
-    databaseName: nacc_v3
-    user: nacc
-    plan: free
-    region: singapore    
-    postgresMajorVersion: "16"
+# ⚠️  The services here are on Render's FREE plan: they sleep after ~15 minutes
+# idle, so the first request after a quiet period takes ~30 seconds while the
+# container wakes. Fine for building and demoing. To upgrade, change
+# `plan: free` to `plan: starter` on the API service.
+#
+# THE DATABASE IS NOT DECLARED IN THIS FILE. It lives on Neon
+# (ap-southeast-1), outside Render, because Render's free PostgreSQL instance
+# is DELETED 30 days after it is created — data and all. Declaring it here
+# again would be worse than useless: a blueprint re-sync would rebind
+# DATABASE_URL to a Render-managed database and silently send writes somewhere
+# other than the live one. See docs/CLOUD-DEPLOYMENT.md §2.
 
 services:
   # ---- Django API ------------------------------------------------------
@@ -37,10 +31,13 @@ services:
     region: singapore 
     healthCheckPath: /healthz/
     envVars:
+      # Paste the Neon connection string in the dashboard once. Use the DIRECT
+      # endpoint — a hostname containing `-pooler` routes through pgbouncer in
+      # transaction mode, which breaks Django's migrations.
       - key: DATABASE_URL
-        fromDatabase:
-          name: nacc-v3-db
-          property: connectionString
+        sync: false
+      - key: DB_SSL_REQUIRE
+        value: "true"
       - key: DJANGO_SECRET_KEY
         generateValue: true    # Render mints a strong key on first deploy
       - key: DJANGO_DEBUG
