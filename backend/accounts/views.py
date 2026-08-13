@@ -10,7 +10,8 @@ from django.contrib.auth import get_user_model
 from django.db.models import Count, Q
 
 from accounts.google_auth import (
-    link_google_account, resolve_google_user, verify_google_credential,
+    AccessRequestPending, link_google_account, resolve_google_user,
+    verify_google_credential,
 )
 from accounts.lockout import client_ip, clear_failures, is_locked, register_failure
 from accounts.models import Role
@@ -93,7 +94,16 @@ class GoogleLoginView(generics.GenericAPIView):
     def post(self, request):
         try:
             claims = verify_google_credential(request.data.get("credential"))
-            user = resolve_google_user(claims)
+            user = resolve_google_user(claims, request.data.get("requested_role"))
+        except AccessRequestPending as exc:
+            # 403, not 401: Google authenticated them fine — this system has
+            # simply not authorised them yet. The distinct status and `state`
+            # let the login page show a waiting screen instead of an error the
+            # person would retry forever.
+            return Response(
+                {"detail": exc.detail, "state": "pending_approval",
+                 "role_required": exc.role_required},
+                status=status.HTTP_403_FORBIDDEN)
         except AuthenticationFailed as exc:
             return Response({"detail": exc.detail},
                             status=status.HTTP_401_UNAUTHORIZED)
@@ -220,8 +230,8 @@ class UserViewSet(viewsets.ModelViewSet):
     def archive(self, request, pk=None):
         user = self.get_object()
         user.status = User.ARCHIVED
-        user.is_active = False
-        user.save(update_fields=["status", "is_active", "updated_at"])
+        # is_active follows status automatically (User.save).
+        user.save(update_fields=["status", "updated_at"])
         self._log(user, ActivityLog.ARCHIVED)
         return Response({"status": "archived"}, status=status.HTTP_200_OK)
 
@@ -246,10 +256,8 @@ class UserViewSet(viewsets.ModelViewSet):
                            "Create a new administrator account instead."},
                 status=status.HTTP_400_BAD_REQUEST)
         user.status = User.ACTIVE
-        user.is_active = True
         user.must_change_password = True
-        user.save(update_fields=["status", "is_active", "must_change_password",
-                                 "updated_at"])
+        user.save(update_fields=["status", "must_change_password", "updated_at"])
         self._log(user, ActivityLog.UPDATED)
         return Response({"status": user.status}, status=status.HTTP_200_OK)
 
@@ -258,7 +266,10 @@ class UserViewSet(viewsets.ModelViewSet):
         """Admin-issued temporary password. Never accepts a password from the
         request — always generated server-side and returned exactly once."""
         user = self.get_object()
-        if user.status == User.ARCHIVED or not user.is_active:
+        # Deliberately "not ACTIVE" rather than "is ARCHIVED": a pending
+        # account has no role yet, and issuing it a password would hand out a
+        # working credential before anyone approved the person.
+        if user.status != User.ACTIVE:
             return Response(
                 {"detail": "Cannot reset the password for an inactive or archived user."},
                 status=status.HTTP_400_BAD_REQUEST)

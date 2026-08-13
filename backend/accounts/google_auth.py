@@ -1,19 +1,29 @@
-"""Google Sign-In for staff and psychologists.
+"""Google Sign-In and sign-up for staff and psychologists.
 
 The flow: the browser gets an ID token from Google, POSTs it here, and this
-module decides whether it corresponds to a real account in this system. It
-never creates accounts.
+module decides what that address is entitled to. One button does both jobs —
+first use registers, later uses sign in.
 
-That last point is the important one. This system holds child case records, so
-"anyone with a Google account can sign in" is not an acceptable door. An
-Administrator creates the user first — with the correct role and the person's
-Google address as their email — and Google then replaces the password for that
-already-authorised account. Signing in with an unknown address is rejected.
+Registering is not the same as being let in. This system holds child case
+records, and sign-up is open to any Gmail address, so a new address creates an
+account in PENDING with no role and no access — a request sitting in a queue,
+nothing more. An administrator approves it and assigns Staff or Psychologist
+before it can reach anything. The person may state which role they want; that
+is a claim recorded on the request, and this module never acts on it.
+
+Two refusals are absolute and predate the sign-up flow:
+
+* Administrators authenticate with a password, never through Google. The admin
+  account is the agency's recovery path, and tying it to a third-party identity
+  provider means an outage there locks RACCO I out of its own records.
+* An archived address cannot re-register itself. Deactivation would otherwise
+  be undone by the deactivated person.
 """
 
 import logging
 
 from django.conf import settings
+from django.db import IntegrityError
 from django.utils import timezone
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
@@ -36,8 +46,31 @@ _GENERIC_DENIAL = (
 )
 
 
+# Roles a person may ask for. Administrator is absent deliberately — that
+# account is created by an existing administrator and never through this door.
+_REQUESTABLE_ROLES = (Role.PSYCHOLOGIST, Role.STAFF)
+
+
 class GoogleAuthUnavailable(AuthenticationFailed):
     """Raised when Google Sign-In is not configured on this server."""
+
+
+class AccessRequestPending(AuthenticationFailed):
+    """The address maps to an account waiting on an administrator.
+
+    Deliberately not a denial. The person has done everything they can, and the
+    login page needs to tell them so rather than showing a failure they will
+    retry forever. `role_required` is True while the request has no claimed
+    role yet, which is the login page's cue to ask.
+
+    Saying this much is safe here in a way it would not be on the password
+    form: probing an address through Google requires already controlling that
+    Google account, so an attacker learns nothing about anyone but themselves.
+    """
+
+    def __init__(self, detail, role_required=False):
+        super().__init__(detail)
+        self.role_required = role_required
 
 
 def verify_google_credential(credential):
@@ -91,22 +124,54 @@ def verify_google_credential(credential):
     return claims
 
 
-def resolve_google_user(claims):
-    """Map verified Google claims onto an existing, eligible User.
+def _record_requested_role(user, requested_role_name):
+    """Store what the person says they are. A claim, never a grant — the only
+    code that reads it is the approval endpoint, to pre-fill a dropdown."""
+    if not requested_role_name or user.requested_role_id:
+        return
+    if requested_role_name not in _REQUESTABLE_ROLES:
+        return
+    role = Role.objects.filter(role_name=requested_role_name).first()
+    if role:
+        user.requested_role = role
+        user.save(update_fields=["requested_role", "updated_at"])
 
-    Never creates a user. Returns the User or raises AuthenticationFailed.
+
+def _pending_response(user):
+    """The one outcome that is neither success nor refusal."""
+    if user.requested_role_id is None:
+        raise AccessRequestPending(
+            "Tell us your role to finish your request.", role_required=True)
+    raise AccessRequestPending(
+        "Your request is with an administrator. You will be able to sign in "
+        "once it is approved.")
+
+
+def resolve_google_user(claims, requested_role_name=None):
+    """Map verified Google claims onto a User, registering a new one if needed.
+
+    Returns an ACTIVE, eligible User, or raises: AccessRequestPending when the
+    address belongs to a request still awaiting a decision, AuthenticationFailed
+    for anything refused outright.
     """
     sub = claims["sub"]
     email = claims["email"].strip().lower()
 
     # Prefer the stable subject id; fall back to email only for the first
-    # sign-in, when there is nothing linked yet.
+    # sign-in of an account an administrator created by hand, when there is
+    # nothing linked yet.
     user = User.objects.filter(google_sub=sub).first()
     if user is None:
         user = User.objects.filter(email__iexact=email, google_sub__isnull=True).first()
 
     if user is None:
-        raise AuthenticationFailed(_GENERIC_DENIAL)
+        # An email already in use but linked to a *different* Google subject is
+        # not a new registration — it is someone arriving at an address that is
+        # already spoken for. Refuse rather than collide.
+        if User.objects.filter(email__iexact=email).exists():
+            raise AuthenticationFailed(_GENERIC_DENIAL)
+        user = _register_access_request(claims, requested_role_name)
+        _pending_response(user)
 
     role_name = user.role.role_name if user.role else None
 
@@ -118,12 +183,55 @@ def resolve_google_user(claims):
         raise AuthenticationFailed(
             "Administrator accounts sign in with email and password, not Google.")
 
-    if role_name not in (Role.PSYCHOLOGIST, Role.STAFF):
+    # Archived first, and generic: a deactivated person must not be able to tell
+    # their account still exists, nor re-register it as a fresh request.
+    if user.status == User.ARCHIVED:
+        raise AuthenticationFailed(_GENERIC_DENIAL)
+
+    if user.status == User.PENDING:
+        _record_requested_role(user, requested_role_name)
+        _pending_response(user)
+
+    if role_name not in _REQUESTABLE_ROLES:
         raise AuthenticationFailed(_GENERIC_DENIAL)
 
     if user.status != User.ACTIVE or not user.is_active:
         raise AuthenticationFailed(_GENERIC_DENIAL)
 
+    return user
+
+
+def _register_access_request(claims, requested_role_name=None):
+    """Create the PENDING account that an administrator will act on.
+
+    The account is created with an unusable password: approval grants a role,
+    it does not hand out a credential, and this door must never mint one.
+    """
+    email = claims["email"].strip().lower()
+    role = None
+    if requested_role_name in _REQUESTABLE_ROLES:
+        role = Role.objects.filter(role_name=requested_role_name).first()
+
+    user = User(
+        email=email,
+        username=email,
+        first_name=(claims.get("given_name") or "")[:150],
+        last_name=(claims.get("family_name") or "")[:150],
+        status=User.PENDING,
+        google_sub=claims["sub"],
+        requested_role=role,
+    )
+    user.set_unusable_password()
+    try:
+        user.save()
+    except IntegrityError:
+        # Two tabs, one person: whichever insert lost the race, the request
+        # already exists and that is the correct outcome either way.
+        existing = User.objects.filter(google_sub=claims["sub"]).first()
+        if existing is None:
+            raise
+        return existing
+    logger.info("New Google access request from %s", email)
     return user
 
 

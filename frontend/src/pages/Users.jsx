@@ -19,21 +19,29 @@ const EDITABLE = ['first_name', 'middle_initial', 'last_name', 'email', 'contact
  * one place those have to be read as a single state, so derive it here and let
  * every other part of the screen (column, filter, drawer) share the answer. */
 const LIFECYCLE = {
+  requested: { label: 'Awaiting approval', dot: 'var(--blue-500)', note: 'Signed up with Google and is waiting on an administrator. Holds no role and can reach nothing until approved.' },
   active: { label: 'Active', dot: 'var(--success-500)', note: 'Has signed in and set their own password.' },
   pending: { label: 'Pending first sign-in', dot: 'var(--warning-500)', note: 'Holding a temporary password — they must set their own before they reach any case data.' },
   takeover: { label: 'Takeover pending', dot: 'var(--red-500)', note: 'At this administrator’s first sign-in, every other administrator account is deactivated.' },
   deactivated: { label: 'Deactivated', dot: 'var(--ink-400)', note: 'Cannot sign in. Everything they recorded is retained.' },
 };
 
+// `status` is checked before the flag-derived states: an account awaiting
+// approval carries neither flag, so falling through would render it as Active
+// — the one reading this screen must never give.
 const statusOf = (u) => (
   u.status === 'archived' ? 'deactivated'
-    : u.admin_takeover_pending ? 'takeover'
-      : u.must_change_password ? 'pending'
-        : 'active');
+    : u.status === 'pending' ? 'requested'
+      : u.admin_takeover_pending ? 'takeover'
+        : u.must_change_password ? 'pending'
+          : 'active');
 
 // Filter buckets are mutually exclusive so the counts add up to the total —
 // nothing in this directory is hidden without a number next to it.
-const BUCKET_OF = { active: 'active', pending: 'pending', takeover: 'pending', deactivated: 'deactivated' };
+const BUCKET_OF = {
+  requested: 'requested', active: 'active', pending: 'pending',
+  takeover: 'pending', deactivated: 'deactivated',
+};
 
 const DATE_ONLY = { day: 'numeric', month: 'short', year: 'numeric' };
 const exactDate = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { ...DATE_ONLY, hour: 'numeric', minute: '2-digit' }) : '');
@@ -47,7 +55,9 @@ const sinceLabel = (iso) => {
   return new Date(iso).toLocaleDateString(undefined, DATE_ONLY);
 };
 
-const SORT_ORDER = { active: 0, takeover: 1, pending: 2, deactivated: 3 };
+// Ordered by how much of the administrator's attention the state wants, not
+// alphabetically: sorting by Status should surface what needs a decision.
+const SORT_ORDER = { requested: 0, takeover: 1, pending: 2, active: 3, deactivated: 4 };
 const nameOf = (u) => (u.fullname || u.username || u.email || '');
 const compare = (a, b, key) => {
   if (key === 'role') return (a.role_name || '').localeCompare(b.role_name || '') || nameOf(a).localeCompare(nameOf(b));
@@ -235,7 +245,7 @@ export default function Users() {
   const toneFor = (role) => (role === 'Administrator' ? 'brand' : role === 'Psychologist' ? 'red' : 'amber');
 
   const counts = useMemo(() => {
-    const c = { all: users.length, active: 0, pending: 0, deactivated: 0 };
+    const c = { all: users.length, requested: 0, active: 0, pending: 0, deactivated: 0 };
     users.forEach((u) => { c[BUCKET_OF[statusOf(u)]] += 1; });
     return c;
   }, [users]);
@@ -336,6 +346,9 @@ export default function Users() {
                 onChange={setBucket}
                 options={[
                   { key: 'all', label: 'All', count: counts.all },
+                  // Only shown once someone is actually waiting — an empty
+                  // pill would imply a queue that does not exist yet.
+                  ...(counts.requested ? [{ key: 'requested', label: 'Awaiting approval', count: counts.requested, dot: LIFECYCLE.requested.dot }] : []),
                   { key: 'active', label: 'Active', count: counts.active, dot: LIFECYCLE.active.dot },
                   { key: 'pending', label: 'Pending first sign-in', count: counts.pending, dot: LIFECYCLE.pending.dot },
                   { key: 'deactivated', label: 'Deactivated', count: counts.deactivated, dot: LIFECYCLE.deactivated.dot },

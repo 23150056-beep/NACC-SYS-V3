@@ -208,3 +208,86 @@ class PsychologistListTest(APITestCase):
     def test_psychologist_forbidden(self):
         self._auth("p@racco1.gov.ph")
         self.assertEqual(self.client.get("/api/psychologists/").status_code, 403)
+
+
+class PendingAccountStateTest(APITestCase):
+    """A pending account exists so an administrator has something to approve.
+    Until then it must reach nothing at all — these tests are the guard on
+    that, because every hole here is an unapproved stranger inside a system
+    holding child case files."""
+
+    def setUp(self):
+        self.admin_role = Role.objects.create(role_name=Role.ADMINISTRATOR)
+        self.psych_role = Role.objects.create(role_name=Role.PSYCHOLOGIST)
+        self.staff_role = Role.objects.create(role_name=Role.STAFF)
+        self.admin = User.objects.create_user(
+            email="admin@racco1.gov.ph", username="admin", password="admin1234",
+            role=self.admin_role)
+        self.pending = User.objects.create_user(
+            email="hopeful@gmail.com", username="hopeful@gmail.com",
+            password="hopeful1234", status=User.PENDING,
+            requested_role=self.psych_role)
+
+    def _auth_admin(self):
+        token = self.client.post("/api/auth/login/", {
+            "email": "admin@racco1.gov.ph", "password": "admin1234"}).data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer " + token)
+
+    def test_status_drives_is_active(self):
+        """is_active is derived, never set by hand — the two cannot drift."""
+        self.pending.refresh_from_db()
+        self.assertFalse(self.pending.is_active)
+        self.pending.status = User.ACTIVE
+        self.pending.save(update_fields=["status", "updated_at"])
+        self.pending.refresh_from_db()
+        self.assertTrue(self.pending.is_active)
+
+    def test_pending_account_cannot_log_in_with_a_password(self):
+        resp = self.client.post("/api/auth/login/", {
+            "email": "hopeful@gmail.com", "password": "hopeful1234"})
+        self.assertEqual(resp.status_code, 401)
+
+    def test_pending_account_holds_no_role(self):
+        self.assertIsNone(self.pending.role)
+        self.assertEqual(self.pending.requested_role, self.psych_role)
+
+    def test_requested_role_does_not_grant_anything(self):
+        """The claim is inert. Even asking to be a Psychologist, a pending
+        account authenticates nowhere — so no permission check can be reached
+        that might consult it."""
+        resp = self.client.post("/api/auth/login/", {
+            "email": "hopeful@gmail.com", "password": "hopeful1234"})
+        self.assertEqual(resp.status_code, 401)
+        self.assertNotIn("access", resp.data)
+
+    def test_pending_account_is_not_offered_as_a_psychologist(self):
+        self._auth_admin()
+        resp = self.client.get("/api/psychologists/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn("hopeful@gmail.com", [p["name"] for p in resp.data])
+
+    def test_pending_account_cannot_be_issued_a_password(self):
+        """Otherwise an admin could hand out a working credential for an
+        account nobody has approved."""
+        self._auth_admin()
+        resp = self.client.post(f"/api/users/{self.pending.id}/reset-password/")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_pending_account_cannot_be_reactivated(self):
+        """reactivate/ is the undo for a deactivation, not a back door around
+        approval."""
+        self._auth_admin()
+        resp = self.client.post(f"/api/users/{self.pending.id}/reactivate/")
+        self.assertEqual(resp.status_code, 400)
+        self.pending.refresh_from_db()
+        self.assertEqual(self.pending.status, User.PENDING)
+
+    def test_pending_account_is_visible_in_the_directory(self):
+        """Not hidden: an administrator cannot approve what they cannot see."""
+        self._auth_admin()
+        resp = self.client.get("/api/users/")
+        emails = [u["email"] for u in resp.data]
+        self.assertIn("hopeful@gmail.com", emails)
+        row = next(u for u in resp.data if u["email"] == "hopeful@gmail.com")
+        self.assertEqual(row["status"], User.PENDING)
+        self.assertIsNone(row["role"])

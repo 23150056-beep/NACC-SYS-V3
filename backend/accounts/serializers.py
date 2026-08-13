@@ -121,8 +121,8 @@ def _complete_admin_takeover(new_admin):
               .exclude(pk=new_admin.pk))
     for old in others:
         old.status = User.ARCHIVED
-        old.is_active = False
-        old.save(update_fields=["status", "is_active", "updated_at"])
+        # is_active follows status automatically (User.save).
+        old.save(update_fields=["status", "updated_at"])
         log_activity(
             new_admin, ActivityLog.ARCHIVED, ActivityLog.USER,
             entity_type="User",
