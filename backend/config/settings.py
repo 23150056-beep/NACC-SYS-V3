@@ -259,6 +259,16 @@ LOGIN_MAX_ATTEMPTS = 5       # failed attempts for one email+IP before that comb
 LOGIN_IP_MAX_ATTEMPTS = 20   # failed attempts from one IP (any/many emails) before the IP locks
 LOGIN_LOCKOUT_MINUTES = 15   # both the rolling counting window and the lock duration
 
+# Google sign-up abuse control (accounts.signup_limit). Sign-up is open to any
+# Google address, so these keep the approval queue reviewable by a human — an
+# administrator scrolling past a hundred fakes is how a real one gets approved
+# by mistake. Deliberately generous: blocking a genuine new psychologist on
+# their first day is worse than some junk in a queue an admin can see and
+# decline.
+SIGNUP_MAX_PER_IP = 5        # new access requests from one IP per window
+SIGNUP_WINDOW_MINUTES = 60
+SIGNUP_MAX_PENDING = 50      # global ceiling on outstanding requests (DB-counted)
+
 CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
 )

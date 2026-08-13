@@ -29,6 +29,7 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from rest_framework.exceptions import AuthenticationFailed
 
+from accounts import signup_limit
 from accounts.models import Role, User
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,15 @@ _REQUESTABLE_ROLES = (Role.PSYCHOLOGIST, Role.STAFF)
 
 class GoogleAuthUnavailable(AuthenticationFailed):
     """Raised when Google Sign-In is not configured on this server."""
+
+
+class SignupThrottled(AuthenticationFailed):
+    """Too many access requests, by address or in total.
+
+    One message for both limits on purpose: which ceiling was hit is
+    operational detail, and telling someone whether the queue is full or their
+    own address is capped only helps them work around it.
+    """
 
 
 class AccessRequestPending(AuthenticationFailed):
@@ -147,7 +157,13 @@ def _pending_response(user):
         "once it is approved.")
 
 
-def resolve_google_user(claims, requested_role_name=None):
+_THROTTLED = (
+    "Too many access requests right now. Please try again later, or ask an "
+    "Administrator to create your account."
+)
+
+
+def resolve_google_user(claims, requested_role_name=None, ip=None):
     """Map verified Google claims onto a User, registering a new one if needed.
 
     Returns an ACTIVE, eligible User, or raises: AccessRequestPending when the
@@ -170,7 +186,14 @@ def resolve_google_user(claims, requested_role_name=None):
         # already spoken for. Refuse rather than collide.
         if User.objects.filter(email__iexact=email).exists():
             raise AuthenticationFailed(_GENERIC_DENIAL)
+        # Checked only on the path that creates a row. Someone returning to
+        # see whether they have been approved must never be throttled out of
+        # reading their own status.
+        if signup_limit.ip_is_throttled(ip) or signup_limit.queue_is_full():
+            logger.warning("Refused Google access request from %s (throttled)", email)
+            raise SignupThrottled(_THROTTLED)
         user = _register_access_request(claims, requested_role_name)
+        signup_limit.register_attempt(ip)
         _pending_response(user)
 
     role_name = user.role.role_name if user.role else None

@@ -2,6 +2,7 @@
 
 from unittest import mock
 
+from django.core.cache import cache
 from django.test import override_settings
 from rest_framework.test import APITestCase
 
@@ -27,6 +28,10 @@ def claims(email, sub="google-sub-123", verified=True, **extra):
 @override_settings(GOOGLE_OAUTH_CLIENT_ID=GOOGLE_CLIENT_ID, GOOGLE_ALLOWED_DOMAINS=[])
 class GoogleLoginTests(APITestCase):
     def setUp(self):
+        # The sign-up counter lives in the process-wide cache, which the test
+        # database rollback does not touch — without this, tests leak their
+        # allowance into each other.
+        cache.clear()
         self.staff = make_user("staff@racco1.gov.ph", Role.STAFF)
         self.psych = make_user("psych@racco1.gov.ph", Role.PSYCHOLOGIST)
         self.admin = make_user("admin@racco1.gov.ph", Role.ADMINISTRATOR)
@@ -223,6 +228,7 @@ class GoogleSignUpTests(APITestCase):
     access."""
 
     def setUp(self):
+        cache.clear()   # see GoogleLoginTests.setUp
         self.psych_role = Role.objects.get_or_create(role_name=Role.PSYCHOLOGIST)[0]
         self.staff_role = Role.objects.get_or_create(role_name=Role.STAFF)[0]
         self.admin_role = Role.objects.get_or_create(role_name=Role.ADMINISTRATOR)[0]
@@ -334,3 +340,79 @@ class GoogleSignUpTests(APITestCase):
             r = self.post()
         self.assertEqual(r.status_code, 401)
         self.assertEqual(User.objects.count(), before)
+
+
+@override_settings(GOOGLE_OAUTH_CLIENT_ID=GOOGLE_CLIENT_ID, GOOGLE_ALLOWED_DOMAINS=[])
+class GoogleSignUpThrottlingTests(APITestCase):
+    """The sign-up endpoint is the one place anonymous traffic writes a row.
+    These limits exist to keep the approval queue reviewable by a human — an
+    administrator scrolling past a hundred fakes is how a real one gets waved
+    through, and approval is the only access control this system has."""
+
+    def setUp(self):
+        Role.objects.get_or_create(role_name=Role.STAFF)
+        cache.clear()
+
+    def tearDown(self):
+        cache.clear()
+
+    def post(self, email, sub):
+        with mock.patch(VERIFY, return_value=claims(email, sub=sub)):
+            return self.client.post(
+                "/api/auth/google/", {"credential": "tok"}, format="json")
+
+    @override_settings(SIGNUP_MAX_PER_IP=3)
+    def test_one_address_cannot_flood_the_queue(self):
+        for i in range(3):
+            self.assertEqual(self.post(f"a{i}@gmail.com", f"sub-{i}").status_code, 403)
+        blocked = self.post("a99@gmail.com", "sub-99")
+        self.assertEqual(blocked.status_code, 429)
+        self.assertFalse(User.objects.filter(email="a99@gmail.com").exists())
+
+    @override_settings(SIGNUP_MAX_PER_IP=1)
+    def test_checking_your_own_status_is_never_throttled(self):
+        """The limit counts rows created, not calls made. Someone coming back
+        to see whether they have been approved must not be locked out of
+        reading their own status by their own earlier request."""
+        self.assertEqual(self.post("hopeful@gmail.com", "sub-1").status_code, 403)
+        for _ in range(5):
+            again = self.post("hopeful@gmail.com", "sub-1")
+            self.assertEqual(again.status_code, 403)
+            self.assertEqual(again.data["state"], "pending_approval")
+
+    @override_settings(SIGNUP_MAX_PER_IP=1)
+    def test_an_approved_user_can_still_sign_in_after_the_cap(self):
+        """A throttled IP must not become a denial of service against people
+        who already have accounts."""
+        staff = make_user("real@racco1.gov.ph", Role.STAFF)
+        self.post("filler@gmail.com", "sub-filler")
+        r = self.post(staff.email, "sub-real")
+        self.assertEqual(r.status_code, 200, r.data)
+
+    @override_settings(SIGNUP_MAX_PENDING=2)
+    def test_global_ceiling_holds_when_the_cache_does_not(self):
+        """The durable half of the design. Counted in the database, so it
+        survives a restart and is shared across workers — unlike the per-IP
+        counter, which is neither."""
+        self.assertEqual(self.post("q1@gmail.com", "sub-1").status_code, 403)
+        self.assertEqual(self.post("q2@gmail.com", "sub-2").status_code, 403)
+        cache.clear()   # as a restart or a second worker would
+        blocked = self.post("q3@gmail.com", "sub-3")
+        self.assertEqual(blocked.status_code, 429)
+        self.assertEqual(User.objects.filter(status=User.PENDING).count(), 2)
+
+    @override_settings(SIGNUP_MAX_PENDING=1)
+    def test_the_ceiling_lifts_once_the_queue_is_cleared(self):
+        """It is a ceiling on OUTSTANDING requests, not a lifetime quota —
+        approving or declining makes room again."""
+        self.assertEqual(self.post("first@gmail.com", "sub-1").status_code, 403)
+        self.assertEqual(self.post("second@gmail.com", "sub-2").status_code, 429)
+        User.objects.filter(email="first@gmail.com").update(status=User.ARCHIVED)
+        self.assertEqual(self.post("second@gmail.com", "sub-2").status_code, 403)
+
+    @override_settings(SIGNUP_MAX_PER_IP=1)
+    def test_the_refusal_does_not_say_which_limit_was_hit(self):
+        self.post("one@gmail.com", "sub-1")
+        body = str(self.post("two@gmail.com", "sub-2").data).lower()
+        for leak in ("queue", "pending", "ip", "address", "full"):
+            self.assertNotIn(leak, body)

@@ -1,6 +1,7 @@
 from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
 from accounts.models import Role
+from activity.models import ActivityLog
 from children.models import Child
 
 User = get_user_model()
@@ -291,3 +292,123 @@ class PendingAccountStateTest(APITestCase):
         row = next(u for u in resp.data if u["email"] == "hopeful@gmail.com")
         self.assertEqual(row["status"], User.PENDING)
         self.assertIsNone(row["role"])
+
+
+class AccessRequestApprovalTest(APITestCase):
+    """Approving is the only access control this system has: it is the single
+    human decision between a stranger with a Gmail address and child case
+    records. These tests guard the ways that decision could be bypassed."""
+
+    def setUp(self):
+        self.admin_role = Role.objects.create(role_name=Role.ADMINISTRATOR)
+        self.psych_role = Role.objects.create(role_name=Role.PSYCHOLOGIST)
+        self.staff_role = Role.objects.create(role_name=Role.STAFF)
+        self.admin = User.objects.create_user(
+            email="admin@racco1.gov.ph", username="admin", password="admin1234",
+            role=self.admin_role)
+        self.request_user = User.objects.create_user(
+            email="hopeful@gmail.com", username="hopeful@gmail.com",
+            status=User.PENDING, requested_role=self.psych_role,
+            google_sub="sub-hopeful")
+
+    def _auth(self, email="admin@racco1.gov.ph", password="admin1234"):
+        token = self.client.post("/api/auth/login/", {
+            "email": email, "password": password}).data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer " + token)
+
+    def approve(self, role_id=None):
+        body = {} if role_id is None else {"role": role_id}
+        return self.client.post(f"/api/users/{self.request_user.id}/approve/", body)
+
+    def test_approve_grants_the_role_the_admin_chose(self):
+        self._auth()
+        resp = self.approve(self.staff_role.id)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.request_user.refresh_from_db()
+        self.assertEqual(self.request_user.status, User.ACTIVE)
+        self.assertEqual(self.request_user.role, self.staff_role)
+        self.assertTrue(self.request_user.is_active)
+
+    def test_the_admins_choice_overrides_the_claim(self):
+        """Asked to be a Psychologist, approved as Staff. What the admin
+        submitted wins, always."""
+        self._auth()
+        self.approve(self.staff_role.id)
+        self.request_user.refresh_from_db()
+        self.assertEqual(self.request_user.role, self.staff_role)
+        self.assertEqual(self.request_user.requested_role, self.psych_role)
+
+    def test_approving_without_a_role_is_refused(self):
+        """The dangerous default. Falling back to requested_role here would
+        turn every omitted field into self-assignment."""
+        self._auth()
+        resp = self.approve()
+        self.assertEqual(resp.status_code, 400)
+        self.request_user.refresh_from_db()
+        self.assertEqual(self.request_user.status, User.PENDING)
+        self.assertIsNone(self.request_user.role)
+
+    def test_cannot_approve_someone_as_administrator(self):
+        """Otherwise the single-admin handover rule is reachable through a
+        dropdown on the approval screen."""
+        self._auth()
+        resp = self.approve(self.admin_role.id)
+        self.assertEqual(resp.status_code, 400)
+        self.request_user.refresh_from_db()
+        self.assertEqual(self.request_user.status, User.PENDING)
+        self.assertIsNone(self.request_user.role)
+
+    def test_approving_records_both_roles_in_the_audit_trail(self):
+        self._auth()
+        self.approve(self.staff_role.id)
+        entry = ActivityLog.objects.filter(entity_id=self.request_user.id).first()
+        self.assertIn("Staff", entry.entity_label)
+        self.assertIn("Psychologist", entry.entity_label)
+
+    def test_cannot_approve_an_account_that_is_not_pending(self):
+        self._auth()
+        self.approve(self.staff_role.id)
+        again = self.approve(self.psych_role.id)
+        self.assertEqual(again.status_code, 400)
+        self.request_user.refresh_from_db()
+        self.assertEqual(self.request_user.role, self.staff_role)
+
+    def test_decline_archives_so_the_address_cannot_re_request(self):
+        self._auth()
+        resp = self.client.post(f"/api/users/{self.request_user.id}/decline/")
+        self.assertEqual(resp.status_code, 200)
+        self.request_user.refresh_from_db()
+        self.assertEqual(self.request_user.status, User.ARCHIVED)
+        self.assertFalse(self.request_user.is_active)
+
+    def test_declined_request_cannot_then_be_approved(self):
+        self._auth()
+        self.client.post(f"/api/users/{self.request_user.id}/decline/")
+        resp = self.approve(self.staff_role.id)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_staff_cannot_approve(self):
+        staff = User.objects.create_user(
+            email="staff@racco1.gov.ph", username="staff", password="staff1234",
+            role=self.staff_role)
+        self._auth(staff.email, "staff1234")
+        resp = self.approve(self.staff_role.id)
+        self.assertEqual(resp.status_code, 403)
+        self.request_user.refresh_from_db()
+        self.assertEqual(self.request_user.status, User.PENDING)
+
+    def test_staff_cannot_decline(self):
+        staff = User.objects.create_user(
+            email="staff@racco1.gov.ph", username="staff", password="staff1234",
+            role=self.staff_role)
+        self._auth(staff.email, "staff1234")
+        resp = self.client.post(f"/api/users/{self.request_user.id}/decline/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_approved_account_still_has_no_password(self):
+        """Approval grants a role, not a credential. A Google sign-up gets in
+        through Google — this door must never mint a working password."""
+        self._auth()
+        self.approve(self.staff_role.id)
+        self.request_user.refresh_from_db()
+        self.assertFalse(self.request_user.has_usable_password())

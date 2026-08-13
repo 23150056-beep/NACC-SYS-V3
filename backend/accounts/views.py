@@ -10,8 +10,8 @@ from django.contrib.auth import get_user_model
 from django.db.models import Count, Q
 
 from accounts.google_auth import (
-    AccessRequestPending, link_google_account, resolve_google_user,
-    verify_google_credential,
+    AccessRequestPending, SignupThrottled, link_google_account,
+    resolve_google_user, verify_google_credential,
 )
 from accounts.lockout import client_ip, clear_failures, is_locked, register_failure
 from accounts.models import Role
@@ -94,7 +94,11 @@ class GoogleLoginView(generics.GenericAPIView):
     def post(self, request):
         try:
             claims = verify_google_credential(request.data.get("credential"))
-            user = resolve_google_user(claims, request.data.get("requested_role"))
+            user = resolve_google_user(
+                claims, request.data.get("requested_role"), ip=client_ip(request))
+        except SignupThrottled as exc:
+            return Response({"detail": exc.detail},
+                            status=status.HTTP_429_TOO_MANY_REQUESTS)
         except AccessRequestPending as exc:
             # 403, not 401: Google authenticated them fine — this system has
             # simply not authorised them yet. The distinct status and `state`
@@ -259,6 +263,76 @@ class UserViewSet(viewsets.ModelViewSet):
         user.must_change_password = True
         user.save(update_fields=["status", "must_change_password", "updated_at"])
         self._log(user, ActivityLog.UPDATED)
+        return Response({"status": user.status}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    def approve(self, request, pk=None):
+        """Grant a pending Google sign-up its role and let it in.
+
+        The role must be supplied explicitly. There is deliberately NO fallback
+        to `requested_role`: the applicant's claim is a hint for the dropdown,
+        and defaulting to it would quietly turn every request that omitted the
+        field into self-assignment — which is the exact thing this whole flow
+        exists to prevent.
+        """
+        user = self.get_object()
+        if user.status != User.PENDING:
+            return Response({"detail": "This account is not awaiting approval."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        role_id = request.data.get("role")
+        if not role_id:
+            return Response({"role": "Choose the role this account should have."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        role = Role.objects.filter(pk=role_id).first()
+        if role is None:
+            return Response({"role": "Unknown role."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        # Approving cannot mint an administrator. That account is the agency's
+        # recovery path and carries the single-admin handover rule with it;
+        # reaching it through this door would route around both.
+        if role.role_name == Role.ADMINISTRATOR:
+            return Response(
+                {"role": "An administrator cannot be created by approving a "
+                         "request. Add the account from User Management instead."},
+                status=status.HTTP_400_BAD_REQUEST)
+
+        asked = user.requested_role.role_name if user.requested_role else "none stated"
+        user.role = role
+        user.status = User.ACTIVE
+        user.save(update_fields=["role", "status", "updated_at"])
+        # Both roles in the audit line: when someone asked for more than they
+        # were given, that should be legible a year later.
+        log_activity(
+            request.user, ActivityLog.UPDATED, ActivityLog.USER,
+            entity_type="User",
+            entity_label=(f"{user.fullname or user.email} — access approved as "
+                          f"{role.role_name} (asked for: {asked})"),
+            entity_id=user.id)
+        return Response(UserSerializer(user).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    def decline(self, request, pk=None):
+        """Refuse a pending sign-up.
+
+        Archives rather than deletes: an archived address cannot re-register
+        itself (accounts/google_auth.py), so a declined applicant cannot simply
+        sign in again for a fresh request and wait for a distracted approval.
+        Deleting the row would hand them exactly that loop.
+        """
+        user = self.get_object()
+        if user.status != User.PENDING:
+            return Response({"detail": "This account is not awaiting approval."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        asked = user.requested_role.role_name if user.requested_role else "none stated"
+        user.status = User.ARCHIVED
+        user.save(update_fields=["status", "updated_at"])
+        log_activity(
+            request.user, ActivityLog.ARCHIVED, ActivityLog.USER,
+            entity_type="User",
+            entity_label=(f"{user.fullname or user.email} — access request "
+                          f"declined (asked for: {asked})"),
+            entity_id=user.id)
         return Response({"status": user.status}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="reset-password")
