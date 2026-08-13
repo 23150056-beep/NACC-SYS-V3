@@ -33,8 +33,12 @@ export function AuthProvider({ children }) {
   // Google Sign-In: `credential` is the ID token from Google Identity
   // Services. The server verifies it and decides whether it maps to an
   // existing staff or psychologist account — this never creates one.
-  const loginWithGoogle = async (credential) => {
-    const { data } = await api.post('/auth/google/', { credential });
+  // `requestedRole` is only ever sent on the second call, after a first-time
+  // user has told us what they do. It is a claim recorded against their
+  // request — the server never treats it as a grant.
+  const loginWithGoogle = async (credential, requestedRole = null) => {
+    const body = requestedRole ? { credential, requested_role: requestedRole } : { credential };
+    const { data } = await api.post('/auth/google/', body);
     return storeSession(data);
   };
 

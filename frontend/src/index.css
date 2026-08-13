@@ -369,6 +369,26 @@ tr:focus-visible {
   }
 }
 
+/* Login card. Two columns on a desktop, stacked on a phone — inline styles
+   cannot express a media query, and this is the one screen every user meets
+   before they have any reason to trust the system. */
+.racco-login-card {
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+}
+@media (max-width: 760px) {
+  .racco-login-card {
+    grid-template-columns: 1fr;
+  }
+  .racco-login-brand {
+    min-height: 0 !important;
+    padding: 22px 24px !important;
+  }
+  .racco-login-brand .racco-login-tagline {
+    display: none;
+  }
+}
+
 /* Loading placeholder. Used by <Skeleton> to hold a table's shape while its
    rows are in flight, so an empty list never reads as "no records". */
 .racco-skeleton {

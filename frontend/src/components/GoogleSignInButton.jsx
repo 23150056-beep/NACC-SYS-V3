@@ -69,9 +69,16 @@ export default function GoogleSignInButton({ onCredential, onError, disabled = f
       window.google.accounts.id.renderButton(holder.current, {
         theme: 'outline',
         size: 'large',
-        width: 320,
-        text: 'signin_with',
+        // "Continue with" because this one button does both jobs: first use
+        // registers, later uses sign in. Google endorses this label for
+        // exactly that case, and "Sign in with" would be a lie to the half of
+        // users who have no account yet.
+        text: 'continue_with',
         shape: 'rectangular',
+        // Google renders into a fixed-width iframe, so this has to be a number
+        // — but measuring the container first keeps it from overflowing a
+        // narrow phone. Clamped to Google's own 400px maximum.
+        width: Math.min(400, Math.max(200, holder.current.offsetWidth || 320)),
       });
       setState('ready');
     })();
@@ -84,15 +91,7 @@ export default function GoogleSignInButton({ onCredential, onError, disabled = f
   if (state === 'off') return null;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-      {/* The divider lives here rather than in the page so it vanishes with
-          the button when Google Sign-In is not configured. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%' }}>
-        <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-        <span style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-muted)' }}>OR</span>
-        <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-      </div>
-
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, width: '100%' }}>
       {state === 'failed' ? (
         <div style={{ fontSize: 12.5, color: 'var(--text-muted)', textAlign: 'center' }}>
           Google Sign-In could not load. Use your email and password instead.
@@ -110,6 +109,18 @@ export default function GoogleSignInButton({ onCredential, onError, disabled = f
           }}
         />
       )}
+
+      {/* The divider lives here rather than in the page so it vanishes along
+          with the button when Google Sign-In is not configured — otherwise an
+          agency running password-only would see a rule above nothing. It sits
+          below because Google now comes first: staff and psychologists are
+          most of the users and this is their only route, while the two or
+          three administrators know to use the form. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%' }}>
+        <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+        <span style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>or use your password</span>
+        <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+      </div>
     </div>
   );
 }
