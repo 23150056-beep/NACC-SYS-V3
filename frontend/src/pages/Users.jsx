@@ -111,6 +111,43 @@ function SignInCell({ google }) {
   );
 }
 
+// How each audited action reads in a person's history. `verb` is what they
+// did; `passive` is what was done to their account — the same word means
+// opposite things depending on which side of the entry you are on.
+const ACTION_META = {
+  login: { icon: 'log-in', tint: 'var(--ink-400)', verb: 'Signed in', passive: 'Signed in' },
+  created: { icon: 'plus', tint: 'var(--success-500)', verb: 'Created', passive: 'Account created' },
+  updated: { icon: 'pencil', tint: 'var(--blue-500)', verb: 'Updated', passive: 'Account updated' },
+  archived: { icon: 'archive', tint: 'var(--amber-500)', verb: 'Archived', passive: 'Account deactivated' },
+};
+
+function ActivityRow({ entry }) {
+  const meta = ACTION_META[entry.action] || { icon: 'dot', tint: 'var(--ink-400)', verb: entry.action, passive: entry.action };
+  const label = entry.by_them ? meta.verb : meta.passive;
+  const target = entry.entity_label || entry.entity_type || '';
+  return (
+    <li style={{ display: 'flex', gap: 10, padding: '9px 0', borderBottom: '1px solid var(--ink-100)' }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, flex: 'none', borderRadius: '50%', background: 'var(--surface)', border: '1px solid var(--border)', color: meta.tint, marginTop: 1 }}>
+        <Icon name={meta.icon} size={12} />
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12.5, color: 'var(--text-strong)', fontWeight: 600 }}>
+          {label}
+          {target && entry.action !== 'login' && (
+            <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · {target}</span>
+          )}
+          {!entry.by_them && entry.actor_label && (
+            <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> by {entry.actor_label}</span>
+          )}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-faint)' }} title={exactDate(entry.created_at)}>
+          {sinceLabel(entry.created_at)}
+        </div>
+      </div>
+    </li>
+  );
+}
+
 function Fact({ label, children }) {
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, fontSize: 13 }}>
@@ -134,6 +171,8 @@ export default function Users() {
 
   const [form, setForm] = useState(null);
   const [pristine, setPristine] = useState(null);
+  // null while in flight, [] when there is genuinely nothing.
+  const [activity, setActivity] = useState(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -170,8 +209,21 @@ export default function Users() {
     api.get('/roles/').then((r) => setRoles(r.data)).catch(() => setRoles([]));
   }, []);
 
-  const openCreate = () => { setError(''); setPristine({ ...EMPTY }); setForm({ ...EMPTY }); };
-  const openEdit = (u) => { setError(''); setPristine({ ...EMPTY, ...u }); setForm({ ...EMPTY, ...u }); };
+  const openCreate = () => {
+    setError(''); setActivity(null); setPristine({ ...EMPTY }); setForm({ ...EMPTY });
+  };
+
+  const openEdit = (u) => {
+    setError('');
+    setPristine({ ...EMPTY, ...u });
+    setForm({ ...EMPTY, ...u });
+    // Fetched per open rather than with the directory: it is 25 rows per user
+    // and nobody opens every account.
+    setActivity(null);
+    api.get(`/users/${u.id}/activity/`)
+      .then((r) => setActivity(r.data))
+      .catch(() => setActivity([]));
+  };
 
   const dirty = !!form && !!pristine && EDITABLE.some((k) => String(form[k] ?? '') !== String(pristine[k] ?? ''));
   const closeForm = () => { setForm(null); setPristine(null); setError(''); };
@@ -541,6 +593,46 @@ export default function Users() {
                   </>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* What has this person actually done? For an agency accountable
+              under RA 10173 that is the question an account gets opened to
+              answer, and until now the drawer could not answer it. */}
+          {form.id && (
+            <div>
+              <div className="racco-eyebrow" style={{ fontSize: 10, marginBottom: 6 }}>Recent activity</div>
+              {activity === null ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 4 }}>
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                      <Skeleton width={24} height={24} radius="50%" />
+                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        <Skeleton width="62%" height={10} />
+                        <Skeleton width="30%" height={8} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : activity.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: 'var(--text-muted)', padding: '6px 0' }}>
+                  Nothing recorded yet.
+                </div>
+              ) : (
+                <>
+                  {/* Five, not more: enough to answer "what has this person
+                      been doing?" at a glance, few enough that the edit fields
+                      below stay reachable without scrolling past a wall. */}
+                  <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                    {activity.slice(0, 5).map((e) => <ActivityRow key={e.id} entry={e} />)}
+                  </ul>
+                  {activity.length > 5 && (
+                    <div style={{ fontSize: 11.5, color: 'var(--text-muted)', paddingTop: 8 }}>
+                      Showing the 5 most recent of {activity.length}. The full trail is in the audit log.
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 

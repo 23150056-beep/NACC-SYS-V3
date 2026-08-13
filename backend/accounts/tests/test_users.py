@@ -412,3 +412,58 @@ class AccessRequestApprovalTest(APITestCase):
         self.approve(self.staff_role.id)
         self.request_user.refresh_from_db()
         self.assertFalse(self.request_user.has_usable_password())
+
+
+class UserActivityHistoryTest(APITestCase):
+    """"What has this person done?" is the question an agency accountable
+    under RA 10173 has to answer about an account. Both directions matter:
+    what they did, and what was done to their account."""
+
+    def setUp(self):
+        self.admin_role = Role.objects.create(role_name=Role.ADMINISTRATOR)
+        self.staff_role = Role.objects.create(role_name=Role.STAFF)
+        self.admin = User.objects.create_user(
+            email="admin@racco1.gov.ph", username="admin", password="admin1234",
+            role=self.admin_role)
+        self.staff = User.objects.create_user(
+            email="staff@racco1.gov.ph", username="staff", password="staff1234",
+            role=self.staff_role)
+
+    def _auth(self, email, password):
+        token = self.client.post("/api/auth/login/", {
+            "email": email, "password": password}).data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer " + token)
+
+    def test_history_includes_what_they_did(self):
+        self._auth("staff@racco1.gov.ph", "staff1234")   # writes a login entry
+        self.client.credentials()
+        self._auth("admin@racco1.gov.ph", "admin1234")
+        resp = self.client.get(f"/api/users/{self.staff.id}/activity/")
+        self.assertEqual(resp.status_code, 200)
+        logins = [e for e in resp.data if e["action"] == "login"]
+        self.assertTrue(logins)
+        self.assertTrue(logins[0]["by_them"])
+
+    def test_history_includes_what_was_done_to_them(self):
+        self._auth("admin@racco1.gov.ph", "admin1234")
+        self.client.post(f"/api/users/{self.staff.id}/archive/")
+        resp = self.client.get(f"/api/users/{self.staff.id}/activity/")
+        archived = [e for e in resp.data if e["action"] == "archived"]
+        self.assertTrue(archived)
+        # Done TO them, by someone else — the drawer renders this differently
+        # from "she archived a case", which is the same verb the other way.
+        self.assertFalse(archived[0]["by_them"])
+
+    def test_history_excludes_other_peoples_entries(self):
+        self._auth("admin@racco1.gov.ph", "admin1234")
+        other = User.objects.create_user(
+            email="other@racco1.gov.ph", username="other", password="other1234",
+            role=self.staff_role)
+        self.client.post(f"/api/users/{other.id}/archive/")
+        resp = self.client.get(f"/api/users/{self.staff.id}/activity/")
+        self.assertFalse([e for e in resp.data if e.get("entity_id") == other.id])
+
+    def test_staff_cannot_read_someone_elses_history(self):
+        self._auth("staff@racco1.gov.ph", "staff1234")
+        resp = self.client.get(f"/api/users/{self.admin.id}/activity/")
+        self.assertEqual(resp.status_code, 403)

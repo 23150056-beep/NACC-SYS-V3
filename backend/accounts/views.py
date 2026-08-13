@@ -22,6 +22,7 @@ from accounts.serializers import (
     ChangePasswordSerializer,
 )
 from activity.models import ActivityLog
+from activity.serializers import ActivityLogSerializer
 from activity.services import log_activity
 
 User = get_user_model()
@@ -264,6 +265,29 @@ class UserViewSet(viewsets.ModelViewSet):
         user.save(update_fields=["status", "must_change_password", "updated_at"])
         self._log(user, ActivityLog.UPDATED)
         return Response({"status": user.status}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["get"])
+    def activity(self, request, pk=None):
+        """This account's recent history, both directions.
+
+        What they DID answers the question an agency accountable under RA
+        10173 actually has to answer — who opened this child's record. What was
+        done TO the account is the other half of the same story: who issued
+        them a password, who approved them, who deactivated them. Either alone
+        leaves a gap someone could hide in, so the two streams are merged and
+        each entry says which it is.
+        """
+        user = self.get_object()
+        entries = list(
+            ActivityLog.objects
+            .filter(Q(actor=user) | Q(entity_type="User", entity_id=user.id))
+            .order_by("-created_at")[:25])
+        data = ActivityLogSerializer(entries, many=True).data
+        for row, entry in zip(data, entries):
+            # The drawer has to distinguish "she archived a case" from "her
+            # account was archived" — same verb, opposite meaning.
+            row["by_them"] = entry.actor_id == user.id
+        return Response(data)
 
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
