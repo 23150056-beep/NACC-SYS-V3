@@ -8,6 +8,7 @@ import {
 } from '../ui';
 import { useToast } from '../context/ToastContext';
 import CredentialHandoffs from './CredentialHandoffs';
+import AccessRequests from './AccessRequests';
 
 // No password field: the server generates a temporary password on create and
 // returns it exactly once — admins never choose another user's password.
@@ -311,6 +312,9 @@ export default function Users() {
       <Tabs
         tabs={[
           { id: 'users', label: 'Users' },
+          // Second, not last: someone is waiting on this one, and a queue an
+          // administrator has to go looking for is a queue that sits.
+          { id: 'requests', label: 'Access Requests', count: counts.requested || undefined },
           { id: 'handoffs', label: 'Credential Handoffs', count: pendingHandoffs || undefined },
         ]}
         active={tab}
@@ -318,7 +322,11 @@ export default function Users() {
         style={{ marginBottom: 18 }}
       />
 
-      {tab === 'handoffs' ? (
+      {tab === 'requests' ? (
+        // Approving changes the directory underneath, so refresh it rather
+        // than leaving a stale row behind on the Users tab.
+        <AccessRequests onChange={load} />
+      ) : tab === 'handoffs' ? (
         <CredentialHandoffs />
       ) : (
         <>

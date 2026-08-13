@@ -23,17 +23,24 @@ class UserSerializer(serializers.ModelSerializer):
     # than the subject id itself: the directory needs to show *how* someone
     # gets in, and the raw identifier is of no use to any client.
     google_linked = serializers.SerializerMethodField()
+    # What the person claimed about themselves at sign-up. Exposed so the
+    # approval queue can pre-fill the administrator's choice — and named
+    # `requested_` throughout so no client mistakes it for a granted role.
+    requested_role_name = serializers.CharField(
+        source="requested_role.role_name", read_only=True, default=None)
 
     class Meta:
         model = User
         fields = [
             "id", "email", "username", "first_name", "last_name",
             "middle_initial", "contact_details", "role", "role_name",
+            "requested_role", "requested_role_name",
             "fullname", "status", "must_change_password", "admin_takeover_pending",
             "google_linked", "last_login", "created_at",
         ]
         read_only_fields = [
             "must_change_password", "admin_takeover_pending",
+            "requested_role", "requested_role_name",
             "google_linked", "last_login", "created_at",
         ]
 

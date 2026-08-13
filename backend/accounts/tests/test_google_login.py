@@ -416,3 +416,98 @@ class GoogleSignUpThrottlingTests(APITestCase):
         body = str(self.post("two@gmail.com", "sub-2").data).lower()
         for leak in ("queue", "pending", "ip", "address", "full"):
             self.assertNotIn(leak, body)
+
+
+@override_settings(GOOGLE_OAUTH_CLIENT_ID=GOOGLE_CLIENT_ID, GOOGLE_ALLOWED_DOMAINS=[])
+class AccessRequestJourneyTests(APITestCase):
+    """The whole path, end to end, in the order it actually happens.
+
+    The individual guards are covered elsewhere; this is here because they can
+    each pass while the journey between them is broken, and the journey is what
+    a person experiences.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.staff_role = Role.objects.get_or_create(role_name=Role.STAFF)[0]
+        self.psych_role = Role.objects.get_or_create(role_name=Role.PSYCHOLOGIST)[0]
+        self.admin_role = Role.objects.get_or_create(role_name=Role.ADMINISTRATOR)[0]
+        self.admin = User.objects.create_user(
+            email="admin@racco1.gov.ph", username="admin", password="admin1234",
+            role=self.admin_role)
+
+    def google(self, email, sub, requested_role=None):
+        body = {"credential": "tok"}
+        if requested_role:
+            body["requested_role"] = requested_role
+        with mock.patch(VERIFY, return_value=claims(email, sub=sub)):
+            return self.client.post("/api/auth/google/", body, format="json")
+
+    def as_admin(self):
+        token = self.client.post("/api/auth/login/", {
+            "email": "admin@racco1.gov.ph", "password": "admin1234"}).data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer " + token)
+
+    def test_request_then_approval_then_sign_in(self):
+        # 1. A new psychologist signs up and says what she does.
+        first = self.google("maria@gmail.com", "sub-maria")
+        self.assertEqual(first.status_code, 403)
+        self.assertTrue(first.data["role_required"])
+        self.google("maria@gmail.com", "sub-maria", requested_role=Role.PSYCHOLOGIST)
+
+        maria = User.objects.get(email="maria@gmail.com")
+        self.assertEqual(maria.status, User.PENDING)
+
+        # 2. While waiting she has nothing: no token was ever issued, and the
+        #    account cannot authenticate by any route.
+        waiting = self.google("maria@gmail.com", "sub-maria")
+        self.assertNotIn("access", waiting.data)
+        self.assertFalse(maria.is_active)
+
+        # 3. The administrator approves her — as Staff, not the Psychologist
+        #    she asked for, because that is the administrator's call.
+        self.as_admin()
+        approved = self.client.post(f"/api/users/{maria.id}/approve/",
+                                    {"role": self.staff_role.id})
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.client.credentials()
+
+        # 4. Now the same Google account signs straight in, with the role the
+        #    administrator chose.
+        signed_in = self.google("maria@gmail.com", "sub-maria")
+        self.assertEqual(signed_in.status_code, 200, signed_in.data)
+        self.assertEqual(signed_in.data["user"]["role_name"], Role.STAFF)
+
+        # 5. And the token works against a real endpoint, not just the login.
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer " + signed_in.data["access"])
+        self.assertEqual(self.client.get("/api/children/").status_code, 200)
+
+    def test_request_then_decline_then_locked_out_for_good(self):
+        self.google("chancer@gmail.com", "sub-chancer", requested_role=Role.PSYCHOLOGIST)
+        chancer = User.objects.get(email="chancer@gmail.com")
+
+        self.as_admin()
+        declined = self.client.post(f"/api/users/{chancer.id}/decline/")
+        self.assertEqual(declined.status_code, 200)
+        self.client.credentials()
+
+        # Refused, and — the part that matters — not quietly re-queued as a
+        # fresh request for a later administrator to wave through.
+        again = self.google("chancer@gmail.com", "sub-chancer")
+        self.assertEqual(again.status_code, 401)
+        self.assertEqual(User.objects.filter(email="chancer@gmail.com").count(), 1)
+        self.assertEqual(User.objects.filter(status=User.PENDING).count(), 0)
+
+    def test_an_approved_person_appears_in_the_directory_as_active(self):
+        self.google("newstaff@gmail.com", "sub-new", requested_role=Role.STAFF)
+        user = User.objects.get(email="newstaff@gmail.com")
+        self.as_admin()
+        self.client.post(f"/api/users/{user.id}/approve/", {"role": self.staff_role.id})
+        row = next(u for u in self.client.get("/api/users/").data
+                   if u["email"] == "newstaff@gmail.com")
+        self.assertEqual(row["status"], User.ACTIVE)
+        self.assertEqual(row["role_name"], Role.STAFF)
+        self.assertTrue(row["google_linked"])
+        # The claim is still on the record afterwards: the audit answer to
+        # "what did they ask for?" must survive the decision.
+        self.assertEqual(row["requested_role_name"], Role.STAFF)
