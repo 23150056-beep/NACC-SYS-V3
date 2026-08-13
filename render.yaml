@@ -1,9 +1,9 @@
 # NACC SYS V3 — Render blueprint.
 #
 # Deploy: push this repo to GitHub, then Render → New → Blueprint → pick the
-# repo. Render creates the database, the API service and the web frontend from
-# this file. Secrets marked `sync: false` are typed into the dashboard once and
-# never live in git.
+# repo. Render creates the API service and the web frontend from this file.
+# Secrets marked `sync: false` are typed into the dashboard once and never live
+# in git — DATABASE_URL is one of them (see the note below).
 #
 # After the first deploy, set RUN_SEED=false on the API service (the seed is
 # idempotent, but there is no reason to run it on every boot).
@@ -28,7 +28,7 @@ services:
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     plan: free
-    region: singapore 
+    region: singapore
     healthCheckPath: /healthz/
     envVars:
       # Paste the Neon connection string in the dashboard once. Use the DIRECT
