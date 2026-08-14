@@ -55,22 +55,27 @@ services:
         value: "2"
 
       # ---- Uploaded files (reports, consent scans, child photos) --------
-      # Uploads go to S3-compatible object storage because Render destroys the
-      # container disk on every deploy and every wake from sleep — with
-      # USE_S3=false, reports and consent scans are silently lost.
+      # ⚠️  CURRENTLY OFF, and that is a known gap rather than a decision.
+      # USE_S3=false keeps uploads on the container's own disk, which Render
+      # destroys on every deploy and every wake from sleep — reports and
+      # consent scans WILL be lost. Fine while building and demoing; never
+      # acceptable with real case files.
       #
-      # These four are typed into the dashboard (see docs §5a for Cloudflare
-      # R2, which is what this deployment uses):
-      #   AWS_STORAGE_BUCKET_NAME   AWS_S3_ENDPOINT_URL
-      #   AWS_ACCESS_KEY_ID         AWS_SECRET_ACCESS_KEY
-      # AWS_S3_REGION_NAME is optional and defaults to "auto".
+      # Turning it back on: set this to "true" and fill in the four variables
+      # below in the dashboard. The R2 bucket and endpoint are already set up
+      # (docs §5a); what stalled was the API token being refused on write —
+      # PutObject returned AccessDenied while reads succeeded, which points at
+      # the token's permission rather than anything in this repo. The code
+      # path itself is verified: an upload against a local stand-in sends
+      # path-style addressing, no checksum headers and no ACL, which is what
+      # R2 expects.
       #
       # Keep the bucket PRIVATE. The app serves files only through
       # authenticated endpoints that check permissions first, never from a
       # public URL — a readable bucket would put child case files one guessed
       # filename away from anyone.
       - key: USE_S3
-        value: "true"
+        value: "false"
       - key: AWS_STORAGE_BUCKET_NAME
         sync: false
       - key: AWS_S3_ENDPOINT_URL
