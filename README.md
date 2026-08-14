@@ -76,7 +76,7 @@ npm install && npm run dev                    # http://localhost:5173
 
 Default admin (change the password immediately): `admin@racco1.gov.ph` / `admin1234`
 
-Tests: `.venv/bin/python manage.py test` (backend suite, 344 tests).
+Tests: `.venv/bin/python manage.py test` (backend suite, 397 tests).
 
 ## Deploying
 
@@ -92,7 +92,7 @@ free instance is deleted 30 days after creation. See
 
 Two things that will bite a cloud deploy if skipped:
 
-- **Set `USE_S3=true`.** Container disks are destroyed on every deploy, so
+- **Object storage is required.** Container disks are destroyed on every deploy, so
   without object storage uploaded reports and consent scans are silently lost.
 - **Set a real `DJANGO_SECRET_KEY`.** The app refuses to boot with the dev
   default when `DJANGO_DEBUG=False`.
@@ -106,12 +106,24 @@ Two paths, and which one you get depends on your role:
   identity provider.
 - **Psychologist / Staff** — email and password, **or** Google Sign-In.
 
-Google Sign-In **never creates accounts**. An Administrator creates the user
-first, with the correct role and the person's Google address as their email;
-Google then replaces the password for that already-authorised account. An
-unknown Google address is refused. Set `GOOGLE_OAUTH_CLIENT_ID` on the API to
-switch it on — no frontend rebuild — and see
-[the setup guide](docs/CLOUD-DEPLOYMENT.md#9-google-sign-in-optional).
+One **Continue with Google** button does both jobs: first use registers, later
+uses sign in. Registering is not the same as being let in.
+
+A Google address nobody has seen before creates an account in a **pending**
+state — no role, no usable password, no access. It is a request in a queue. The
+person is asked which role describes their work, and that answer is recorded as
+a *claim*: nothing in the permission system reads it. An Administrator approves
+the request from **User Management → Access Requests** and assigns the real
+role, and only then can the person sign in. Approving cannot create another
+Administrator, and declining archives the address so it cannot ask again.
+
+That human decision is the only access control on this door, which is why the
+queue is built to make it deliberate rather than quick.
+
+Set `GOOGLE_OAUTH_CLIENT_ID` on the API to switch it on — no frontend rebuild —
+and see [the setup guide](docs/CLOUD-DEPLOYMENT.md#9-google-sign-in-optional).
+`GOOGLE_ALLOWED_DOMAINS` narrows who may even request, once RACCO I issues
+agency addresses.
 
 ## Roles
 

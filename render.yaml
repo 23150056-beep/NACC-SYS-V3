@@ -55,20 +55,30 @@ services:
         value: "2"
 
       # ---- Uploaded files (reports, consent scans, child photos) --------
-      # ⚠️  USE_S3=false keeps uploads on the container's own disk, which
-      # Render destroys on every deploy and every wake from sleep. Uploaded
-      # reports and consent scans WILL be lost. That is acceptable only while
-      # testing with sample data — never with real case files.
+      # Uploads go to S3-compatible object storage because Render destroys the
+      # container disk on every deploy and every wake from sleep — with
+      # USE_S3=false, reports and consent scans are silently lost.
       #
-      # To switch on object storage: set USE_S3=true here, then add these five
-      # variables in the Render dashboard (any S3-compatible bucket works —
-      # AWS S3, Cloudflare R2, Backblaze B2, Supabase Storage):
-      #   AWS_STORAGE_BUCKET_NAME   AWS_S3_REGION_NAME   AWS_S3_ENDPOINT_URL
+      # These four are typed into the dashboard (see docs §5a for Cloudflare
+      # R2, which is what this deployment uses):
+      #   AWS_STORAGE_BUCKET_NAME   AWS_S3_ENDPOINT_URL
       #   AWS_ACCESS_KEY_ID         AWS_SECRET_ACCESS_KEY
-      # Keep the bucket PRIVATE — the app serves files only through
-      # authenticated endpoints, never from a public URL.
+      # AWS_S3_REGION_NAME is optional and defaults to "auto".
+      #
+      # Keep the bucket PRIVATE. The app serves files only through
+      # authenticated endpoints that check permissions first, never from a
+      # public URL — a readable bucket would put child case files one guessed
+      # filename away from anyone.
       - key: USE_S3
-        value: "false"
+        value: "true"
+      - key: AWS_STORAGE_BUCKET_NAME
+        sync: false
+      - key: AWS_S3_ENDPOINT_URL
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
 
       # ---- Google Sign-In (optional; staff and psychologists only) -------
       # Leave unset to deploy with the password form only. When set, the

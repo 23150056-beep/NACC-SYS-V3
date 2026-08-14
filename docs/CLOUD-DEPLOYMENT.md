@@ -220,6 +220,53 @@ stream the object through Django after checking the caller's permissions.
 The only supported alternative is a persistent volume mounted at `MEDIA_ROOT`,
 which limits you to hosts that offer volumes and to a single instance.
 
+### 5a. Cloudflare R2 (what this deployment uses)
+
+R2 has no egress fees and a free tier that comfortably covers an office of this
+size. Any S3-compatible provider works — the notes below are the ones specific
+to R2.
+
+1. Cloudflare dashboard → **R2** → **Create bucket**, e.g. `nacc-v3-media`.
+   **Location: Asia-Pacific.** Leave public access **off** — that is the whole
+   point; the app streams every file through an authenticated endpoint.
+2. **Manage R2 API Tokens** → **Create API token** → permission **Object Read &
+   Write**, scoped to that one bucket. Copy the Access Key ID, the Secret
+   Access Key, and the endpoint (`https://<account-id>.r2.cloudflarestorage.com`).
+   The secret is shown once.
+3. On the API service set:
+
+   | Variable | Value |
+   |---|---|
+   | `USE_S3` | `true` |
+   | `AWS_STORAGE_BUCKET_NAME` | your bucket name |
+   | `AWS_S3_ENDPOINT_URL` | `https://<account-id>.r2.cloudflarestorage.com` |
+   | `AWS_ACCESS_KEY_ID` | from step 2 |
+   | `AWS_SECRET_ACCESS_KEY` | from step 2 |
+
+   `AWS_S3_REGION_NAME` is not needed: it defaults to `auto`, which is what R2
+   expects.
+
+4. Redeploy, then upload a report through the app and confirm it downloads
+   again. **Do this before trusting it** — the failure mode is silent.
+
+Two settings the code applies for you, both of which cause confusing failures
+if you ever configure a client by hand:
+
+- **Path-style addressing.** R2's endpoint is
+  `https://<account-id>.r2.cloudflarestorage.com`, so the bucket belongs in the
+  path. Virtual-hosted style would look up
+  `<bucket>.<account-id>.r2.cloudflarestorage.com`, which does not exist. The
+  app derives this from the presence of `AWS_S3_ENDPOINT_URL`; override with
+  `AWS_S3_ADDRESSING_STYLE` only if your provider needs it.
+- **Checksum headers off.** boto3 ≥ 1.36 attaches CRC32 checksums to every
+  upload by default. AWS accepts them; R2 and Backblaze B2 reject them, and the
+  resulting error looks like bad credentials. `settings.py` sets
+  `AWS_REQUEST_CHECKSUM_CALCULATION=when_required` whenever `USE_S3` is on.
+
+**Files already uploaded before switching are gone** — they were on container
+disks that no longer exist. There is nothing to migrate; the database rows that
+reference them will report the file as missing on download.
+
 ---
 
 ## 6. Data residency and RA 10173

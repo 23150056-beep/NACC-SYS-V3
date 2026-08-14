@@ -185,23 +185,21 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = FILE_UPLOAD_MAX_MEMORY_SIZE
 # access in the app goes through Django's storage API, so nothing else changes.
 USE_S3 = env_bool("USE_S3", False)
 if USE_S3:
+    # boto3 >= 1.36 defaults request_checksum_calculation to "when_supported",
+    # which attaches CRC32 checksum headers to every upload. AWS S3 accepts
+    # them; Cloudflare R2 and Backblaze B2 reject them, so an otherwise correct
+    # configuration fails on the very first file with an opaque error and looks
+    # like bad credentials. Restoring the older behaviour costs nothing on AWS,
+    # which is why it is unconditional rather than an R2 special case.
+    # setdefault, so an operator can still override it from the environment.
+    os.environ.setdefault("AWS_REQUEST_CHECKSUM_CALCULATION", "when_required")
+    os.environ.setdefault("AWS_RESPONSE_CHECKSUM_VALIDATION", "when_supported")
+
+    from config.storages import s3_storage_options
+
     _default_storage = {
         "BACKEND": "storages.backends.s3.S3Storage",
-        "OPTIONS": {
-            "bucket_name": os.getenv("AWS_STORAGE_BUCKET_NAME"),
-            "region_name": os.getenv("AWS_S3_REGION_NAME", "auto"),
-            "endpoint_url": os.getenv("AWS_S3_ENDPOINT_URL") or None,
-            "access_key": os.getenv("AWS_ACCESS_KEY_ID"),
-            "secret_key": os.getenv("AWS_SECRET_ACCESS_KEY"),
-            # Child data: the bucket must never be publicly readable, and any
-            # URL the storage backend hands out must be short-lived and signed.
-            "default_acl": None,
-            "querystring_auth": True,
-            "querystring_expire": int(os.getenv("AWS_S3_URL_EXPIRY", "300")),
-            "file_overwrite": False,
-            "signature_version": "s3v4",
-            "addressing_style": os.getenv("AWS_S3_ADDRESSING_STYLE", "virtual"),
-        },
+        "OPTIONS": s3_storage_options(),
     }
 else:
     _default_storage = {"BACKEND": "django.core.files.storage.FileSystemStorage"}
