@@ -55,27 +55,29 @@ services:
         value: "2"
 
       # ---- Uploaded files (reports, consent scans, child photos) --------
-      # ⚠️  CURRENTLY OFF, and that is a known gap rather than a decision.
-      # USE_S3=false keeps uploads on the container's own disk, which Render
-      # destroys on every deploy and every wake from sleep — reports and
-      # consent scans WILL be lost. Fine while building and demoing; never
-      # acceptable with real case files.
+      # Uploads go to Cloudflare R2. With USE_S3=false they land on the
+      # container's own disk, which Render destroys on every deploy AND every
+      # wake from sleep — reports and consent scans vanish silently, which is
+      # the worst way for a system holding child case files to lose them.
       #
-      # Turning it back on: set this to "true" and fill in the four variables
-      # below in the dashboard. The R2 bucket and endpoint are already set up
-      # (docs §5a); what stalled was the API token being refused on write —
-      # PutObject returned AccessDenied while reads succeeded, which points at
-      # the token's permission rather than anything in this repo. The code
-      # path itself is verified: an upload against a local stand-in sends
-      # path-style addressing, no checksum headers and no ACL, which is what
-      # R2 expects.
+      # These four are typed into the dashboard (docs §5a):
+      #   AWS_STORAGE_BUCKET_NAME   AWS_S3_ENDPOINT_URL
+      #   AWS_ACCESS_KEY_ID         AWS_SECRET_ACCESS_KEY
+      # AWS_S3_REGION_NAME is optional and defaults to "auto", which is what
+      # R2 wants.
+      #
+      # ⚠️  The R2 API token must be "Object Read & Write". "Object Read only"
+      # authenticates perfectly and then fails every upload with AccessDenied,
+      # which reads like a credential problem and is not one. The bucket's own
+      # counters diagnose it in seconds: Class B operations climbing while
+      # Class A stays at zero means reads work and writes are refused.
       #
       # Keep the bucket PRIVATE. The app serves files only through
       # authenticated endpoints that check permissions first, never from a
       # public URL — a readable bucket would put child case files one guessed
       # filename away from anyone.
       - key: USE_S3
-        value: "false"
+        value: "true"
       - key: AWS_STORAGE_BUCKET_NAME
         sync: false
       - key: AWS_S3_ENDPOINT_URL

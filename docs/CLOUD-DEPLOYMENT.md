@@ -249,6 +249,28 @@ to R2.
 4. Redeploy, then upload a report through the app and confirm it downloads
    again. **Do this before trusting it** — the failure mode is silent.
 
+⚠️ **The token permission is the one to get right.** *Object Read only*
+authenticates perfectly and then fails every upload with `AccessDenied` on
+`PutObject`, which reads like wrong credentials and is not. It has to be
+**Object Read & Write**.
+
+The bucket's own counters diagnose this in seconds — R2 → your bucket:
+
+| Class A (writes) | Class B (reads) | Meaning |
+|---|---|---|
+| 0 | climbing | Token authenticates and can read. **Permission is read-only.** |
+| 0 | 0 | Nothing is reaching this bucket — wrong name, endpoint, or account. |
+| climbing | climbing | Working. |
+
+Django checks whether the filename is taken before writing, so a failing upload
+still registers a Class B read. That read is what tells you the credentials and
+bucket are fine and only the write is being refused.
+
+Also note that a bucket-scoped token returns `AccessDenied` — not
+`NoSuchBucket` — for a bucket outside its scope, so a name mismatch and a
+permission problem look identical from the error alone. The counters are what
+separate them.
+
 Two settings the code applies for you, both of which cause confusing failures
 if you ever configure a client by hand:
 
