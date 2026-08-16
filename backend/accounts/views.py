@@ -180,6 +180,24 @@ class ChangePasswordView(generics.GenericAPIView):
 
 class UserViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdministrator]
+
+    # Unpaginated on purpose, and this is the reasoning rather than an
+    # oversight. RACCO I is one regional office: a handful of psychologists,
+    # perhaps a dozen staff, one administrator. That set does not grow with
+    # caseload the way children and activity entries do, and the directory
+    # filters and sorts client-side so the whole list is what the screen wants
+    # anyway.
+    #
+    # What DOES grow without bound is declined Google sign-ups. They are
+    # archived rather than deleted — that is what stops a refused address
+    # asking again — and the directory asks for include_archived=true, so they
+    # accumulate in every page load. At a few a month that is invisible; at a
+    # few thousand it is not.
+    #
+    # The threshold to act on: when declined requests pass roughly 500, add
+    # server-side pagination and move search into the queryset. Until then this
+    # is one query returning a few dozen rows, and pagination would be
+    # machinery around a list that fits on a screen.
     pagination_class = None
 
     def get_queryset(self):
@@ -259,6 +277,16 @@ class UserViewSet(viewsets.ModelViewSet):
             return Response(
                 {"detail": "A deactivated administrator cannot be reactivated. "
                            "Create a new administrator account instead."},
+                status=status.HTTP_400_BAD_REQUEST)
+        # A declined Google request is also an archived account, and it has no
+        # role because it was never approved. Reactivating one would turn a
+        # refused stranger into an active account — this route is the undo for
+        # a deactivated colleague, not a second chance at approval.
+        if user.role_id is None:
+            return Response(
+                {"detail": "This account was never approved, so there is "
+                           "nothing to restore. Approve a new request from "
+                           "Access Requests instead."},
                 status=status.HTTP_400_BAD_REQUEST)
         user.status = User.ACTIVE
         user.must_change_password = True

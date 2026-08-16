@@ -467,3 +467,76 @@ class UserActivityHistoryTest(APITestCase):
         self._auth("staff@racco1.gov.ph", "staff1234")
         resp = self.client.get(f"/api/users/{self.admin.id}/activity/")
         self.assertEqual(resp.status_code, 403)
+
+
+class RolelessAccountTest(APITestCase):
+    """An active account with no role must not exist, and must reach nothing
+    if it somehow does.
+
+    This matters because of how role checks are written across the codebase:
+    "if psychologist ... else everything". That was safe while every active
+    account had a role. A roleless one lands in the *else* branch of each,
+    which on the activity stream means the full audit trail with child names
+    in it. Rather than invert a dozen call sites, the state is blocked at
+    creation, at reactivation, and at the door."""
+
+    def setUp(self):
+        self.admin_role = Role.objects.create(role_name=Role.ADMINISTRATOR)
+        self.staff_role = Role.objects.create(role_name=Role.STAFF)
+        self.admin = User.objects.create_user(
+            email="admin@racco1.gov.ph", username="admin", password="admin1234",
+            role=self.admin_role)
+
+    def _auth(self, email, password):
+        resp = self.client.post("/api/auth/login/", {"email": email, "password": password})
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer " + resp.data["access"])
+        return resp
+
+    def test_creating_a_user_without_a_role_is_refused(self):
+        self._auth("admin@racco1.gov.ph", "admin1234")
+        resp = self.client.post("/api/users/", {
+            "email": "norole@racco1.gov.ph", "first_name": "No", "last_name": "Role"})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("role", resp.data)
+        self.assertFalse(User.objects.filter(email="norole@racco1.gov.ph").exists())
+
+    def test_a_roleless_account_cannot_reach_the_api(self):
+        """The backstop. Whatever produces this state in future, the door is shut."""
+        stray = User.objects.create_user(
+            email="stray@gmail.com", username="stray@gmail.com", password="stray1234")
+        self.assertIsNone(stray.role)
+        self.assertTrue(stray.is_active)
+        login = self.client.post("/api/auth/login/", {
+            "email": "stray@gmail.com", "password": "stray1234"})
+        token = login.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer " + token)
+        # The activity stream is the one that mattered: its else-branch is the
+        # full audit trail, and audit entries carry child names.
+        self.assertEqual(self.client.get("/api/activity/").status_code, 401)
+        self.assertEqual(self.client.get("/api/children/").status_code, 401)
+        self.assertEqual(self.client.get("/api/auth/me/").status_code, 401)
+
+    def test_a_declined_request_cannot_be_reactivated(self):
+        """Declining archives the account, and reactivate/ takes archived
+        accounts — so without this guard, declining and then clicking
+        Reactivate turns a refused stranger into an active user."""
+        declined = User.objects.create_user(
+            email="chancer@gmail.com", username="chancer@gmail.com",
+            status=User.ARCHIVED, google_sub="sub-chancer")
+        self._auth("admin@racco1.gov.ph", "admin1234")
+        resp = self.client.post(f"/api/users/{declined.id}/reactivate/")
+        self.assertEqual(resp.status_code, 400)
+        declined.refresh_from_db()
+        self.assertEqual(declined.status, User.ARCHIVED)
+        self.assertFalse(declined.is_active)
+
+    def test_a_real_colleague_can_still_be_reactivated(self):
+        """The guard must not break the case reactivate/ exists for."""
+        colleague = User.objects.create_user(
+            email="left@racco1.gov.ph", username="left", password="left1234",
+            role=self.staff_role, status=User.ARCHIVED)
+        self._auth("admin@racco1.gov.ph", "admin1234")
+        resp = self.client.post(f"/api/users/{colleague.id}/reactivate/")
+        self.assertEqual(resp.status_code, 200)
+        colleague.refresh_from_db()
+        self.assertEqual(colleague.status, User.ACTIVE)

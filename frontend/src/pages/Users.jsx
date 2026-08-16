@@ -25,13 +25,21 @@ const LIFECYCLE = {
   pending: { label: 'Pending first sign-in', dot: 'var(--warning-500)', note: 'Holding a temporary password — they must set their own before they reach any case data.' },
   takeover: { label: 'Takeover pending', dot: 'var(--red-500)', note: 'At this administrator’s first sign-in, every other administrator account is deactivated.' },
   deactivated: { label: 'Deactivated', dot: 'var(--ink-400)', note: 'Cannot sign in. Everything they recorded is retained.' },
+  declined: { label: 'Request declined', dot: 'var(--ink-300)', note: 'A Google sign-up an administrator refused. The account was never approved, holds no role, and this address cannot ask again.' },
 };
 
+// Two things this ordering has to get right.
+//
 // `status` is checked before the flag-derived states: an account awaiting
 // approval carries neither flag, so falling through would render it as Active
 // — the one reading this screen must never give.
+//
+// And archived covers two different people. A colleague who left has a role; a
+// refused Google sign-up never got one. Filing a declined stranger under
+// "Deactivated" alongside former staff misreads the directory, and over time
+// the refused ones outnumber the colleagues.
 const statusOf = (u) => (
-  u.status === 'archived' ? 'deactivated'
+  u.status === 'archived' ? (u.role ? 'deactivated' : 'declined')
     : u.status === 'pending' ? 'requested'
       : u.admin_takeover_pending ? 'takeover'
         : u.must_change_password ? 'pending'
@@ -41,7 +49,7 @@ const statusOf = (u) => (
 // nothing in this directory is hidden without a number next to it.
 const BUCKET_OF = {
   requested: 'requested', active: 'active', pending: 'pending',
-  takeover: 'pending', deactivated: 'deactivated',
+  takeover: 'pending', deactivated: 'deactivated', declined: 'declined',
 };
 
 const DATE_ONLY = { day: 'numeric', month: 'short', year: 'numeric' };
@@ -58,7 +66,7 @@ const sinceLabel = (iso) => {
 
 // Ordered by how much of the administrator's attention the state wants, not
 // alphabetically: sorting by Status should surface what needs a decision.
-const SORT_ORDER = { requested: 0, takeover: 1, pending: 2, active: 3, deactivated: 4 };
+const SORT_ORDER = { requested: 0, takeover: 1, pending: 2, active: 3, deactivated: 4, declined: 5 };
 const nameOf = (u) => (u.fullname || u.username || u.email || '');
 const compare = (a, b, key) => {
   if (key === 'role') return (a.role_name || '').localeCompare(b.role_name || '') || nameOf(a).localeCompare(nameOf(b));
@@ -231,6 +239,13 @@ export default function Users() {
   const save = async (e) => {
     e.preventDefault();
     setError('');
+    // Caught here as well as on the server so the answer is immediate. An
+    // account saved without a role cannot sign in at all, and finding that out
+    // after handing someone their password is a bad way to learn it.
+    if (!form.id && !form.role) {
+      setError('Choose a role — an account without one cannot sign in.');
+      return;
+    }
     setSaving(true);
     try {
       const payload = { ...form };
@@ -298,7 +313,7 @@ export default function Users() {
   const toneFor = (role) => (role === 'Administrator' ? 'brand' : role === 'Psychologist' ? 'red' : 'amber');
 
   const counts = useMemo(() => {
-    const c = { all: users.length, requested: 0, active: 0, pending: 0, deactivated: 0 };
+    const c = { all: users.length, requested: 0, active: 0, pending: 0, deactivated: 0, declined: 0 };
     users.forEach((u) => { c[BUCKET_OF[statusOf(u)]] += 1; });
     return c;
   }, [users]);
@@ -325,8 +340,14 @@ export default function Users() {
     s.key === col.key ? { key: col.key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: col.key, dir: col.dir }));
 
   const menuItems = (u) => {
-    const archived = statusOf(u) === 'deactivated';
+    const state = statusOf(u);
+    const archived = state === 'deactivated';
     const isAdmin = u.role_name === 'Administrator';
+    // A refused sign-up was never approved: there is no role to restore and no
+    // credential to issue. Offering either would be offering a way back in.
+    if (state === 'declined') {
+      return [{ id: 'edit', label: 'View details', icon: 'eye', onSelect: () => openEdit(u) }];
+    }
     return [
       { id: 'edit', label: 'Edit details', icon: 'pencil', onSelect: () => openEdit(u) },
       {
@@ -412,6 +433,10 @@ export default function Users() {
                   { key: 'active', label: 'Active', count: counts.active, dot: LIFECYCLE.active.dot },
                   { key: 'pending', label: 'Pending first sign-in', count: counts.pending, dot: LIFECYCLE.pending.dot },
                   { key: 'deactivated', label: 'Deactivated', count: counts.deactivated, dot: LIFECYCLE.deactivated.dot },
+                  // Kept out of sight until there is one, then counted rather
+                  // than hidden — refused sign-ups accumulate and would
+                  // otherwise quietly pad the Deactivated tally.
+                  ...(counts.declined ? [{ key: 'declined', label: 'Declined requests', count: counts.declined, dot: LIFECYCLE.declined.dot }] : []),
                 ]}
               />
               <div style={{ width: 178 }}>
@@ -579,7 +604,11 @@ export default function Users() {
               {/* The same actions as the row menu, so opening an account to
                   check it does not mean closing it again to act on it. */}
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {statusOf(form) === 'deactivated' ? (
+                {statusOf(form) === 'declined' ? (
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                    Nothing to restore — this request was never approved.
+                  </span>
+                ) : statusOf(form) === 'deactivated' ? (
                   <Button
                     variant="secondary" size="sm" iconLeft={<Icon name="user-check" size={15} />}
                     disabled={form.role_name === 'Administrator'}

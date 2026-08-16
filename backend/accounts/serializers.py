@@ -55,6 +55,8 @@ class UserWriteSerializer(serializers.ModelSerializer):
     reset-password action or the user's own change-password endpoint."""
     # Email IS the username — the field is optional and derived from email.
     username = serializers.CharField(required=False, allow_blank=True)
+    role = serializers.PrimaryKeyRelatedField(
+        queryset=Role.objects.all(), required=False, allow_null=True)
 
     class Meta:
         model = User
@@ -62,6 +64,24 @@ class UserWriteSerializer(serializers.ModelSerializer):
             "id", "email", "username", "first_name", "last_name",
             "middle_initial", "contact_details", "role", "status",
         ]
+
+    def validate(self, attrs):
+        """A role is required when creating, and ignored when updating.
+
+        The column stays nullable because a pending Google sign-up genuinely
+        has no role until someone approves it. But an administrator creating an
+        account by hand must choose one: a roleless active account has no
+        defined access and is refused at authentication, so saving one would
+        only produce a colleague who cannot sign in and no explanation why.
+
+        Not enforced on update, because a role cannot be changed once assigned
+        (see update()) — demanding a field that is then discarded would reject
+        every ordinary edit.
+        """
+        if self.instance is None and not attrs.get("role"):
+            raise serializers.ValidationError(
+                {"role": "Choose a role — an account without one cannot sign in."})
+        return attrs
 
     def create(self, validated_data):
         if not validated_data.get("username"):

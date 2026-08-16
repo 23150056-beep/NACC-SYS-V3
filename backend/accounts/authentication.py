@@ -13,15 +13,33 @@ _ALLOWED_WHILE_MUST_CHANGE_PASSWORD = {
 
 
 class ForcePasswordChangeJWTAuthentication(JWTAuthentication):
-    """JWTAuthentication that locks an account down to a small allowlist of
-    endpoints while `user.must_change_password` is set, regardless of what
-    the access token otherwise grants."""
+    """JWTAuthentication with two server-side gates the client cannot skip:
+    an outstanding forced password change, and an account with no role."""
 
     def authenticate(self, request):
         result = super().authenticate(request)
         if result is None:
             return None
         user, validated_token = result
+
+        # An active account with no role has no defined access, and the
+        # codebase reads roles as "if psychologist ... else everything" in a
+        # dozen places — written when every active account had one. A roleless
+        # user therefore lands in the *else* branch of each, which on the
+        # activity stream means the full audit trail, child names included.
+        #
+        # Rather than audit and invert a dozen call sites, fail closed at the
+        # single door they all come through. Two paths could produce this
+        # state: approving nothing but reactivating a declined request, and
+        # creating a user without choosing a role. Both are now blocked at
+        # source as well — this is the backstop for whatever comes next.
+        if getattr(user, "role_id", None) is None:
+            raise AuthenticationFailed(
+                "This account has no role assigned. Ask an administrator to "
+                "set one before signing in.",
+                code="no_role",
+            )
+
         if getattr(user, "must_change_password", False) and request.path not in _ALLOWED_WHILE_MUST_CHANGE_PASSWORD:
             raise AuthenticationFailed(
                 "You must change your password before continuing.",
