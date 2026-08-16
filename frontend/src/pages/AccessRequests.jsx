@@ -4,7 +4,7 @@ import { useActivity } from '../context/ActivityContext';
 import { useToast } from '../context/ToastContext';
 import {
   Card, Button, Alert, Select, FormField, Avatar, EmptyState, Icon, Skeleton,
-  ConfirmDialog,
+  ConfirmDialog, RoleAccessPanel,
 } from '../ui';
 
 // People who signed up with Google and are waiting on a decision. Rendered as
@@ -225,10 +225,13 @@ export default function AccessRequests({ onChange }) {
               {roles.map((r) => <option key={r.id} value={r.id}>{r.role_name}</option>)}
             </Select>
           </FormField>
+          {/* The same panel User Management shows when a role is corrected, so
+              "what does this role mean?" has one answer in both places. */}
+          <RoleAccessPanel to={granting?.role_name || null} />
           {granting?.role_name === 'Psychologist' && (
             <Alert tone="warning" icon={<Icon name="alert-triangle" size={18} />}>
-              A psychologist can read clinical interviews, assessment results
-              and uploaded reports for the children assigned to them.
+              That includes clinical interviews, assessment results and uploaded
+              reports for the children assigned to them.
             </Alert>
           )}
         </ConfirmDialog>

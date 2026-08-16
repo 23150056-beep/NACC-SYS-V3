@@ -540,3 +540,102 @@ class RolelessAccountTest(APITestCase):
         self.assertEqual(resp.status_code, 200)
         colleague.refresh_from_db()
         self.assertEqual(colleague.status, User.ACTIVE)
+
+
+class RoleChangeTest(APITestCase):
+    """Roles used to be frozen once assigned, which left a mis-assignment with
+    no fix except deleting the person and starting again. They can be corrected
+    now — except in the two directions that would break the single-admin rule."""
+
+    def setUp(self):
+        self.admin_role = Role.objects.create(role_name=Role.ADMINISTRATOR)
+        self.staff_role = Role.objects.create(role_name=Role.STAFF)
+        self.psych_role = Role.objects.create(role_name=Role.PSYCHOLOGIST)
+        self.admin = User.objects.create_user(
+            email="admin@racco1.gov.ph", username="admin", password="admin1234",
+            role=self.admin_role)
+        self.staff = User.objects.create_user(
+            email="staff@racco1.gov.ph", username="staff", password="staff1234",
+            role=self.staff_role, first_name="Ana", last_name="Reyes")
+        token = self.client.post("/api/auth/login/", {
+            "email": "admin@racco1.gov.ph", "password": "admin1234"}).data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer " + token)
+
+    def put(self, user, **extra):
+        body = {"email": user.email, "first_name": user.first_name,
+                "last_name": user.last_name}
+        body.update(extra)
+        # JSON, not multipart: the browser sends JSON, and a null role only
+        # survives the trip in that encoding.
+        return self.client.put(f"/api/users/{user.id}/", body, format="json")
+
+    def test_a_role_can_be_corrected(self):
+        resp = self.put(self.staff, role=self.psych_role.id)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.staff.refresh_from_db()
+        self.assertEqual(self.staff.role, self.psych_role)
+
+    def test_the_change_is_recorded_with_both_roles(self):
+        self.put(self.staff, role=self.psych_role.id)
+        labels = [e.entity_label for e in
+                  ActivityLog.objects.filter(entity_id=self.staff.id)]
+        self.assertTrue(any("Staff" in l and "Psychologist" in l for l in labels),
+                        f"neither role named in the audit trail: {labels}")
+
+    def test_nobody_can_be_promoted_into_administrator(self):
+        """That path exists only through account creation, which runs the
+        handover. Reaching it by edit would leave two live administrators."""
+        resp = self.put(self.staff, role=self.admin_role.id)
+        self.assertEqual(resp.status_code, 400)
+        self.staff.refresh_from_db()
+        self.assertEqual(self.staff.role, self.staff_role)
+
+    def test_an_administrator_cannot_be_demoted(self):
+        """It is the agency's recovery account, and there is only one."""
+        resp = self.put(self.admin, role=self.staff_role.id)
+        self.assertEqual(resp.status_code, 400)
+        self.admin.refresh_from_db()
+        self.assertEqual(self.admin.role, self.admin_role)
+
+    def test_editing_other_fields_without_touching_the_role_still_works(self):
+        resp = self.put(self.staff, first_name="Anna", role=self.staff_role.id)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.staff.refresh_from_db()
+        self.assertEqual(self.staff.first_name, "Anna")
+        self.assertEqual(self.staff.role, self.staff_role)
+
+    def test_an_unchanged_administrator_can_still_be_edited(self):
+        """The demotion guard must not block ordinary edits to an admin."""
+        resp = self.put(self.admin, first_name="Reynold", role=self.admin_role.id)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.admin.refresh_from_db()
+        self.assertEqual(self.admin.first_name, "Reynold")
+
+    def test_a_role_cannot_be_emptied(self):
+        """A roleless active account is refused at sign-in, so clearing the
+        field would lock the person out with no explanation. Deactivation is
+        the way to remove access, and it says so."""
+        resp = self.put(self.staff, role=None)
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("Deactivate", str(resp.data))
+        self.staff.refresh_from_db()
+        self.assertEqual(self.staff.role, self.staff_role)
+
+    def test_leaving_the_role_out_of_the_payload_is_not_a_removal(self):
+        """Only a present-and-empty value means "remove"; a partial edit that
+        never mentions the role must not be read as one."""
+        resp = self.client.patch(
+            f"/api/users/{self.staff.id}/", {"first_name": "Anna"})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.staff.refresh_from_db()
+        self.assertEqual(self.staff.role, self.staff_role)
+        self.assertEqual(self.staff.first_name, "Anna")
+
+    def test_a_pending_request_can_still_be_saved_without_a_role(self):
+        """Someone awaiting approval genuinely has none — the guard is about
+        taking a role away, not about accounts that never had one."""
+        applicant = User.objects.create_user(
+            email="applicant@gmail.com", username="applicant@gmail.com",
+            status=User.PENDING, first_name="Jo", last_name="Cruz")
+        resp = self.put(applicant, role=None)
+        self.assertEqual(resp.status_code, 200, resp.data)

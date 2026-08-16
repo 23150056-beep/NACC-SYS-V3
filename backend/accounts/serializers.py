@@ -66,21 +66,29 @@ class UserWriteSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
-        """A role is required when creating, and ignored when updating.
+        """An account may not be saved into the roleless state.
 
-        The column stays nullable because a pending Google sign-up genuinely
-        has no role until someone approves it. But an administrator creating an
-        account by hand must choose one: a roleless active account has no
-        defined access and is refused at authentication, so saving one would
+        The column stays nullable because a pending Google sign-up genuinely has
+        no role until someone approves it. But a roleless *active* account has
+        no defined access and is refused at authentication, so saving one would
         only produce a colleague who cannot sign in and no explanation why.
 
-        Not enforced on update, because a role cannot be changed once assigned
-        (see update()) — demanding a field that is then discarded would reject
-        every ordinary edit.
+        Two directions, one rule: an administrator creating an account by hand
+        must choose a role, and an existing role cannot be emptied back to none.
+        Removing someone's access is what deactivation is for — it says so on
+        the screen, and it is reversible.
+
+        Ordinary edits that leave `role` out of the payload are untouched: only
+        a present-and-empty value is a removal.
         """
-        if self.instance is None and not attrs.get("role"):
+        if self.instance is None:
+            if not attrs.get("role"):
+                raise serializers.ValidationError(
+                    {"role": "Choose a role — an account without one cannot sign in."})
+        elif "role" in attrs and not attrs["role"] and self.instance.role_id:
             raise serializers.ValidationError(
-                {"role": "Choose a role — an account without one cannot sign in."})
+                {"role": "Removing the role would lock this account out. "
+                         "Deactivate the account instead."})
         return attrs
 
     def create(self, validated_data):
@@ -93,16 +101,59 @@ class UserWriteSerializer(serializers.ModelSerializer):
         user.save()
         return user
 
+    def validate_role(self, value):
+        """A role can be corrected, but not in the two directions that would
+        break something the rest of the system depends on.
+
+        Roles used to be frozen once assigned (adviser's rule). That left an
+        administrator who picked the wrong one with no way back except
+        deactivating the person and creating them again, which loses their
+        history. Changing one is allowed now — with these two exceptions,
+        which are not preferences:
+
+        * Nobody can be promoted INTO Administrator here. Creating an
+          administrator triggers the single-admin handover (every other admin
+          is archived at their first sign-in, see _complete_admin_takeover);
+          reaching that state through an edit would skip the flow entirely and
+          leave two live administrators, which the design does not allow.
+        * An Administrator's role cannot be changed away. It is the agency's
+          recovery account, and there may be only one.
+        """
+        instance = self.instance
+        if instance is None or instance.role_id == getattr(value, "id", None):
+            return value
+        if value and value.role_name == Role.ADMINISTRATOR:
+            raise serializers.ValidationError(
+                "An account cannot be changed into an Administrator. Add a new "
+                "administrator account instead — that path hands over properly.")
+        if instance.role and instance.role.role_name == Role.ADMINISTRATOR:
+            raise serializers.ValidationError(
+                "An Administrator's role cannot be changed. Create the "
+                "replacement administrator first.")
+        return value
+
     def update(self, instance, validated_data):
-        # A role cannot be changed once it has been assigned (adviser).
-        if instance.role_id is not None:
-            validated_data.pop("role", None)
+        previous_role = instance.role
+        new_role = validated_data.get("role", previous_role)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         # Keep username in sync with email (email is the username).
         if validated_data.get("email"):
             instance.username = validated_data["email"]
         instance.save()
+
+        # Logged separately from the ordinary "updated" line, and naming both
+        # roles: "who made her a psychologist, and when" is a question the
+        # audit trail has to answer on its own.
+        if new_role != previous_role:
+            actor = self.context["request"].user
+            log_activity(
+                actor, ActivityLog.UPDATED, ActivityLog.USER,
+                entity_type="User",
+                entity_label=(f"{instance.fullname or instance.email} — role changed "
+                              f"from {previous_role.role_name if previous_role else 'none'} "
+                              f"to {new_role.role_name if new_role else 'none'}"),
+                entity_id=instance.id)
         return instance
 
 

@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api/client';
 import { useActivity } from '../context/ActivityContext';
 import {
   Card, Button, Alert, Input, Select, FormField, Avatar, RoleBadge, EmptyState,
   Icon, iconBtn, hoverLift, PAGE, Tabs, Skeleton, Modal, ConfirmDialog, Drawer,
-  Menu, FilterPills,
+  Menu, FilterPills, RoleAccessPanel,
 } from '../ui';
 import { useToast } from '../context/ToastContext';
 import CredentialHandoffs from './CredentialHandoffs';
@@ -44,6 +44,24 @@ const statusOf = (u) => (
       : u.admin_takeover_pending ? 'takeover'
         : u.must_change_password ? 'pending'
           : 'active');
+
+/* Why a role field is not editable, in the words the administrator needs —
+ * every case here is refused by the server too, so the lock is an explanation
+ * rather than the enforcement. Returns null when the role can be changed. */
+const roleLockOf = (u) => {
+  if (!u?.id) return null;
+  const state = statusOf(u);
+  if (state === 'requested') {
+    return 'This is still a request. Approve it under Access Requests — that is where the role is granted.';
+  }
+  if (state === 'declined') {
+    return 'This request was declined, so there is no role to set. The address cannot ask again.';
+  }
+  if (u.role_name === 'Administrator') {
+    return 'An Administrator’s role cannot be changed — it is the agency’s way back in. Create the replacement administrator first.';
+  }
+  return null;
+};
 
 // Filter buckets are mutually exclusive so the counts add up to the total —
 // nothing in this directory is hidden without a number next to it.
@@ -194,6 +212,13 @@ export default function Users() {
   // returns it again, so there is nothing to keep in state afterward.
   const [resetResult, setResetResult] = useState(null);
 
+  // Set when the drawer was opened from "Change role" rather than "Edit
+  // details": the role field sits below the account facts and the activity
+  // list, so without this the administrator lands on a panel scrolled to the
+  // top and has to hunt for the one field they came for.
+  const [seekRole, setSeekRole] = useState(false);
+  const roleFieldRef = useRef(null);
+
   const { refresh: refreshActivity } = useActivity();
   const toast = useToast();
 
@@ -221,10 +246,11 @@ export default function Users() {
     setError(''); setActivity(null); setPristine({ ...EMPTY }); setForm({ ...EMPTY });
   };
 
-  const openEdit = (u) => {
+  const openEdit = (u, { toRole = false } = {}) => {
     setError('');
     setPristine({ ...EMPTY, ...u });
     setForm({ ...EMPTY, ...u });
+    setSeekRole(toRole);
     // Fetched per open rather than with the directory: it is 25 rows per user
     // and nobody opens every account.
     setActivity(null);
@@ -234,18 +260,55 @@ export default function Users() {
   };
 
   const dirty = !!form && !!pristine && EDITABLE.some((k) => String(form[k] ?? '') !== String(pristine[k] ?? ''));
-  const closeForm = () => { setForm(null); setPristine(null); setError(''); };
+  const closeForm = () => { setForm(null); setPristine(null); setError(''); setSeekRole(false); };
 
-  const save = async (e) => {
+  const roleName = (id) => roles.find((r) => String(r.id) === String(id))?.role_name || null;
+  const roleLock = form ? roleLockOf(form) : null;
+  // The pending change, or null. Read off `pristine` rather than a flag so it
+  // survives the administrator changing their mind back: picking the original
+  // role again leaves nothing to confirm.
+  const roleChange = (form?.id && pristine && String(form.role ?? '') !== String(pristine.role ?? ''))
+    ? { from: pristine.role_name || roleName(pristine.role), to: roleName(form.role) }
+    : null;
+
+  useEffect(() => {
+    // Held until the activity list has resolved: it sits above the role field
+    // and grows from three skeleton rows to its real height, so scrolling
+    // before then puts the field on screen and immediately shoves it off again.
+    if (!seekRole || activity === null || !roleFieldRef.current) return;
+    // Runs after the Drawer's own effect has focused its first control (child
+    // effects fire before the parent's), so this wins rather than fights it.
+    roleFieldRef.current.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    roleFieldRef.current.querySelector('select')?.focus();
+    setSeekRole(false);
+  }, [seekRole, activity, form?.id]);
+
+  // The preview appears *below* the dropdown that summoned it, which on a
+  // short window is below the fold — an explanation nobody sees is not one.
+  useEffect(() => {
+    if (!roleChange) return;
+    roleFieldRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+  }, [roleChange?.to]);
+
+  const save = (e) => {
     e.preventDefault();
     setError('');
     // Caught here as well as on the server so the answer is immediate. An
     // account saved without a role cannot sign in at all, and finding that out
-    // after handing someone their password is a bad way to learn it.
-    if (!form.id && !form.role) {
+    // after handing someone their password is a bad way to learn it. Covers
+    // both directions: never created without one, never emptied back to none.
+    if (!form.role && (!form.id || pristine?.role)) {
       setError('Choose a role — an account without one cannot sign in.');
       return;
     }
+    // A role change alters what someone can reach in the system, so it does not
+    // ride along silently with a corrected phone number.
+    if (roleChange) { setConfirm({ kind: 'role' }); return; }
+    submitForm();
+  };
+
+  const submitForm = async () => {
+    setError('');
     setSaving(true);
     try {
       const payload = { ...form };
@@ -254,7 +317,9 @@ export default function Users() {
       delete payload.google_linked; delete payload.last_login; delete payload.created_at;
       if (form.id) {
         await api.put(`/users/${form.id}/`, payload);
-        toast.success('User updated');
+        // Administrator never appears here — it cannot be reached by an edit —
+        // so the article is always "a".
+        toast.success(roleChange ? `${nameOf(form)} is now a ${roleChange.to}` : 'User updated');
       } else {
         const { data } = await api.post('/users/', payload);
         toast.success('User added');
@@ -279,6 +344,11 @@ export default function Users() {
   const runConfirmed = async () => {
     const { kind, user: u } = confirm;
     if (kind === 'discard') { setConfirm(null); closeForm(); return; }
+    // The drawer's own save path — the dialog was the confirmation, not a
+    // separate action, so errors still land in the drawer where the form is.
+    // Awaited before closing so the dialog carries the saving state; submitForm
+    // handles its own failures, so this always gets to the close.
+    if (kind === 'role') { await submitForm(); setConfirm(null); return; }
     setBusy(true);
     try {
       if (kind === 'archive') {
@@ -348,8 +418,17 @@ export default function Users() {
     if (state === 'declined') {
       return [{ id: 'edit', label: 'View details', icon: 'eye', onSelect: () => openEdit(u) }];
     }
+    const lock = roleLockOf(u);
     return [
       { id: 'edit', label: 'Edit details', icon: 'pencil', onSelect: () => openEdit(u) },
+      {
+        id: 'role',
+        label: 'Change role',
+        icon: 'shield',
+        disabled: !!lock,
+        hint: lock || undefined,
+        onSelect: () => openEdit(u, { toRole: true }),
+      },
       {
         id: 'reset',
         label: 'Issue temporary password',
@@ -378,7 +457,7 @@ export default function Users() {
     ];
   };
 
-  const formRole = roles.find((r) => String(r.id) === String(form?.role))?.role_name;
+  const formRole = roleName(form?.role);
 
   return (
     <div style={{ ...PAGE, position: 'relative' }}>
@@ -582,8 +661,8 @@ export default function Users() {
           onDismissBlocked={() => setConfirm({ kind: 'discard' })}
           footer={<>
             <Button type="button" variant="ghost" onClick={() => (dirty ? setConfirm({ kind: 'discard' }) : closeForm())}>Cancel</Button>
-            <Button type="submit" variant="primary" disabled={saving} style={{ flex: 1 }} iconLeft={<Icon name="save" size={16} />}>
-              {saving ? 'Saving…' : form.id ? 'Save changes' : 'Create user'}
+            <Button type="submit" variant="primary" disabled={saving} style={{ flex: 1 }} iconLeft={<Icon name={roleChange ? 'shield' : 'save'} size={16} />}>
+              {saving ? 'Saving…' : roleChange ? 'Review role change' : form.id ? 'Save changes' : 'Create user'}
             </Button>
           </>}
         >
@@ -671,22 +750,52 @@ export default function Users() {
             </FormField>
           ))}
 
-          {/* A role cannot be changed once assigned (adviser). */}
-          {form.id && form.role ? (
-            <FormField label="Role" hint="A role cannot be changed once it has been assigned.">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 42, padding: '0 13px', borderRadius: 'var(--radius-md)', background: 'var(--ink-50)', border: '1px solid var(--border)', color: 'var(--text-strong)', fontWeight: 700, fontSize: 14 }}>
-                {form.role_name || formRole || '—'}
-                <Icon name="lock" size={13} style={{ color: 'var(--text-faint)', marginLeft: 'auto' }} />
+          {/* A role used to be frozen once assigned, which left a mis-set role
+              fixable only by deactivating the person and creating them again —
+              losing their history to correct a dropdown. It is editable now,
+              minus the two directions the server refuses (see roleLockOf). */}
+          <div ref={roleFieldRef}>
+            {roleLock ? (
+              <FormField label="Role" hint={roleLock}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 42, padding: '0 13px', borderRadius: 'var(--radius-md)', background: 'var(--ink-50)', border: '1px solid var(--border)', color: 'var(--text-strong)', fontWeight: 700, fontSize: 14 }}>
+                  {form.role_name || formRole || (form.requested_role_name ? `${form.requested_role_name} (claimed)` : '—')}
+                  <Icon name="lock" size={13} style={{ color: 'var(--text-faint)', marginLeft: 'auto' }} />
+                </div>
+              </FormField>
+            ) : (
+              <FormField
+                label="Role"
+                hint={form.id
+                  ? 'What this person can reach. Changing it takes effect the moment you save.'
+                  : undefined}
+              >
+                <Select value={form.role || ''} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+                  {/* No blank option once a role exists: emptying it would
+                      leave an active account that fails at sign-in with no
+                      explanation. Deactivating is how access is removed. */}
+                  {(!form.id || !pristine?.role) && <option value="">— Select role —</option>}
+                  {roles
+                    // Administrator is offered when creating an account (that
+                    // path runs the handover) but never as an edit: promoting
+                    // someone here would skip the handover and leave two live
+                    // administrators. The server refuses it either way.
+                    .filter((r) => !form.id || r.role_name !== 'Administrator')
+                    .map((r) => <option key={r.id} value={r.id}>{r.role_name}</option>)}
+                </Select>
+              </FormField>
+            )}
+
+            {roleChange && (
+              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <RoleAccessPanel from={roleChange.from} to={roleChange.to} />
+                <Alert tone="warning" icon={<Icon name="alert-triangle" size={18} />}>
+                  Not saved yet — you'll be asked to confirm. If {form.first_name || 'this person'} is
+                  signed in right now, the new access applies immediately, but their
+                  menu keeps the old shape until they sign out and back in.
+                </Alert>
               </div>
-            </FormField>
-          ) : (
-            <FormField label="Role">
-              <Select value={form.role || ''} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-                <option value="">— Select role —</option>
-                {roles.map((r) => <option key={r.id} value={r.id}>{r.role_name}</option>)}
-              </Select>
-            </FormField>
-          )}
+            )}
+          </div>
 
           {/* Single-admin handover warning (product decision 2026-07-18). */}
           {!form.id && formRole === 'Administrator' && (
@@ -715,6 +824,25 @@ export default function Users() {
           description="The edits in this panel have not been saved yet."
           cancelLabel="Keep editing" confirmLabel="Discard"
         />
+      )}
+
+      {confirm?.kind === 'role' && roleChange && (
+        <ConfirmDialog
+          onClose={() => setConfirm(null)} onConfirm={runConfirmed} busy={saving}
+          tone="warning" icon={<Icon name="shield" size={19} />}
+          title={`Change ${nameOf(form)} to ${roleChange.to}?`}
+          description="Their access changes as soon as you save."
+          confirmLabel={saving ? 'Saving…' : `Change to ${roleChange.to}`} cancelLabel="Cancel"
+        >
+          <RoleAccessPanel from={roleChange.from} to={roleChange.to} />
+          {/* Records already entered under the old role stay where they are —
+              worth saying, because the fear that prompts the question is that
+              correcting a role quietly reassigns or hides someone's work. */}
+          <Alert tone="info" icon={<Icon name="info" size={18} />}>
+            Everything they have already recorded stays exactly as it is, and the
+            change is written to the audit trail with your name on it.
+          </Alert>
+        </ConfirmDialog>
       )}
 
       {confirm?.kind === 'archive' && (

@@ -76,7 +76,7 @@ npm install && npm run dev                    # http://localhost:5173
 
 Default admin (change the password immediately): `admin@racco1.gov.ph` / `admin1234`
 
-Tests: `.venv/bin/python manage.py test` (backend suite, 401 tests).
+Tests: `.venv/bin/python manage.py test` (backend suite, 410 tests).
 
 ## Deploying
 
@@ -134,6 +134,15 @@ agency addresses.
   terminate own cases with reason.
 - **Staff** — child/guardian records, read-only monitoring & summaries,
   booking appointments against psychologist availability.
+
+A role can be corrected afterwards from **User Management → Change role**. The
+screen names what the person gains and loses before the change is confirmed,
+and the change is written to the audit trail with both roles and the
+administrator who made it. Two directions are refused, in the API as well as
+the UI: nobody is promoted **into** Administrator by an edit (that path runs
+through account creation, which performs the single-admin handover), and an
+Administrator is never demoted. A role also cannot be emptied — an account with
+no role is refused at sign-in, so removing access is done by deactivating.
 
 There is no child-facing UI.
 

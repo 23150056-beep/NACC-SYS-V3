@@ -23,6 +23,30 @@ export const ROLE_META = {
   Staff: { color: 'var(--amber-500)', soft: 'var(--amber-50)', tone: 'amber', icon: 'folder-heart', desc: 'Child & guardian records, plus read-only counseling results.' },
 };
 
+/* What a role actually opens up, in the words of the people who use it. Lives
+ * here rather than on one page because two screens hand out roles — the access
+ * queue grants one, User Management corrects one — and they must not describe
+ * the same role differently. Mirrors the RBAC matrix in
+ * docs/CLOUD-DEPLOYMENT.md; if that matrix moves, this has to move with it. */
+export const ROLE_ACCESS = {
+  Administrator: [
+    'User accounts, roles and access requests',
+    'Settings, AI switches and catalogue governance',
+    'Every report in the agency',
+  ],
+  Psychologist: [
+    'The pre-assessment flow for assigned children',
+    'Remarks, treatment plans and result entries',
+    'Report uploads and the instruments catalogue',
+    'Their own availability and appointments',
+  ],
+  Staff: [
+    'Child and guardian records',
+    'Monitoring and agency summaries (read-only)',
+    'Booking against psychologist availability',
+  ],
+};
+
 const SEVERITY = {
   standard: { label: 'Standard Adjustment', color: 'var(--success-500)', bg: 'var(--success-50)', fg: 'var(--success-700)' },
   moderate: { label: 'Moderate Concern', color: 'var(--warning-500)', bg: 'var(--warning-50)', fg: 'var(--warning-700)' },
@@ -400,6 +424,42 @@ export function RoleBadge({ role = 'Staff', size = 'md', solid = false, style = 
       <span style={{ width: s.dot, height: s.dot, borderRadius: '50%', background: solid ? '#fff' : r.color, flex: 'none' }} />
       {role}
     </span>
+  );
+}
+
+/* -------------------------- RoleAccessPanel -------------------------- *
+ * Granting a role and correcting one are the same decision seen twice, so both
+ * get the same panel. With `from` it reads as a change — what the person picks
+ * up, what they put down; without it, simply what the role opens up. The two
+ * lists are derived rather than written per pair: three roles make six
+ * directions, and prose for each would drift out of step with ROLE_ACCESS the
+ * first time the matrix moves. */
+export function RoleAccessPanel({ from = null, to, style = {} }) {
+  const before = ROLE_ACCESS[from] || [];
+  const after = ROLE_ACCESS[to] || [];
+  const changing = !!from && from !== to;
+  const gains = changing ? after.filter((x) => !before.includes(x)) : after;
+  const loses = changing ? before.filter((x) => !after.includes(x)) : [];
+  const list = (tone, icon, title, items) => (items.length === 0 ? null : (
+    <div key={title}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: tone, marginBottom: 5 }}>
+        <Icon name={icon} size={13} />{title}
+      </div>
+      <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {items.map((x) => <li key={x} style={{ fontSize: 12.5, color: 'var(--text-body)', lineHeight: 1.5 }}>{x}</li>)}
+      </ul>
+    </div>
+  ));
+  const none = (label) => <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{label}</span>;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '13px 15px', background: 'var(--ink-50)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', ...style }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        {changing && <>{from ? <RoleBadge role={from} size="sm" /> : none('No role')}<Icon name="arrow-right" size={15} style={{ color: 'var(--text-faint)' }} /></>}
+        {to ? <RoleBadge role={to} size="sm" solid /> : none('No role chosen yet')}
+      </div>
+      {list('var(--success-700)', changing ? 'plus' : 'key-round', changing ? 'Gains' : 'This role can', gains)}
+      {list('var(--red-600)', 'minus', 'Loses', loses)}
+    </div>
   );
 }
 
