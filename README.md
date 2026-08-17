@@ -163,9 +163,12 @@ An administrator picks the runtime in **Settings → AI Assistance**:
   API.
 
 The hosted provider sends case text off-server for processing, which changes
-the Data Privacy Act posture — read
-[the data-residency section](docs/CLOUD-DEPLOYMENT.md#6-data-residency-and-ra-10173)
-before enabling it on real data.
+the Data Privacy Act posture. **The deployed system leaves it off**
+(`AI_HOSTED_API_KEY` unset) — it would add a fourth processor in a fourth
+jurisdiction, receiving the most sensitive free text in the system, and nothing
+is lost by omitting it. That decision and the reasoning behind it are recorded
+in [the data-residency section](docs/CLOUD-DEPLOYMENT.md#6-data-residency-and-ra-10173),
+along with what the agency must have in place before real case data is loaded.
 
 ## Docs
 

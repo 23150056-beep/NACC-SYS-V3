@@ -293,37 +293,114 @@ reference them will report the file as missing on download.
 
 ## 6. Data residency and RA 10173
 
-This is the substantive change from V2 and it needs a decision on the record.
+This is the substantive change from V2, and it needs a decision on the record
+rather than a paragraph of good intentions. The position below is the one this
+deployment actually takes.
+
+### What changed
 
 V2's Data Privacy Act posture was physical: the database, the uploaded files,
 and the AI model all lived on one PC inside the RACCO I office. "Data never
 leaves the building" was literally true.
 
-**V3 moves that data to infrastructure the agency does not own.** The
-compliance story therefore shifts from physical control to contractual control,
-and the agency must have the following in place before real case data is loaded:
+V3 moves that data onto infrastructure the agency does not own. The compliance
+story shifts from **physical control** to **contractual control** — which is a
+legitimate posture, and the one nearly every agency system runs on, but only
+once the contracts exist.
 
-| Component | What it processes | What is required |
-|---|---|---|
-| Hosting platform | All case records | Data-processing agreement; a documented hosting region. |
-| Managed PostgreSQL | All case records | Encryption at rest; access limited to the API service. |
-| Object storage | Reports, consent scans, child photos | Private bucket; scoped credentials; encryption at rest. |
-| Hosted AI provider *(only if enabled)* | Case text sent for summarization | A data-processing agreement covering it. **Not on by default.** |
+### Where the data actually lives
 
-Practical guidance:
+| Component | Provider | Region | What it holds |
+|---|---|---|---|
+| Application server | Render | Singapore | Case records in transit; application logs |
+| Database | Neon (serverless PostgreSQL) | AWS `ap-southeast-1`, Singapore | Every case record, every account, every audit entry |
+| Object storage | Cloudflare R2, bucket `nacc-v3-media` | Set by the bucket's location hint — **confirm this in the R2 dashboard** | Uploaded reports, consent scans |
+| Sign-in | Google Identity Services | Google global | Email and display name of staff and psychologists only. **No child data reaches Google.** |
+| AI | *none enabled* | — | — |
 
-- **Pick a hosting region deliberately.** `render.yaml` defaults to Singapore
-  as the closest region to RACCO I; change it if the agency's policy requires a
-  specific jurisdiction.
-- **The AI layer is off by default and the system is fully functional without
-  it.** Care-gap alerts are deterministic and never involve a model. If the
-  hosted provider is not covered by an agreement, leave `AI_HOSTED_API_KEY`
-  unset — nothing else changes.
-- **Instrument copyright compliance is unaffected.** No instrument questions,
-  scales, scoring keys, or norms are stored in V3 either; only titles and
-  metadata.
-- The Settings screen states which posture is active: on-premises shows
-  "Private by design", hosted shows "Processed by a contracted provider".
+**State it plainly, because a panel will ask:** under this deployment, no
+personal data is stored in the Philippines. Everything sits in Singapore or in
+Cloudflare's network. That is not by itself a breach — RA 10173 does not
+prohibit offshore processing — but it is the fact the rest of this section
+exists to answer for.
+
+Singapore is a deliberate choice: it is the nearest region to RACCO I on all
+three providers, which keeps latency low and keeps the data inside one
+jurisdiction instead of scattered across several. `render.yaml` pins
+`region: singapore`; change it there if agency policy requires otherwise.
+
+### The position under RA 10173
+
+1. **NACC RACCO I is the personal information controller.** Render, Neon and
+   Cloudflare are personal information processors acting on the agency's
+   instructions. That allocation does not change because the infrastructure is
+   rented.
+2. **Section 21 (principle of accountability) is the operative provision.** The
+   controller remains responsible for personal information transferred to a
+   third party for processing — expressly including transfers outside the
+   country — and must use contractual or other reasonable means to secure a
+   comparable level of protection while it is being processed. In practice that
+   means a signed data-processing agreement with each of the three providers.
+   All three publish standard DPAs.
+3. **This is sensitive personal information.** Psychological assessments,
+   clinical interviews and treatment plans concerning children are health
+   information under Section 3(l), so the stricter conditions of Section 13
+   govern processing, not the general ones. The lawful basis and the consents
+   belong in the agency's own processing records — the system records that a
+   consent was obtained, which is not the same as establishing that it was
+   valid.
+4. **Government agencies carry additional obligations** beyond the Act itself,
+   under NPC issuances addressed to the public sector — NPC Circular 16-01
+   (*Security of Personal Data in Government Agencies*) being the relevant one
+   for off-site and online storage. Its current requirements, and whether the
+   head of agency must approve this hosting arrangement, must be confirmed by
+   the agency's Data Protection Officer against the live text. Do not take this
+   document's word for it.
+
+### Decision: the hosted AI layer stays off
+
+`AI_HOSTED_API_KEY` is left unset. The reasoning, on the record:
+
+- **Nothing is lost.** The system is fully functional with AI off. Care-gap
+  alerts are deterministic and never involve a model; every AI output was only
+  ever a draft a psychologist had to confirm.
+- **It would add a fourth processor in a fourth jurisdiction**, and it would
+  receive the most sensitive free text in the system — clinical interview
+  narratives and psychologist remarks — rather than the structured fields.
+- **The on-premises alternative is unavailable here.** Ollama is restricted to
+  loopback by design, and these instances have no GPU, so "keep the model
+  local" is not an option on this deployment. The honest choice is hosted-or-
+  nothing, and the answer is nothing.
+- **Revisit only** when there is a DPA naming the specific provider and a
+  documented lawful basis for disclosing case text to it.
+
+Instrument copyright compliance is unaffected either way: no instrument
+questions, scales, scoring keys or norms are stored in V3, only titles and
+metadata.
+
+The Settings screen states which posture is active — on-premises shows
+"Private by design", hosted shows "Processed by a contracted provider".
+
+### Before real case data is loaded
+
+- [ ] Data-processing agreement executed with **Render**
+- [ ] Data-processing agreement executed with **Neon**
+- [ ] Data-processing agreement executed with **Cloudflare**
+- [ ] R2 bucket location hint confirmed and recorded in the table above
+- [ ] All three providers listed as sub-processors in the agency's NPC records
+- [ ] Hosting arrangement reviewed by the agency's Data Protection Officer
+- [ ] Backups (§7) running, and their storage location covered by the same review
+- [ ] `AI_HOSTED_API_KEY` confirmed unset in the production environment
+
+Until every box is ticked, load test data only.
+
+### This is an engineering record, not legal advice
+
+It states what the system does, where the data goes, and which provisions the
+authors understood to apply, so that the agency's Data Protection Officer and
+counsel have something concrete to review. It does not substitute for their
+judgement, and the statutory references should be checked against the current
+text of the Act and NPC issuances before anyone relies on them.
 
 ---
 
