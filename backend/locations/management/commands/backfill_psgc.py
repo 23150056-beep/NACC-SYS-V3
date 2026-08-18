@@ -20,6 +20,12 @@ class Command(BaseCommand):
         parser.add_argument(
             "--apply", action="store_true",
             help="Write the matches. Without it this is a dry run.")
+        parser.add_argument(
+            "--recheck", action="store_true",
+            help=("Also re-examine records that already carry codes. Off by "
+                  "default: a code chosen by a person in the form is better "
+                  "evidence than a text match, and must not be recomputed "
+                  "away just because the wording differs."))
 
     def handle(self, *args, **options):
         apply_changes = options["apply"]
@@ -33,6 +39,11 @@ class Command(BaseCommand):
 
         rows = Child.objects.filter(
             Q(province__gt="") | Q(municipality__gt="") | Q(barangay__gt=""))
+        if not options["recheck"]:
+            # Only records with nothing attached yet. This is what makes the
+            # command safe to run on every deploy: an address someone picked in
+            # the form is left exactly as they picked it.
+            rows = rows.filter(psgc_province="", psgc_municipality="", psgc_barangay="")
         matched = {"province": 0, "municipality": 0, "barangay": 0}
         unmatched = []
         touched = []

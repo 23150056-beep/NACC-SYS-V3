@@ -117,6 +117,34 @@ class BackfillTest(APITestCase):
         child.refresh_from_db()
         self.assertEqual(child.psgc_province, "")
 
+    def test_a_code_someone_picked_is_not_recomputed(self):
+        """The entrypoint runs this on every deploy, so it must never undo a
+        choice made in the form. A person picking an address is better evidence
+        than a text match, even when the text was later edited."""
+        child = Child.objects.create(
+            fullname="Fay", province="La Union", municipality="Agoo",
+            psgc_province="0133", psgc_municipality="013301",
+            psgc_barangay="013301001")
+        call_command("backfill_psgc", "--apply", stdout=StringIO())
+        child.refresh_from_db()
+        self.assertEqual(child.psgc_barangay, "013301001")
+
+    def test_recheck_opts_back_in(self):
+        child = Child.objects.create(
+            fullname="Gil", province="Atlantis", psgc_province="9999")
+        call_command("backfill_psgc", "--apply", "--recheck", stdout=StringIO())
+        child.refresh_from_db()
+        self.assertEqual(child.psgc_province, "")
+
+    def test_running_twice_is_a_no_op(self):
+        child = Child.objects.create(fullname="Hal", province="La Union", municipality="Agoo")
+        call_command("backfill_psgc", "--apply", stdout=StringIO())
+        child.refresh_from_db()
+        first = child.psgc_municipality
+        call_command("backfill_psgc", "--apply", stdout=StringIO())
+        child.refresh_from_db()
+        self.assertEqual(child.psgc_municipality, first)
+
     def test_report_names_the_records_needing_a_human(self):
         Child.objects.create(fullname="Eve", province="Atlantis")
         out = StringIO()

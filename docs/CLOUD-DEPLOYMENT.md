@@ -431,8 +431,12 @@ Geographic Code**, seeded into the database rather than fetched from anyone at
 runtime. Region I is 4 provinces, 125 cities and municipalities, and 3,265
 barangays.
 
+**Both commands run automatically on every deploy**, from the container
+entrypoint — Render's Shell tab is a paid feature and this must not depend on
+it. Nothing to run by hand.
+
 ```bash
-python manage.py seed_psgc          # after every deploy that changes the dataset
+python manage.py seed_psgc          # what the entrypoint runs; also fine locally
 ```
 
 Idempotent — it matches on the PSGC code, so re-running against a newer release
@@ -447,6 +451,12 @@ deliberate act. The dataset is committed at
 `backend/locations/data/psgc_region1.json`.
 
 **Existing addresses.** Records written before the picker hold text and no code.
+
+The entrypoint runs `backfill_psgc --apply` after seeding. By default it only
+touches records that carry **no** codes yet, which is what makes it safe on
+every deploy: an address a person chose in the form is never recomputed from
+its text. `--recheck` opts back in to re-examining everything, and is for a
+human to run deliberately after a PSGC release renames places.
 
 ```bash
 python manage.py backfill_psgc              # dry run, reports what it can match

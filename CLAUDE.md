@@ -69,8 +69,11 @@ Facts that cost real time when forgotten:
 
 PSGC lives in the `locations` app, seeded from a committed JSON file — there is
 no live address API and adding one would put a processor in §6 for nothing.
-After a deploy that changes the dataset: `manage.py seed_psgc`. To attach codes
-to addresses typed before the picker: `manage.py backfill_psgc --apply`.
+`seed_psgc` and `backfill_psgc --apply` both run from `backend/entrypoint.sh`
+on every deploy — Render's Shell tab is paid-only, so nothing here may depend
+on running a command by hand. Both are idempotent, and the backfill skips
+records that already carry codes so it can never undo an address someone picked
+in the form.
 
 ## Health check
 
@@ -84,7 +87,7 @@ shows up as broken sign-in.
 Both of these, every time:
 
 ```
-cd backend && .venv/bin/python manage.py test     # 376 tests
+cd backend && .venv/bin/python manage.py test     # 379 tests
 cd frontend && npm run lint && npm run build
 ```
 

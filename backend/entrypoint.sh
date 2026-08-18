@@ -18,9 +18,22 @@ if [ "${RUN_SEED:-false}" = "true" ]; then
     python manage.py seed_initial_data
 fi
 
-# --timeout is generous on purpose: an AI draft is generated inside the request
-# cycle and a slow model can take a minute or more. It must exceed
-# AI_HOSTED_TIMEOUT (default 120s) or Gunicorn kills the worker mid-draft.
+# Reference data, not user data: the PSGC provinces, cities/municipalities and
+# barangays the intake form picks from. Idempotent — it matches on the PSGC code
+# and updates in place, so running it every deploy is how a newer dataset gets
+# adopted. Without it the address dropdowns are empty.
+echo "==> Loading PSGC addresses"
+python manage.py seed_psgc
+
+# Attaches PSGC codes to addresses that were typed before the picker existed.
+# Only touches records with no codes yet, so an address a person chose in the
+# form is never recomputed from its text. Safe on every deploy; a no-op once
+# there is nothing left to match.
+echo "==> Backfilling PSGC codes on existing addresses"
+python manage.py backfill_psgc --apply
+
+# --timeout is generous on purpose: uploading a large report and writing it to
+# object storage happens inside the request cycle.
 echo "==> Starting Gunicorn on port ${PORT:-8000}"
 exec gunicorn config.wsgi:application \
     --bind "0.0.0.0:${PORT:-8000}" \
