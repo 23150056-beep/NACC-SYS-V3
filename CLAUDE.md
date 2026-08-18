@@ -72,10 +72,25 @@ Facts that cost real time when forgotten:
 nothing else — a wrong `DJANGO_SECRET_KEY` still boots the app fine and only
 shows up as broken sign-in.
 
-## Tests
+## Before bundling anything
+
+Both of these, every time:
 
 ```
-cd backend && .venv/bin/python manage.py test
+cd backend && .venv/bin/python manage.py test     # 362 tests
+cd frontend && npm run lint && npm run build
 ```
 
-362 tests. Run the whole suite before bundling anything.
+**`npm run build` is not enough on its own.** Vite only reports syntax errors —
+a reference to a deleted variable, or a hook left below an early return, builds
+perfectly and then throws at runtime. Both have already happened here: removing
+the AI layer left a `setPolishJob` call behind, and an inserted `useState`
+landed under `if (!data) return …`, which crashed the child report for every
+user until someone opened that page.
+
+`npm run lint` catches both. It is already configured with
+`plugin:react-hooks/recommended`, so `rules-of-hooks` is on and reports
+*"Did you accidentally call a React Hook after an early return?"* by name.
+
+After a change that spans several screens, load each one — a page that renders
+nothing still exits `npm run build` with code 0.

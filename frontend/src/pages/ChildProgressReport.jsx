@@ -31,6 +31,11 @@ export default function ChildProgressReport() {
   const [qr, setQr] = useState(null); // { token, url }
   const [surveyTemplates, setSurveyTemplates] = useState([]);
   const [openInterviews, setOpenInterviews] = useState({}); // interview id -> expanded?
+  // Advancing a case is a clinical state change other screens key off, and there
+  // is no undo button for it — so it is asked for, not just clicked. Declared up
+  // here with the other state: everything below the early returns runs
+  // conditionally, and a hook that only sometimes runs breaks the render.
+  const [confirmMove, setConfirmMove] = useState(null); // { next, childName }
   const isStaffOrAdmin = ['Administrator', 'Staff'].includes(user?.role_name);
 
   const load = () => api.get(`/reports/child/${id}/`).then((r) => setData(r.data)).catch(() => setData('error'));
@@ -51,10 +56,6 @@ export default function ChildProgressReport() {
   const canAdvance = canWrite || user?.role_name === 'Administrator';
   const activePlan = (data.treatment_plans || []).find((p) => p.status === 'active') || (data.treatment_plans || [])[0];
   const csMeta = CASE_STATUS_META[child.case_status] || CASE_STATUS_META.pre_assessment;
-
-  // Advancing a case is a clinical state change other screens key off, and
-  // there is no undo button for it — so it is asked for, not just clicked.
-  const [confirmMove, setConfirmMove] = useState(null); // { next, childName }
 
   const advance = async (next) => {
     try {
@@ -421,7 +422,7 @@ export default function ChildProgressReport() {
       <Card eyebrow="Progress log" title="Psychological remark notes" padding="20px">
         {canWrite && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: data.remarks.length ? 18 : 0 }} className="racco-no-print">
-            <textarea value={remarkText} onChange={(e) => { setRemarkText(e.target.value); if (!e.target.value) setPolishJob(null); }} rows={3} placeholder="Add a dated remark for this child…" style={textarea} />
+            <textarea value={remarkText} onChange={(e) => setRemarkText(e.target.value)} rows={3} placeholder="Add a dated remark for this child…" style={textarea} />
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
               <Button variant="primary" onClick={addRemark} iconLeft={<Icon name="plus" size={16} />} disabled={!remarkText.trim()}>Add remark</Button>
             </div>
