@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useActivity } from '../context/ActivityContext';
 import { Card, Button, Badge, Input, Select, FormField, Avatar, Alert, EmptyState, Icon, iconBtn, hoverLift, PAGE } from '../ui';
 import { useToast } from '../context/ToastContext';
-import { CASE_TYPES, CASE_CATEGORIES, SURRENDERED_BY, TERMINATION_REASONS, PROVINCES, MUNICIPALITIES, BARANGAYS, BIRTH_STATUSES, LEGAL_STATUSES, TYPES_OF_ADOPTION } from '../config/caseData';
+import { CASE_TYPES, CASE_CATEGORIES, CASE_CATEGORY_OPTIONS, CASE_TYPE_FIELDS, SURRENDERED_BY, TERMINATION_REASONS, PROVINCES, MUNICIPALITIES, BARANGAYS, BIRTH_STATUSES, LEGAL_STATUSES, TYPES_OF_ADOPTION } from '../config/caseData';
 
 // Live "who else has this record open" chip — polls the presence heartbeat endpoint.
 function usePresence(childId) {
@@ -707,7 +707,37 @@ function ChildForm({ form, setForm, draftKey, psychologists, blocks = [], error,
   const today = new Date();
   const maxBirthDate = new Date(today.getFullYear() - 5, today.getMonth(), today.getDate()).toISOString().slice(0, 10);
   const minBirthDate = new Date(today.getFullYear() - 18, today.getMonth(), today.getDate()).toISOString().slice(0, 10);
+  /* The Case step asks different questions per track — a Type of Adoption on a
+   * reunification case is a field nobody can answer, and one more thing to skip
+   * past on every intake. */
+  const caseFields = CASE_TYPE_FIELDS[form.case_type] || [];
+  const asksFor = (field) => caseFields.includes(field);
+  const categoryOptions = CASE_CATEGORY_OPTIONS[form.case_type] || CASE_CATEGORIES;
+
+  /* Changing the track clears anything the new one does not ask for, so a case
+   * switched from Adoption to Independent Living cannot keep a stale Type of
+   * Adoption that no screen will ever show again. */
+  const changeCaseType = (nextType) => {
+    const nextFields = CASE_TYPE_FIELDS[nextType] || [];
+    const nextCategories = CASE_CATEGORY_OPTIONS[nextType] || CASE_CATEGORIES;
+    setForm({
+      ...form,
+      case_type: nextType,
+      case_category: nextCategories.includes(form.case_category) ? form.case_category : '',
+      surrendered_by: nextFields.includes('surrendered_by') ? form.surrendered_by : '',
+      date_of_placement_to_custodian: nextFields.includes('date_of_placement_to_custodian') ? form.date_of_placement_to_custodian : '',
+      type_of_adoption: nextFields.includes('type_of_adoption') ? form.type_of_adoption : '',
+    });
+  };
+
   const requiredFieldsFilled = form.first_name && form.last_name && form.birth_date && form.gender && form.case_type;
+  // Named, not just disabled: the required fields live on two different steps,
+  // so a greyed-out Save with no explanation sends people hunting.
+  const missing = [
+    [!form.first_name, 'first name'], [!form.last_name, 'last name'],
+    [!form.birth_date, 'date of birth'], [!form.gender, 'sex'],
+    [!form.case_type, 'case type'],
+  ].filter(([m]) => m).map(([, label]) => label);
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(14,19,29,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, zIndex: 70, animation: 'racco-fade-in var(--dur-base) var(--ease-out)' }}>
       <form onSubmit={onSubmit} onClick={(e) => e.stopPropagation()}
@@ -866,7 +896,7 @@ function ChildForm({ form, setForm, draftKey, psychologists, blocks = [], error,
             <div className="racco-eyebrow" style={{ fontSize: 10, marginBottom: 10 }}>Case</div>
             <div className="racco-case-grid">
               <FormField label="Case Type" required={!isEdit}>
-                <Select value={form.case_type || ''} onChange={(e) => setForm({ ...form, case_type: e.target.value })} required={!isEdit}>
+                <Select value={form.case_type || ''} onChange={(e) => changeCaseType(e.target.value)} required={!isEdit}>
                   <option value="">— Select case type —</option>
                   {CASE_TYPES.map((t) => <option key={t}>{t}</option>)}
                 </Select>
@@ -874,15 +904,17 @@ function ChildForm({ form, setForm, draftKey, psychologists, blocks = [], error,
               <FormField label="Category">
                 <Select value={form.case_category || ''} onChange={(e) => setForm({ ...form, case_category: e.target.value })}>
                   <option value="">— Select category —</option>
-                  {CASE_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+                  {categoryOptions.map((c) => <option key={c}>{c}</option>)}
                 </Select>
               </FormField>
-              <FormField label="Previous Custodian">
-                <Select value={form.surrendered_by || ''} onChange={(e) => setForm({ ...form, surrendered_by: e.target.value })}>
-                  <option value="">— Select —</option>
-                  {SURRENDERED_BY.map((s) => <option key={s}>{s}</option>)}
-                </Select>
-              </FormField>
+              {asksFor('surrendered_by') && (
+                <FormField label="Previous Custodian">
+                  <Select value={form.surrendered_by || ''} onChange={(e) => setForm({ ...form, surrendered_by: e.target.value })}>
+                    <option value="">— Select —</option>
+                    {SURRENDERED_BY.map((s) => <option key={s}>{s}</option>)}
+                  </Select>
+                </FormField>
+              )}
               <FormField label="Legal Status" hint="With issued CDCLAA / IVC / judicially declared abandoned">
                 <Select value={form.legal_status || ''} onChange={(e) => setForm({ ...form, legal_status: e.target.value })}>
                   <option value="">— Select —</option>
@@ -892,15 +924,19 @@ function ChildForm({ form, setForm, draftKey, psychologists, blocks = [], error,
               <FormField label="Date of Admission to the Agency">
                 <Input type="date" value={form.date_of_admission || ''} onChange={(e) => setForm({ ...form, date_of_admission: e.target.value })} />
               </FormField>
-              <FormField label="Date of Placement to Custodian" hint="For Relative/Stepparent/Adult/FA/IP">
-                <Input type="date" value={form.date_of_placement_to_custodian || ''} onChange={(e) => setForm({ ...form, date_of_placement_to_custodian: e.target.value })} />
-              </FormField>
-              <FormField label="Type of Adoption">
-                <Select value={form.type_of_adoption || ''} onChange={(e) => setForm({ ...form, type_of_adoption: e.target.value })}>
-                  <option value="">— Select —</option>
-                  {TYPES_OF_ADOPTION.map((t) => <option key={t}>{t}</option>)}
-                </Select>
-              </FormField>
+              {asksFor('date_of_placement_to_custodian') && (
+                <FormField label="Date of Placement to Custodian" hint="For Relative/Stepparent/Adult/FA/IP">
+                  <Input type="date" value={form.date_of_placement_to_custodian || ''} onChange={(e) => setForm({ ...form, date_of_placement_to_custodian: e.target.value })} />
+                </FormField>
+              )}
+              {asksFor('type_of_adoption') && (
+                <FormField label="Type of Adoption">
+                  <Select value={form.type_of_adoption || ''} onChange={(e) => setForm({ ...form, type_of_adoption: e.target.value })}>
+                    <option value="">— Select —</option>
+                    {TYPES_OF_ADOPTION.map((t) => <option key={t}>{t}</option>)}
+                  </Select>
+                </FormField>
+              )}
             </div>
           </section>
           )}
@@ -1003,6 +1039,11 @@ function ChildForm({ form, setForm, draftKey, psychologists, blocks = [], error,
           {/* Editing can save from any step — walking five pages to correct a
               phone number is the kind of thing that makes people avoid the form.
               Creating still has to reach the end, so nothing is missed. */}
+          {!isEdit && missing.length > 0 && step === FORM_STEPS.length && (
+            <span style={{ alignSelf: 'center', fontSize: 12.5, color: 'var(--text-muted)' }}>
+              Still needed: {missing.join(', ')}
+            </span>
+          )}
           {(isEdit || step === FORM_STEPS.length) && (
             <Button type="submit" variant="primary" disabled={!isEdit && !requiredFieldsFilled} iconLeft={<Icon name="save" size={16} />}>Save Record</Button>
           )}

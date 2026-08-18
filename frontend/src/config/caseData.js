@@ -31,8 +31,41 @@ export const CASE_CATEGORIES = [
   'Orphan',
 ];
 
+// Not every category applies to every track. A child being reunified with
+// family or moving to independent living is not "Surrendered" or "Abandoned"
+// in the sense the intake form means — those describe how a child entered
+// residential care, not how they are leaving it.
+export const CASE_CATEGORY_OPTIONS = {
+  Adoption: CASE_CATEGORIES,
+  'Foster Care': CASE_CATEGORIES,
+  'Kinship Care': CASE_CATEGORIES,
+  'Residential Care': CASE_CATEGORIES,
+  'Family Tracing & Reunification': ['Dependent', 'Neglected', 'Without Known Parents', 'Orphan'],
+  'Independent Living': ['Dependent', 'Neglected', 'Without Known Parents', 'Orphan'],
+};
+
+/* Which of the optional case fields each track actually asks for.
+ *
+ * One map rather than the separate show-this / clear-that lists V2 kept, which
+ * had drifted apart: Residential Care preserved a Previous Custodian the form
+ * never showed, and Family Tracing showed the field but wiped the value the
+ * moment you selected it. Deriving both the rendering and the clearing from
+ * this map means they cannot disagree again.
+ *
+ * The lists follow what V2 *displayed*, since that is the behaviour staff saw.
+ * Whether Residential Care should also record a Previous Custodian is a
+ * question for RACCO I, not one to settle by reading old code. */
+export const CASE_TYPE_FIELDS = {
+  Adoption: ['surrendered_by', 'date_of_placement_to_custodian', 'type_of_adoption'],
+  'Foster Care': ['surrendered_by', 'date_of_placement_to_custodian'],
+  'Kinship Care': ['surrendered_by', 'date_of_placement_to_custodian'],
+  'Family Tracing & Reunification': ['surrendered_by', 'date_of_placement_to_custodian'],
+  'Residential Care': [],
+  'Independent Living': [],
+};
+
 // New fields from the same official intake form.
-export const BIRTH_STATUSES = ['Marital', 'Non-Marital', 'Child'];
+export const BIRTH_STATUSES = ['Marital', 'Non-Marital', 'Child', 'N/A'];
 
 export const LEGAL_STATUSES = [
   'With Issued CDCLAA',
@@ -95,7 +128,14 @@ export const SURRENDERED_BY = [
 export const PROVINCES = ['La Union', 'Ilocos Norte', 'Ilocos Sur', 'Pangasinan'];
 
 export const MUNICIPALITIES = {
-  'La Union': ['San Fernando City', 'Agoo', 'Bauang', 'Naguilian', 'Rosario'],
+  // Complete for La Union. The other three provinces are still short lists —
+  // see the PSGC note below.
+  'La Union': [
+    'Agoo', 'Aringay', 'Bacnotan', 'Bagulin', 'Balaoan', 'Bangar', 'Bauang',
+    'Burgos', 'Caba', 'Luna', 'Naguilian', 'Pugo', 'Rosario',
+    'San Fernando City', 'San Gabriel', 'San Juan', 'Santol', 'Santo Tomas',
+    'Sudipen', 'Tubao',
+  ],
   'Ilocos Norte': ['Laoag City', 'Batac City', 'Paoay'],
   'Ilocos Sur': ['Vigan City', 'Candon City', 'Bantay'],
   Pangasinan: ['Dagupan City', 'Lingayen', 'Urdaneta City'],
