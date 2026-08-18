@@ -1,12 +1,11 @@
-# NACC SYS V3 — AI-Integrated Child Case Management & Counseling Support System
+# NACC SYS V3 — Child Case Management & Counseling Support System
 
 Capstone system for the National Authority for Child Care – Regional
 Alternative Child Care Office I (RACCO I), **version 3**.
 
 V3 keeps V2's clinical workflow and case management system intact and changes
 how it is **deployed**: from a single office PC to a cloud environment.
-Containers, managed PostgreSQL, object storage for uploaded case files, and an
-AI layer that works with either an on-premises model or a hosted provider.
+Containers, managed PostgreSQL, and object storage for uploaded case files.
 
 ## What changed from V2
 
@@ -17,7 +16,7 @@ AI layer that works with either an on-premises model or a hosted provider.
 | Uploads | `backend/media/` on disk | S3-compatible object storage (private bucket) |
 | Static files | Served ad hoc | WhiteNoise, collected at image build |
 | Config | `.env` file | Environment variables from the platform's secret store |
-| AI runtime | Ollama, loopback-only | Ollama **or** a hosted API, selectable in Settings |
+| AI runtime | Ollama, loopback-only | **Removed** — see below |
 | Deploys | Manual copy + restart | Push to git → CI → platform deploy |
 | Health | — | `/healthz/` readiness probe |
 
@@ -40,7 +39,6 @@ interviews, problems, manual result entries, and uploaded reports.
 | Case Operations | Census, terminate-with-reason (archive), audit trail/activity feed, agency summary with CSV/print |
 | Scheduling | Psychologist availability blocks, appointment booking with capacity checks, month/week calendar, statuses |
 | Census Dashboard | Active/inactive per case type, today's schedule strip, intake vs termination trend, pending pre-assessments, deterministic care-gap alerts |
-| AI layer | Pre-session brief, report document intelligence, remark polishing, census narrative — all optional, all drafts, all audited |
 
 Monorepo: `backend/` (Django 5.1 + DRF + SimpleJWT, PostgreSQL) ·
 `frontend/` (React 18 + Vite + Tailwind, RACCO I design system).
@@ -76,7 +74,7 @@ npm install && npm run dev                    # http://localhost:5173
 
 Default admin (change the password immediately): `admin@racco1.gov.ph` / `admin1234`
 
-Tests: `.venv/bin/python manage.py test` (backend suite, 410 tests).
+Tests: `.venv/bin/python manage.py test` (backend suite, 362 tests).
 
 ## Deploying
 
@@ -127,7 +125,7 @@ agency addresses.
 
 ## Roles
 
-- **Administrator** — users, settings, catalog governance, AI feature flags, all reports.
+- **Administrator** — users, settings, catalog governance, all reports.
 - **Psychologist** — assigned children only: pre-assessment flow, instruments
   catalog (own), agency form templates (with attestation), remarks, treatment
   plans, result entries, report uploads, own availability/appointments,
@@ -146,29 +144,28 @@ no role is refused at sign-in, so removing access is done by deactivating.
 
 There is no child-facing UI.
 
-## AI (optional)
+## No AI layer
 
-Every AI output is a **draft** the psychologist confirms; every call is audited
-in `tbl_ai_job`; the system is fully functional with AI off. Care-gap alerts are
-deterministic and never involve a model.
+V2 shipped an optional AI layer — pre-session briefs, report summarization,
+remark polishing, a census narrative — running on a local Ollama model. **V3
+removes it entirely** (2026-08-18).
 
-An administrator picks the runtime in **Settings → AI Assistance**:
+The on-premises runtime was what made V2's Data Privacy Act story work: the
+model ran on the office PC and case text never left the building. Cloud
+instances have no GPU and Ollama is loopback-only by design, so that option
+does not exist here. The alternative was a hosted provider, which would have
+meant sending clinical interview narratives and psychologist remarks — the most
+sensitive free text in the system — to a processor outside the agency's
+data-processing agreements.
 
-- **On-premises (Ollama)** — install [Ollama](https://ollama.com),
-  `ollama pull qwen2.5:7b-instruct`, enable the master switch. The endpoint is
-  restricted to loopback, so case data never leaves the machine.
-- **Hosted API (cloud)** — for deployments with no GPU host. Set
-  `AI_HOSTED_API_KEY` in the server environment and choose the model in
-  Settings. The key is never stored in the database and never returned by the
-  API.
+Rather than ship a switch that was unsafe to turn on, the layer is gone: the
+`ai` app, its two tables, the Settings panel, and every AI action in the
+clinical screens. Summaries a psychologist had already **confirmed** are kept
+and shown as ordinary clinical text — once confirmed they are the
+psychologist's own words, not a draft.
 
-The hosted provider sends case text off-server for processing, which changes
-the Data Privacy Act posture. **The deployed system leaves it off**
-(`AI_HOSTED_API_KEY` unset) — it would add a fourth processor in a fourth
-jurisdiction, receiving the most sensitive free text in the system, and nothing
-is lost by omitting it. That decision and the reasoning behind it are recorded
-in [the data-residency section](docs/CLOUD-DEPLOYMENT.md#6-data-residency-and-ra-10173),
-along with what the agency must have in place before real case data is loaded.
+**Care-gap alerts are unaffected.** They were always deterministic rules over
+dates and case state, and never involved a model.
 
 ## Docs
 

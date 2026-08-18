@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import api from '../api/client';
-import { Avatar, Icon, ROLE_META, hoverLift, hoverTint, Button, FormField, Input, Alert } from '../ui';
+import { Avatar, Icon, ROLE_META, hoverLift, hoverTint, Button, FormField, Input, Alert, ConfirmDialog } from '../ui';
 import { useActivity } from '../context/ActivityContext';
 
 const SCREEN_TITLES = {
@@ -80,7 +80,11 @@ export default function Topbar() {
     : role === 'Staff' ? NOTIF_TABS.filter((t) => ['all', 'record'].includes(t.key))
     : NOTIF_TABS.filter((t) => t.key === 'all');
 
-  const handleLogout = () => { logout(); navigate('/login'); };
+  // Confirmed, not immediate: the button sits next to the password and
+  // notification controls, and a stray click used to end the session outright.
+  const [logoutOpen, setLogoutOpen] = useState(false);
+  const handleLogout = () => setLogoutOpen(true);
+  const confirmLogout = () => { setLogoutOpen(false); logout(); navigate('/login'); };
 
   // Self-service password change — available to every role, not just admins.
   const [pwOpen, setPwOpen] = useState(false);
@@ -240,6 +244,15 @@ export default function Topbar() {
             </Button>
           </form>
         </div>
+      )}
+      {logoutOpen && (
+        <ConfirmDialog
+          onClose={() => setLogoutOpen(false)} onConfirm={confirmLogout}
+          tone="warning" icon={<Icon name="log-out" size={19} />}
+          title="Log out?"
+          description="You'll need to sign in again to get back in. Anything already saved is kept."
+          confirmLabel="Log out" cancelLabel="Stay signed in"
+        />
       )}
     </header>
   );

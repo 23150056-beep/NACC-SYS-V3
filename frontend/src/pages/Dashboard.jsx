@@ -78,6 +78,9 @@ export default function Dashboard() {
   const gaps = stats.care_gaps || [];
 
   const actions = [
+    // ?openCreate=1 is honoured by Children.jsx — without this entry the
+    // parameter was live with nothing pointing at it.
+    { label: 'Add Record', icon: 'plus', variant: 'primary', to: '/children?openCreate=1', roles: ['Administrator', 'Staff'] },
     { label: 'Records', icon: 'folder-heart', variant: 'secondary', to: '/children', roles: ['Administrator', 'Psychologist', 'Staff'] },
     { label: 'Start Pre-Assessment', icon: 'clipboard-list', variant: 'primary', to: '/pre-assessment', roles: ['Psychologist'] },
     { label: 'Calendar', icon: 'calendar', variant: 'secondary', to: '/schedule', roles: ['Administrator', 'Psychologist', 'Staff'] },

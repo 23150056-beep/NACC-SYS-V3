@@ -101,10 +101,6 @@ services:
 
       # ---- AI layer (optional; system is fully functional with it off) ---
       # Leave unset to deploy with AI disabled. Set the key, then switch the
-      # provider to "Hosted" in Settings → AI Assistance.
-      - key: AI_HOSTED_API_KEY
-        sync: false
-
   # ---- React frontend (static site) ------------------------------------
   - type: web
     name: nacc-v3-web

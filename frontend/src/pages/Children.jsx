@@ -178,6 +178,22 @@ export default function Children() {
   };
   const openEdit = (c) => { setError(''); setForm({ ...EMPTY, ...c, psychologist: c.psychologist || '', _origPsychologist: c.psychologist || '' }); };
 
+  /* /children?openCreate=1 opens the intake form straight away — it is what the
+   * dashboard's "Add Record" action links to. The parameter is cleared once
+   * used so a refresh, or a back-navigation, does not reopen the form over
+   * whatever the person moved on to. */
+  const autoOpenCreate = searchParams.get('openCreate') === '1';
+  useEffect(() => {
+    if (!autoOpenCreate || form) return;
+    openCreate();
+    const next = new URLSearchParams(searchParams);
+    next.delete('openCreate');
+    setSearchParams(next, { replace: true });
+    // openCreate is stable enough for this one-shot; re-running on every render
+    // would fight the user closing the form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpenCreate, form]);
+
   const save = async (e) => {
     e.preventDefault();
     setError('');
@@ -635,7 +651,16 @@ function TerminateModal({ child, onConfirm, onClose }) {
   );
 }
 
+/* The intake form is five sections long, which as one scroll is a wall of
+ * fields that staff abandon halfway. Paged instead, matching the agency's own
+ * profiling sequence, with the pills doubling as progress and as navigation —
+ * a correction on an earlier page is one click away, not a scroll hunt. */
+const FORM_STEPS = ['Identity', 'Address', 'Case', 'Recommendation', 'Assignment'];
+
 function ChildForm({ form, setForm, draftKey, psychologists, blocks = [], error, isPsych = false, isAdmin = false, others = [], onSubmit, onClose, onReopen, onOpenExisting }) {
+  const [step, setStep] = useState(1);
+  // Reopening the form for a different record starts at the beginning again.
+  useEffect(() => { setStep(1); }, [form.id]);
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -719,6 +744,30 @@ function ChildForm({ form, setForm, draftKey, psychologists, blocks = [], error,
             </Alert>
           )}
 
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <div className="racco-eyebrow" style={{ fontSize: 10 }}>Profiling steps</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 700 }}>Step {step} of {FORM_STEPS.length}</div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              {FORM_STEPS.map((label, i) => {
+                const active = step === i + 1;
+                const done = step > i + 1;
+                return (
+                  <React.Fragment key={label}>
+                    <button
+                      type="button" onClick={() => setStep(i + 1)}
+                      aria-current={active ? 'step' : undefined}
+                      style={{ padding: '8px 12px', borderRadius: 'var(--radius-pill)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: 12.5, border: `1px solid ${active ? 'var(--blue-500)' : done ? 'var(--success-500)' : 'var(--border)'}`, background: active ? 'var(--blue-50)' : done ? 'var(--success-50)' : 'var(--surface)', color: active ? 'var(--blue-700)' : done ? 'var(--success-700)' : 'var(--text-muted)' }}
+                    >{label}</button>
+                    {i < FORM_STEPS.length - 1 && <span style={{ color: 'var(--text-faint)', fontSize: 13, fontWeight: 700 }}>—</span>}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          </div>
+
+          {step === 1 && (
           <section>
             <div className="racco-eyebrow" style={{ fontSize: 10, marginBottom: 10 }}>Identity</div>
             <div className="racco-case-grid">
@@ -784,7 +833,9 @@ function ChildForm({ form, setForm, draftKey, psychologists, blocks = [], error,
               </FormField>
             </div>
           </section>
+          )}
 
+          {step === 2 && (
           <section>
             <div className="racco-eyebrow" style={{ fontSize: 10, marginBottom: 10 }}>Address</div>
             <div className="racco-case-grid">
@@ -808,7 +859,9 @@ function ChildForm({ form, setForm, draftKey, psychologists, blocks = [], error,
               </FormField>
             </div>
           </section>
+          )}
 
+          {step === 3 && (
           <section>
             <div className="racco-eyebrow" style={{ fontSize: 10, marginBottom: 10 }}>Case</div>
             <div className="racco-case-grid">
@@ -850,7 +903,9 @@ function ChildForm({ form, setForm, draftKey, psychologists, blocks = [], error,
               </FormField>
             </div>
           </section>
+          )}
 
+          {step === 4 && (
           <section>
             <div className="racco-eyebrow" style={{ fontSize: 10, marginBottom: 4 }}>Recommendation</div>
             <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: 10 }}>Details beyond the agency&apos;s intake interview.</div>
@@ -875,7 +930,9 @@ function ChildForm({ form, setForm, draftKey, psychologists, blocks = [], error,
               </FormField>
             </div>
           </section>
+          )}
 
+          {step === 5 && (
           <section>
             <div className="racco-eyebrow" style={{ fontSize: 10, marginBottom: 10 }}>Assignment</div>
             {isPsych ? (
@@ -933,10 +990,22 @@ function ChildForm({ form, setForm, draftKey, psychologists, blocks = [], error,
               </>
             )}
           </section>
+          )}
         </div>
         <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" variant="primary" disabled={!isEdit && !requiredFieldsFilled} iconLeft={<Icon name="save" size={16} />}>Save Record</Button>
+          {step > 1 && (
+            <Button type="button" variant="ghost" onClick={() => setStep((n) => n - 1)} iconLeft={<Icon name="arrow-left" size={15} />}>Back</Button>
+          )}
+          {step < FORM_STEPS.length && (
+            <Button type="button" variant={isEdit ? 'secondary' : 'primary'} onClick={() => setStep((n) => n + 1)}>Next</Button>
+          )}
+          {/* Editing can save from any step — walking five pages to correct a
+              phone number is the kind of thing that makes people avoid the form.
+              Creating still has to reach the end, so nothing is missed. */}
+          {(isEdit || step === FORM_STEPS.length) && (
+            <Button type="submit" variant="primary" disabled={!isEdit && !requiredFieldsFilled} iconLeft={<Icon name="save" size={16} />}>Save Record</Button>
+          )}
         </div>
       </form>
     </div>

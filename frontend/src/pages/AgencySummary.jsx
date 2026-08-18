@@ -11,27 +11,7 @@ export default function AgencySummary() {
   const toast = useToast();
   const [range, setRange] = useState('monthly');
   const [data, setData] = useState(null);
-  const [narrative, setNarrative] = useState(null); // { text, jobId, feedbackSent }
-  const [aiBusy, setAiBusy] = useState(false);
 
-  const generateNarrative = async () => {
-    setAiBusy(true);
-    try {
-      const d = data || {};
-      const { data: resp } = await api.post('/ai/census-narrative/', {
-        stats: {
-          range, completed_pre_assessments: d.total, children_seen: d.children,
-          pending_pre_assessments: d.pending_pre_assessments,
-          by_case_type: d.by_case_type, terminations_by_reason: d.terminations_by_reason,
-        },
-      });
-      setNarrative({ text: resp.draft, jobId: resp.job_id, feedbackSent: false });
-    } catch (err) {
-      toast.error(err.response?.status === 503
-        ? 'AI assistance is switched off or unreachable.'
-        : 'Could not generate the narrative.');
-    } finally { setAiBusy(false); }
-  };
 
   useEffect(() => {
     api.get(`/reports/summary/?range=${range}`).then((r) => setData(r.data)).catch(() => setData(EMPTY));
@@ -59,7 +39,6 @@ export default function AgencySummary() {
           ))}
         </div>
         <div style={{ display: 'flex', gap: 10 }} className="racco-no-print">
-          <Button variant="secondary" onClick={generateNarrative} disabled={aiBusy || !data} iconLeft={<Icon name={aiBusy ? 'loader' : 'sparkles'} size={17} />}>{aiBusy ? 'Drafting…' : 'AI Narrative'}</Button>
           <Button variant="secondary" onClick={downloadCsv} iconLeft={<Icon name="download" size={17} />}>CSV</Button>
           <Button variant="secondary" onClick={() => window.print()} iconLeft={<Icon name="printer" size={17} />}>Print / Save PDF</Button>
         </div>
@@ -71,18 +50,6 @@ export default function AgencySummary() {
         <StatCard label="Pending Pre-Assessments" value={d.pending_pre_assessments} tone="amber" icon={<Icon name="loader" size={18} />} />
       </div>
 
-      {narrative && (
-        <Card eyebrow="AI-drafted narrative" title="Monthly summary paragraph" padding="20px" style={{ marginBottom: 20 }}>
-          <p style={{ fontSize: 13.5, color: 'var(--text-body)', lineHeight: 1.65, margin: '0 0 10px', whiteSpace: 'pre-wrap' }}>{narrative.text}</p>
-          <Alert disclaimer title="Draft only.">AI-drafted decision support — review and edit before including it in the agency report.</Alert>
-          {!narrative.feedbackSent && (
-            <div style={{ display: 'flex', gap: 8, marginTop: 8 }} className="racco-no-print">
-              <Button variant="ghost" onClick={() => { api.post(`/ai/jobs/${narrative.jobId}/feedback/`, { outcome: 'accepted' }).catch(() => {}); setNarrative({ ...narrative, feedbackSent: true }); }} iconLeft={<Icon name="thumbs-up" size={15} />}>Useful</Button>
-              <Button variant="ghost" onClick={() => { api.post(`/ai/jobs/${narrative.jobId}/feedback/`, { outcome: 'discarded' }).catch(() => {}); setNarrative(null); }} iconLeft={<Icon name="thumbs-down" size={15} />}>Discard</Button>
-            </div>
-          )}
-        </Card>
-      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,2fr) minmax(0,1fr)', gap: 20, marginBottom: 20 }}>
         <Card eyebrow="Sessions over time" title="Trend" padding="20px">

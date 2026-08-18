@@ -39,7 +39,7 @@ export default function Monitoring() {
             <table style={{ width: '100%', minWidth: 820, borderCollapse: 'collapse', fontFamily: 'var(--font-sans)' }}>
               <thead>
                 <tr style={{ background: 'var(--ink-50)', borderBottom: '1px solid var(--border)' }}>
-                  {['Child', 'Case Status', 'Psychologist', 'Pre-Assessment', 'Latest Classification', 'Last Activity', 'Next Session'].map((h) => (
+                  {['Child', 'Case Status', 'Psychologist', 'Pre-Assessment', 'Latest Classification', 'Latest Remark', 'Last Activity', 'Next Session'].map((h) => (
                     <th key={h} scope="col" style={{ textAlign: 'left', padding: '11px 16px', fontSize: 11, fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
@@ -62,6 +62,9 @@ export default function Monitoring() {
                       <td style={td}>{r.psychologist_name || '—'}</td>
                       <td style={td}>{r.pre_assessment_status}</td>
                       <td style={td}>{r.latest_classification || '—'}</td>
+                      {/* Wraps rather than truncating: a remark is the one cell
+                          on this row worth reading in full. */}
+                      <td style={{ ...td, maxWidth: 240, whiteSpace: 'normal', lineHeight: 1.4 }}>{r.latest_remark || '—'}</td>
                       <td style={td}>{r.last_activity || '—'}</td>
                       <td style={td}>{r.next_session || '—'}</td>
                     </tr>

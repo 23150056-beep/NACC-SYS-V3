@@ -71,7 +71,6 @@ INSTALLED_APPS = [
     "children",
     "clinical",
     "scheduling",
-    "ai",
     "activity",
     "samd",
 ]
@@ -312,24 +311,13 @@ LOGGING = {
     },
 }
 
-
-# --- AI layer -------------------------------------------------------------
+# --- Transactional mail (Brevo) -------------------------------------------
 #
-# V2's compliance story was "the AI runtime never leaves this machine", which a
-# loopback-only Ollama URL enforced. V3 runs in the cloud, so the same promise
-# is kept by *contract* instead: an admin picks a provider in Settings, and the
-# credential for the hosted provider lives only in the server environment —
-# never in the database, never in the API response. See the data-residency
-# section of docs/CLOUD-DEPLOYMENT.md.
-
-# On-premises Ollama: still loopback-only unless the agency knowingly hosts it
-# elsewhere on its own network.
-ALLOW_REMOTE_OLLAMA = env_bool("ALLOW_REMOTE_OLLAMA", False)
-
-# Hosted provider (Anthropic). With no API key configured the hosted provider
-# reports itself unavailable and every AI feature degrades to "off" — exactly
-# like an unreachable Ollama. The system is fully functional either way.
-AI_HOSTED_API_KEY = os.getenv("AI_HOSTED_API_KEY", "")
-AI_HOSTED_BASE_URL = os.getenv("AI_HOSTED_BASE_URL", "")  # blank = provider default
-AI_HOSTED_MAX_TOKENS = int(os.getenv("AI_HOSTED_MAX_TOKENS", "8000"))
-AI_HOSTED_TIMEOUT = float(os.getenv("AI_HOSTED_TIMEOUT", "120"))
+# One message only: "a case has been assigned to you", carrying the case
+# number and nothing else. Brevo is a processor outside the agency's DPAs, so
+# no child name or case detail is put in an email body — see the
+# data-residency section of docs/CLOUD-DEPLOYMENT.md. Leave BREVO_API_KEY
+# unset and the notification is skipped; nothing else changes.
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
+BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL", "racco1nacc@gmail.com")
+BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME", "NACC RACCO1")

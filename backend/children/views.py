@@ -10,6 +10,7 @@ from accounts.permissions import RecordsAccess, ChildRecordAccess
 from activity.models import ActivityLog
 from activity.services import log_activity
 from children.models import Guardian, Child, TerminationRecord
+from children.notifications import send_assignment_notification
 from children.serializers import GuardianSerializer, ChildSerializer
 
 
@@ -65,6 +66,21 @@ class ChildViewSet(_ArchivableViewSet):
         if self.action in ("terminate", "advance_status", "presence", "reopen"):
             return [IsAuthenticated()]
         return super().get_permissions()
+
+    def perform_create(self, serializer):
+        obj = serializer.save()
+        self._log(obj, ActivityLog.CREATED)
+        if getattr(obj, "assigned_psychologist", None) is not None:
+            send_assignment_notification(obj)
+
+    def perform_update(self, serializer):
+        # Read the old assignee before save() overwrites it: the email is for a
+        # *change* of psychologist, not for every edit to an assigned case.
+        old = serializer.instance.assigned_psychologist_id if serializer.instance else None
+        obj = serializer.save()
+        self._log(obj, ActivityLog.UPDATED)
+        if obj.assigned_psychologist_id and obj.assigned_psychologist_id != old:
+            send_assignment_notification(obj)
 
     def get_queryset(self):
         # Inactive (terminated) cases stay reachable by id - the profile view

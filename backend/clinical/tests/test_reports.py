@@ -79,6 +79,26 @@ class MonitoringTest(ReportsBase):
         self.assertEqual(ana["latest_classification"], "Adjustment difficulties")
         self.assertIsNotNone(ana["last_activity"])
         self.assertEqual(ana["pre_assessment_count"], 1)
+        # The psychologist's most recent note, not just its date: monitoring is
+        # read to answer "what is going on with this child right now?".
+        self.assertEqual(ana["latest_remark"], "Note.")
+
+    def test_a_child_with_no_remarks_reports_none(self):
+        """None, not an empty string — the column renders a dash for it."""
+        Child.objects.create(fullname="Quiet", case_type="Adoption",
+                             assigned_psychologist=self.psy)
+        self._auth("a@racco1.gov.ph")
+        resp = self.client.get("/api/reports/monitoring/")
+        quiet = next(r for r in resp.data if r["child_name"] == "Quiet")
+        self.assertIsNone(quiet["latest_remark"])
+
+    def test_the_latest_remark_wins_not_the_first(self):
+        self._auth("a@racco1.gov.ph")
+        RemarkNote.objects.create(child=self.child, author=self.psy,
+                                  text="Later note.", date="2030-01-01")
+        resp = self.client.get("/api/reports/monitoring/")
+        ana = next(r for r in resp.data if r["child_name"] == "Ana")
+        self.assertEqual(ana["latest_remark"], "Later note.")
 
     def test_psychologist_scoped(self):
         Child.objects.create(fullname="Ben", assigned_psychologist=self.other)

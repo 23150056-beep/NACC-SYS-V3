@@ -47,7 +47,7 @@ services:
       SECURE_SSL_REDIRECT: "False"
       RUN_SEED: "true"
       # Uncomment to exercise the hosted AI provider locally:
-      # AI_HOSTED_API_KEY: ${AI_HOSTED_API_KEY}
+      # BREVO_API_KEY: ${BREVO_API_KEY}
     volumes:
       # Compose keeps uploads on a local volume; cloud deploys set USE_S3=true
       # instead, because a container filesystem does not survive a redeploy.

@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { ActivityProvider } from './context/ActivityContext';
 import { ToastProvider } from './context/ToastContext';
@@ -60,6 +60,9 @@ export default function App() {
           <Route path="/settings" element={<ProtectedRoute roles={['Administrator']}><Shell><Settings /></Shell></ProtectedRoute>} />
           {/* Demo-only profile prototype for Social Worker / Psychologist. */}
           <Route path="/profile" element={<ProtectedRoute roles={['Staff', 'Psychologist']}><Shell><MyProfile /></Shell></ProtectedRoute>} />
+          {/* Anything unmatched — a stale bookmark, a typo, a link to a page a
+              role cannot reach — lands on sign-in rather than rendering nothing. */}
+          <Route path="*" element={<Navigate to="/login" replace />} />
           </Routes>
         </BrowserRouter>
       </ActivityProvider>

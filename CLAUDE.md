@@ -78,4 +78,4 @@ shows up as broken sign-in.
 cd backend && .venv/bin/python manage.py test
 ```
 
-410 tests. Run the whole suite before bundling anything.
+362 tests. Run the whole suite before bundling anything.

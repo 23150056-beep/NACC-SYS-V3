@@ -99,9 +99,11 @@ class MonitoringListView(generics.GenericAPIView):
         latest_result = {}
         for r in ResultEntry.objects.filter(child_id__in=ids).order_by("date", "id"):
             latest_result[r.child_id] = r
+        # The note itself, not just its date: monitoring shows the psychologist's
+        # most recent remark, and re-querying per row would be N+1.
         last_remark = {}
         for r in RemarkNote.objects.filter(child_id__in=ids).order_by("date", "id"):
-            last_remark[r.child_id] = r.date
+            last_remark[r.child_id] = r
         report_counts = {}
         for r in PsychologicalReport.objects.filter(child_id__in=ids):
             report_counts[r.child_id] = report_counts.get(r.child_id, 0) + 1
@@ -111,8 +113,9 @@ class MonitoringListView(generics.GenericAPIView):
             completed = [p for p in c.pre_assessments.all() if p.status == "completed"]
             last_pa = max((p.date for p in completed), default=None)
             res = latest_result.get(c.id)
+            remark = last_remark.get(c.id)
             candidates = [d for d in (last_pa,
-                                      last_remark.get(c.id),
+                                      remark.date if remark else None,
                                       res.date if res else None) if d]
             last_activity = max(candidates) if candidates else None
             psy = c.assigned_psychologist
@@ -125,6 +128,7 @@ class MonitoringListView(generics.GenericAPIView):
                 "case_status": c.case_status,
                 "pre_assessment_status": c.pre_assessment_status(),
                 "latest_classification": (res.classification or None) if res else None,
+                "latest_remark": (remark.text or None) if remark else None,
                 "last_activity": last_activity.isoformat() if last_activity else None,
                 "next_session": (tz.localtime(next_appt[c.id]).strftime("%Y-%m-%d %H:%M")
                                  if c.id in next_appt else None),

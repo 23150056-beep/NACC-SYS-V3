@@ -83,6 +83,7 @@ class Child(models.Model):
         ("Marital", "Marital"),
         ("Non-Marital", "Non-Marital"),
         ("Child", "Child"),
+        ("N/A", "N/A"),
     ]
     LEGAL_STATUS_CHOICES = [
         ("With Issued CDCLAA", "With Issued CDCLAA"),

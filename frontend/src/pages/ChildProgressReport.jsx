@@ -4,7 +4,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { Card, Button, Badge, Alert, Select, FormField, Icon, iconBtn, PAGE } from '../ui';
+import { Card, Button, Badge, Alert, Select, FormField, Icon, iconBtn, PAGE, ConfirmDialog } from '../ui';
 import { PA_STATUS_TONES } from '../config/caseData';
 
 const CASE_STATUS_META = {
@@ -16,7 +16,6 @@ const CASE_STATUS_META = {
 const caseRef = (id) => `C-${String(id).padStart(4, '0')}`;
 const td = { padding: '10px 14px', fontSize: 13, color: 'var(--text-body)', whiteSpace: 'nowrap' };
 const textarea = { width: '100%', resize: 'vertical', padding: '11px 13px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-strong)', fontFamily: 'var(--font-sans)', fontSize: 14, lineHeight: 1.55 };
-const DISCLAIMER_TEXT = 'AI-drafted decision support, not a diagnosis. The licensed psychologist reviews, edits, and approves all content.';
 
 export default function ChildProgressReport() {
   const { id } = useParams();
@@ -29,10 +28,6 @@ export default function ChildProgressReport() {
   const [result, setResult] = useState(null); // add-result drawer
   const [plan, setPlan] = useState(null); // treatment plan drawer
   const [instruments, setInstruments] = useState([]);
-  const [aiModal, setAiModal] = useState(null); // { title, draft, disclaimer, onConfirm? }
-  const [aiBusy, setAiBusy] = useState(false);
-  const [latestBrief, setLatestBrief] = useState(null); // { draft, job_id, generated_at }
-  const [polishJob, setPolishJob] = useState(null);     // { id, draft } — last polish result
   const [qr, setQr] = useState(null); // { token, url }
   const [surveyTemplates, setSurveyTemplates] = useState([]);
   const [openInterviews, setOpenInterviews] = useState({}); // interview id -> expanded?
@@ -41,7 +36,6 @@ export default function ChildProgressReport() {
   const load = () => api.get(`/reports/child/${id}/`).then((r) => setData(r.data)).catch(() => setData('error'));
   useEffect(() => {
     load();
-    api.get(`/ai/brief/child/${id}/latest/`).then((r) => setLatestBrief(r.data)).catch(() => {});
     /* eslint-disable-next-line */
   }, [id]);
   useEffect(() => { if (isPsych) api.get('/instruments/').then((r) => setInstruments(r.data)).catch(() => {}); }, [isPsych]);
@@ -57,6 +51,10 @@ export default function ChildProgressReport() {
   const canAdvance = canWrite || user?.role_name === 'Administrator';
   const activePlan = (data.treatment_plans || []).find((p) => p.status === 'active') || (data.treatment_plans || [])[0];
   const csMeta = CASE_STATUS_META[child.case_status] || CASE_STATUS_META.pre_assessment;
+
+  // Advancing a case is a clinical state change other screens key off, and
+  // there is no undo button for it — so it is asked for, not just clicked.
+  const [confirmMove, setConfirmMove] = useState(null); // { next, childName }
 
   const advance = async (next) => {
     try {
@@ -81,10 +79,6 @@ export default function ChildProgressReport() {
     const saved = remarkText.trim();
     try {
       await api.post('/remarks/', { child: Number(id), text: saved });
-      if (polishJob) {
-        sendAiFeedback(polishJob.id, saved === polishJob.draft.trim() ? 'accepted' : 'edited');
-        setPolishJob(null);
-      }
       setRemarkText(''); load(); toast.success('Remark added');
     } catch (err) { toast.error(err.response?.data?.detail || 'Could not add the remark.'); }
   };
@@ -117,92 +111,12 @@ export default function ChildProgressReport() {
     } catch { toast.error('Could not download the file.'); }
   };
 
-  const aiUnavailable = (err) => {
-    toast.error(err.response?.status === 503
-      ? 'AI assistance is switched off or unreachable — the system works fully without it.'
-      : (err.response?.data?.detail || 'AI request failed.'));
-  };
-
-  const sendAiFeedback = (jobId, outcome) => {
-    if (!jobId) return;
-    api.post(`/ai/jobs/${jobId}/feedback/`, { outcome }).catch(() => {});
-  };
-
-  const openBrief = (data, regenerated) => {
-    setAiModal({
-      title: 'AI pre-session brief (draft)', draft: data.draft, disclaimer: data.disclaimer,
-      jobId: data.job_id, feedback: true,
-      generatedAt: regenerated ? null : data.generated_at,
-      onRegenerate: regenerateBrief,
-    });
-  };
-
-  const regenerateBrief = async () => {
-    setAiBusy(true);
-    try {
-      const { data: d } = await api.post(`/ai/brief/child/${id}/`);
-      setLatestBrief({ draft: d.draft, job_id: d.job_id, generated_at: new Date().toISOString() });
-      openBrief(d, true);
-    } catch (err) { aiUnavailable(err); } finally { setAiBusy(false); }
-  };
-
-  const aiBrief = () => {
-    if (latestBrief) openBrief({ ...latestBrief, disclaimer: DISCLAIMER_TEXT });
-    else regenerateBrief();
-  };
-
-  const aiPolish = async () => {
-    if (!remarkText.trim()) return;
-    setAiBusy(true);
-    try {
-      const { data: d } = await api.post('/ai/polish-remark/', { text: remarkText.trim() });
-      setRemarkText(d.draft);
-      setPolishJob({ id: d.job_id, draft: d.draft });
-      toast.success('Draft polished — review before saving');
-    } catch (err) { aiUnavailable(err); } finally { setAiBusy(false); }
-  };
-
-  const aiSummarize = async (f) => {
-    setAiBusy(true);
-    try {
-      const { data: d } = await api.post(`/ai/summarize-report/${f.id}/`);
-      setAiModal({
-        title: `AI summary draft — ${f.original_filename}`,
-        draft: d.draft, disclaimer: d.disclaimer, editable: true,
-        onConfirm: async (text) => {
-          try {
-            await api.post(`/ai/confirm-summary/${f.id}/`, { text });
-            toast.success('Summary confirmed');
-            setAiModal(null); load();
-          } catch (err) { aiUnavailable(err); }
-        },
-      });
-    } catch (err) { aiUnavailable(err); } finally { setAiBusy(false); }
-  };
-
-  const aiSummarizeCaseReferral = (f) => {
-    setAiBusy(true);
-    api.post(`/ai/summarize-case-referral/${f.id}/`)
-      .then(({ data: d }) => setAiModal({
-        title: `AI summary draft — ${f.original_filename}`,
-        draft: d.draft, disclaimer: d.disclaimer, editable: true,
-        onConfirm: async (text) => {
-          try {
-            await api.post(`/ai/confirm-case-referral-summary/${f.id}/`, { text });
-            toast.success('Summary confirmed');
-            setAiModal(null); load();
-          } catch (err) { aiUnavailable(err); }
-        },
-      }))
-      .catch(aiUnavailable).finally(() => setAiBusy(false));
-  };
 
   return (
     <div style={PAGE} className="racco-print-area">
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, gap: 10, flexWrap: 'wrap' }} className="racco-no-print">
         <Button variant="ghost" onClick={() => navigate('/reports')} iconLeft={<Icon name="arrow-left" size={17} />}>Back to Results</Button>
         <div style={{ display: 'flex', gap: 10 }}>
-          {canWrite && <Button variant="primary" onClick={aiBrief} disabled={aiBusy} iconLeft={<Icon name={aiBusy ? 'loader' : 'sparkles'} size={17} />}>{aiBusy ? 'Working…' : 'AI Pre-Session Brief'}</Button>}
           <Button variant="secondary" onClick={() => window.print()} iconLeft={<Icon name="printer" size={17} />}>Print / Save PDF</Button>
         </div>
       </div>
@@ -226,7 +140,7 @@ export default function ChildProgressReport() {
         {canAdvance && child.status === 'active' && (
           <div style={{ display: 'flex', gap: 10, marginTop: 14, flexWrap: 'wrap' }} className="racco-no-print">
             {child.case_status === 'pre_assessment'
-              ? <Button variant="primary" onClick={() => advance('counseling')} iconLeft={<Icon name="chevron-right" size={15} />}>Move to Counseling</Button>
+              ? <Button variant="primary" onClick={() => setConfirmMove({ next: 'counseling', childName: child.fullname })} iconLeft={<Icon name="chevron-right" size={15} />}>Move to Counseling</Button>
               : <Button variant="secondary" onClick={() => advance('pre_assessment')} iconLeft={<Icon name="arrow-left" size={15} />}>Back to Pre-Assessment</Button>}
           </div>
         )}
@@ -371,22 +285,18 @@ export default function ChildProgressReport() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 700, fontSize: 13.5, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.original_filename}</div>
                   <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{f.description || 'Case referral'} · {f.uploaded_by_name || '—'} · {(f.created_at || '').slice(0, 10)}</div>
-                  {f.ai_summary && (
+                  {f.ai_summary && f.ai_summary_confirmed && (
                     <div style={{ marginTop: 6, padding: '8px 10px', borderRadius: 'var(--radius-md)', background: 'var(--blue-50)', border: '1px solid var(--blue-100)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                        <Icon name="sparkles" size={12} style={{ color: 'var(--blue-600)' }} />
+                        <Icon name="file-text" size={12} style={{ color: 'var(--blue-600)' }} />
                         <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--blue-700)' }}>
-                          AI summary {f.ai_summary_confirmed ? '· confirmed' : '· draft (unconfirmed)'}
+                          Summary
                         </span>
                       </div>
                       <p style={{ fontSize: 12.5, color: 'var(--text-body)', margin: 0, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{f.ai_summary}</p>
                     </div>
                   )}
                 </div>
-                {canWrite && f.has_text && (
-                  <Button variant="ghost" onClick={() => aiSummarizeCaseReferral(f)} disabled={aiBusy}
-                          iconLeft={<Icon name="sparkles" size={15} />} className="racco-no-print">AI summary</Button>
-                )}
                 <Button variant="ghost" onClick={async () => {
                   try {
                     const res = await api.get(`/case-referrals/${f.id}/download/`, { responseType: 'blob' });
@@ -440,19 +350,18 @@ export default function ChildProgressReport() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 700, fontSize: 13.5, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.original_filename}</div>
                   <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{f.report_type}{f.coverage ? ` · ${f.coverage}` : ''} · {f.author_name || '—'} · {(f.created_at || '').slice(0, 10)}</div>
-                  {f.ai_summary && (
+                  {f.ai_summary && f.ai_summary_confirmed && (
                     <div style={{ marginTop: 6, padding: '8px 10px', borderRadius: 'var(--radius-md)', background: 'var(--blue-50)', border: '1px solid var(--blue-100)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                        <Icon name="sparkles" size={12} style={{ color: 'var(--blue-600)' }} />
+                        <Icon name="file-text" size={12} style={{ color: 'var(--blue-600)' }} />
                         <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--blue-700)' }}>
-                          AI summary {f.ai_summary_confirmed ? '· confirmed' : '· draft (unconfirmed)'}
+                          Summary
                         </span>
                       </div>
                       <p style={{ fontSize: 12.5, color: 'var(--text-body)', margin: 0, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{f.ai_summary}</p>
                     </div>
                   )}
                 </div>
-                {canWrite && f.has_text && <Button variant="ghost" onClick={() => aiSummarize(f)} disabled={aiBusy} iconLeft={<Icon name="sparkles" size={15} />} className="racco-no-print">AI Summary</Button>}
                 <Button variant="ghost" onClick={() => download(f)} iconLeft={<Icon name="download" size={15} />} className="racco-no-print">Download</Button>
               </div>
             ))}
@@ -514,7 +423,6 @@ export default function ChildProgressReport() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: data.remarks.length ? 18 : 0 }} className="racco-no-print">
             <textarea value={remarkText} onChange={(e) => { setRemarkText(e.target.value); if (!e.target.value) setPolishJob(null); }} rows={3} placeholder="Add a dated remark for this child…" style={textarea} />
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-              <Button variant="ghost" onClick={aiPolish} disabled={!remarkText.trim() || aiBusy} iconLeft={<Icon name="sparkles" size={15} />}>Polish with AI</Button>
               <Button variant="primary" onClick={addRemark} iconLeft={<Icon name="plus" size={16} />} disabled={!remarkText.trim()}>Add remark</Button>
             </div>
           </div>
@@ -583,41 +491,6 @@ export default function ChildProgressReport() {
         </div>
       )}
 
-      {/* AI draft modal */}
-      {aiModal && (
-        <div onClick={() => setAiModal(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(14,19,29,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 90 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ width: 560, maxWidth: '94%', maxHeight: '86vh', overflow: 'hidden', background: 'var(--surface)', borderRadius: 'var(--radius-xl)', boxShadow: 'var(--shadow-xl)', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', background: 'var(--ink-50)', display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Icon name="sparkles" size={18} style={{ color: 'var(--blue-600)' }} />
-              <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 16, color: 'var(--text-strong)' }}>{aiModal.title}</span>
-            </div>
-            <div className="racco-scroll" style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {aiModal.generatedAt && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: 'var(--text-muted)' }}>
-                  <span>Drafted {new Date(aiModal.generatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} — ready before you clicked.</span>
-                  <Button variant="ghost" onClick={() => { setAiModal(null); aiModal.onRegenerate?.(); }} iconLeft={<Icon name="refresh-cw" size={14} />}>Regenerate</Button>
-                </div>
-              )}
-              {aiModal.editable ? (
-                <textarea value={aiModal.draft} onChange={(e) => setAiModal({ ...aiModal, draft: e.target.value })} rows={12} style={textarea} />
-              ) : (
-                <p style={{ fontSize: 13.5, color: 'var(--text-body)', lineHeight: 1.65, margin: 0, whiteSpace: 'pre-wrap' }}>{aiModal.draft}</p>
-              )}
-              <Alert disclaimer title="Draft only.">{aiModal.disclaimer}</Alert>
-            </div>
-            <div style={{ padding: 14, borderTop: '1px solid var(--border)', display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <Button variant="secondary" onClick={() => setAiModal(null)}>Close</Button>
-              {aiModal.feedback && !aiModal.feedbackSent && (
-                <>
-                  <Button variant="ghost" onClick={() => { sendAiFeedback(aiModal.jobId, 'accepted'); setAiModal({ ...aiModal, feedbackSent: true }); }} iconLeft={<Icon name="thumbs-up" size={15} />}>Useful</Button>
-                  <Button variant="ghost" onClick={() => { sendAiFeedback(aiModal.jobId, 'discarded'); setAiModal({ ...aiModal, feedbackSent: true }); }} iconLeft={<Icon name="thumbs-down" size={15} />}>Not useful</Button>
-                </>
-              )}
-              {aiModal.onConfirm && <Button variant="primary" onClick={() => aiModal.onConfirm(aiModal.draft)} iconLeft={<Icon name="check" size={16} />}>Confirm & save</Button>}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Treatment plan drawer */}
       {plan && (
@@ -647,6 +520,17 @@ export default function ChildProgressReport() {
           </div>
         </div>
       )}
+      {confirmMove && (
+        <ConfirmDialog
+          onClose={() => setConfirmMove(null)}
+          onConfirm={() => { const n = confirmMove.next; setConfirmMove(null); advance(n); }}
+          tone="brand" icon={<Icon name="chevron-right" size={19} />}
+          title="Move to counseling?"
+          description={`${confirmMove.childName || 'This child'} moves out of pre-assessment and into counseling. You can move them back, but the change shows in the audit trail either way.`}
+          confirmLabel="Move to counseling" cancelLabel="Cancel"
+        />
+      )}
+
     </div>
   );
 }
