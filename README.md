@@ -74,7 +74,7 @@ npm install && npm run dev                    # http://localhost:5173
 
 Default admin (change the password immediately): `admin@racco1.gov.ph` / `admin1234`
 
-Tests: `.venv/bin/python manage.py test` (backend suite, 362 tests).
+Tests: `.venv/bin/python manage.py test` (backend suite, 376 tests).
 
 ## Deploying
 

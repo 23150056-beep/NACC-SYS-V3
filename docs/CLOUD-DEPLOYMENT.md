@@ -424,6 +424,47 @@ text of the Act and NPC issuances before anyone relies on them.
 
 ---
 
+## 6a. Addresses (PSGC)
+
+Province, city/municipality and barangay come from the **Philippine Standard
+Geographic Code**, seeded into the database rather than fetched from anyone at
+runtime. Region I is 4 provinces, 125 cities and municipalities, and 3,265
+barangays.
+
+```bash
+python manage.py seed_psgc          # after every deploy that changes the dataset
+```
+
+Idempotent — it matches on the PSGC code, so re-running against a newer release
+renames places in place instead of duplicating them, and a child record pointing
+at a code keeps pointing at the same place.
+
+**Why not a live address API.** Several free PSGC APIs exist. Calling one would
+add a processor to the list in §6 for no case-data benefit, make intake depend
+on a volunteer-run service being up, and let a recorded address change under an
+existing case with no audit entry. Adopting a new PSGC release should be a
+deliberate act. The dataset is committed at
+`backend/locations/data/psgc_region1.json`.
+
+**Existing addresses.** Records written before the picker hold text and no code.
+
+```bash
+python manage.py backfill_psgc              # dry run, reports what it can match
+python manage.py backfill_psgc --apply      # writes the codes
+```
+
+It never overwrites the text and never guesses: only an exact match after
+trimming and case-folding counts. Expect misses where the informal name differs
+from the official one — the old hand-kept list said "San Fernando City" where
+PSGC says "City Of San Fernando (Capital)". Those records keep what they have
+and are listed by name for someone to re-pick.
+
+**Extending beyond Region I.** The seeder takes `--file`, and the shape is in
+the bundled JSON. A nationwide set is ~1,600 LGUs and ~42,000 barangays; the
+schema and the endpoints do not change.
+
+---
+
 ## 7. Backups
 
 The managed database and the object storage bucket hold everything. Both need

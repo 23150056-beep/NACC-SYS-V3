@@ -69,6 +69,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "accounts",
     "children",
+    "locations",
     "clinical",
     "scheduling",
     "activity",

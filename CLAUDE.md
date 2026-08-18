@@ -65,6 +65,13 @@ Facts that cost real time when forgotten:
   account that is not on the test-user list, which looks exactly like a broken
   button.
 
+## Addresses
+
+PSGC lives in the `locations` app, seeded from a committed JSON file — there is
+no live address API and adding one would put a processor in §6 for nothing.
+After a deploy that changes the dataset: `manage.py seed_psgc`. To attach codes
+to addresses typed before the picker: `manage.py backfill_psgc --apply`.
+
 ## Health check
 
 `https://nacc-v3-api.onrender.com/healthz/` returns
@@ -77,7 +84,7 @@ shows up as broken sign-in.
 Both of these, every time:
 
 ```
-cd backend && .venv/bin/python manage.py test     # 362 tests
+cd backend && .venv/bin/python manage.py test     # 376 tests
 cd frontend && npm run lint && npm run build
 ```
 

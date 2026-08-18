@@ -48,6 +48,7 @@ class ChildSerializer(serializers.ModelSerializer):
         fields = [
             "id", "first_name", "middle_initial", "last_name", "fullname", "birth_date", "gender",
             "province", "municipality", "barangay", "address",
+            "psgc_province", "psgc_municipality", "psgc_barangay",
             "case_type", "case_category", "surrendered_by", "status", "case_status", "assignee_sees_history",
             "place_of_birth_or_found", "birth_status", "legal_status",
             "date_of_admission", "date_of_placement_to_custodian", "type_of_adoption",

@@ -125,6 +125,16 @@ class Child(models.Model):
     municipality = models.CharField(max_length=100, blank=True)
     barangay = models.CharField(max_length=100, blank=True)
     address = models.CharField(max_length=150, blank=True)
+
+    # The PSGC codes behind the three names above. Kept alongside the text
+    # rather than replacing it: a place can be renamed or merged upstream, and
+    # what a case worker actually wrote down at intake is part of the record.
+    # The names are what a person reads; the codes are what survives a rename
+    # and what national-office reporting is keyed on. Blank where an address
+    # predates the picker, or was only ever partially filled in.
+    psgc_province = models.CharField(max_length=12, blank=True, db_index=True)
+    psgc_municipality = models.CharField(max_length=12, blank=True, db_index=True)
+    psgc_barangay = models.CharField(max_length=12, blank=True, db_index=True)
     case_type = models.CharField(max_length=150, blank=True, choices=CASE_TYPE_CHOICES)
     # Official agency "Identifying Information" intake form Category list.
     case_category = models.CharField(max_length=50, blank=True, choices=CASE_CATEGORY_CHOICES)

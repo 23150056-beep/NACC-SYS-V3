@@ -125,26 +125,10 @@ export const SURRENDERED_BY = [
 // Province → Municipality/City → Barangay pickers.
 // PLACEHOLDER dataset scoped to Region I (La Union), pending confirmation
 // from NACC / RACCO I. Expand per company guidance.
-export const PROVINCES = ['La Union', 'Ilocos Norte', 'Ilocos Sur', 'Pangasinan'];
 
-export const MUNICIPALITIES = {
-  // Complete for La Union. The other three provinces are still short lists —
-  // see the PSGC note below.
-  'La Union': [
-    'Agoo', 'Aringay', 'Bacnotan', 'Bagulin', 'Balaoan', 'Bangar', 'Bauang',
-    'Burgos', 'Caba', 'Luna', 'Naguilian', 'Pugo', 'Rosario',
-    'San Fernando City', 'San Gabriel', 'San Juan', 'Santol', 'Santo Tomas',
-    'Sudipen', 'Tubao',
-  ],
-  'Ilocos Norte': ['Laoag City', 'Batac City', 'Paoay'],
-  'Ilocos Sur': ['Vigan City', 'Candon City', 'Bantay'],
-  Pangasinan: ['Dagupan City', 'Lingayen', 'Urdaneta City'],
-};
-
-export const BARANGAYS = {
-  'San Fernando City': ['Catbangen', 'Lingsat', 'Pagdaraoan', 'Sevilla'],
-  Agoo: ['San Roque East', 'Santa Rita East', 'Purok'],
-  Bauang: ['Central East', 'Disso-or', 'Payocpoc Norte'],
-  Naguilian: ['Aguioas', 'Bancagan', 'Ortega'],
-  Rosario: ['Camp One', 'Carunuan', 'Subusob'],
-};
+/* Province / municipality / barangay lists used to live here as hand-kept
+ * arrays. They are gone: the intake form reads them from the PSGC tables in
+ * the `locations` app now, seeded from the Philippine Standard Geographic Code
+ * and served over /api/locations/. Region I alone is 125 cities and
+ * municipalities and 3,265 barangays — not a list to maintain by hand, and the
+ * short version that lived here could not spell most real addresses. */

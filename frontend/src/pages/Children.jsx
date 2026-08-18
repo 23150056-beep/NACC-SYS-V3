@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useActivity } from '../context/ActivityContext';
 import { Card, Button, Badge, Input, Select, FormField, Avatar, Alert, EmptyState, Icon, iconBtn, hoverLift, PAGE } from '../ui';
 import { useToast } from '../context/ToastContext';
-import { CASE_TYPES, CASE_CATEGORIES, CASE_CATEGORY_OPTIONS, CASE_TYPE_FIELDS, SURRENDERED_BY, TERMINATION_REASONS, PROVINCES, MUNICIPALITIES, BARANGAYS, BIRTH_STATUSES, LEGAL_STATUSES, TYPES_OF_ADOPTION } from '../config/caseData';
+import { CASE_TYPES, CASE_CATEGORIES, CASE_CATEGORY_OPTIONS, CASE_TYPE_FIELDS, SURRENDERED_BY, TERMINATION_REASONS, BIRTH_STATUSES, LEGAL_STATUSES, TYPES_OF_ADOPTION } from '../config/caseData';
 
 // Live "who else has this record open" chip — polls the presence heartbeat endpoint.
 function usePresence(childId) {
@@ -69,7 +69,7 @@ function ScheduleChip({ appts = [] }) {
 
 const EMPTY = {
   first_name: '', middle_initial: '', last_name: '',
-  birth_date: '', gender: '', province: '', municipality: '', barangay: '',
+  birth_date: '', gender: '', province: '', municipality: '', barangay: '', psgc_province: '', psgc_municipality: '', psgc_barangay: '',
   case_type: '', case_category: '', surrendered_by: '', psychologist: '', assignee_sees_history: true,
   place_of_birth_or_found: '', birth_status: '', legal_status: '',
   date_of_admission: '', date_of_placement_to_custodian: '', type_of_adoption: '',
@@ -697,8 +697,44 @@ function ChildForm({ form, setForm, draftKey, psychologists, blocks = [], error,
   const availFor = (pid) => blocks.filter((b) => String(b.psychologist) === String(pid));
   const blockLabel = (b) => `${b.date || DAY_ABBR[b.weekday]} ${String(b.start_time).slice(0, 5)}–${String(b.end_time).slice(0, 5)}`;
   // Cascading location pickers; clear children when a parent changes.
-  const munis = MUNICIPALITIES[form.province] || [];
-  const brgys = BARANGAYS[form.municipality] || [];
+  /* Addresses come from the PSGC tables now, not a hand-kept list. Each level
+   * is fetched when its parent is chosen, so the browser never holds more than
+   * one municipality's barangays — the region has 3,265 of them. */
+  const [provinces, setProvinces] = useState([]);
+  const [munis, setMunis] = useState([]);
+  const [brgys, setBrgys] = useState([]);
+
+  useEffect(() => {
+    api.get('/locations/provinces/').then((r) => setProvinces(r.data)).catch(() => setProvinces([]));
+  }, []);
+
+  useEffect(() => {
+    if (!form.psgc_province) { setMunis([]); return; }
+    api.get('/locations/municipalities/', { params: { province: form.psgc_province } })
+      .then((r) => setMunis(r.data)).catch(() => setMunis([]));
+  }, [form.psgc_province]);
+
+  useEffect(() => {
+    if (!form.psgc_municipality) { setBrgys([]); return; }
+    api.get('/locations/barangays/', { params: { municipality: form.psgc_municipality } })
+      .then((r) => setBrgys(r.data)).catch(() => setBrgys([]));
+  }, [form.psgc_municipality]);
+
+  /* Both the code and the name are stored. The code is what survives a place
+   * being renamed upstream; the name is what a case worker reads back, and what
+   * every record written before this picker existed already holds. */
+  const pickPlace = (level, code, options) => {
+    const chosen = options.find((o) => o.psgc_code === code);
+    if (level === 'province') {
+      setForm({ ...form, psgc_province: code, province: chosen?.name || '',
+                psgc_municipality: '', municipality: '', psgc_barangay: '', barangay: '' });
+    } else if (level === 'municipality') {
+      setForm({ ...form, psgc_municipality: code, municipality: chosen?.name || '',
+                psgc_barangay: '', barangay: '' });
+    } else {
+      setForm({ ...form, psgc_barangay: code, barangay: chosen?.name || '' });
+    }
+  };
   const fieldLabel = { fontSize: 13, color: 'var(--text-muted)', fontWeight: 600 };
   const textarea = { width: '100%', resize: 'vertical', padding: '10px 13px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-strong)', fontFamily: 'var(--font-sans)', fontSize: 14, lineHeight: 1.5 };
   // Agency only serves children aged 5-17: the birth date picker's bounds
@@ -870,23 +906,35 @@ function ChildForm({ form, setForm, draftKey, psychologists, blocks = [], error,
             <div className="racco-eyebrow" style={{ fontSize: 10, marginBottom: 10 }}>Address</div>
             <div className="racco-case-grid">
               <FormField label="Province">
-                <Select value={form.province || ''} onChange={(e) => setForm({ ...form, province: e.target.value, municipality: '', barangay: '' })}>
+                <Select value={form.psgc_province || ''} onChange={(e) => pickPlace('province', e.target.value, provinces)}>
                   <option value="">— Select province —</option>
-                  {PROVINCES.map((p) => <option key={p}>{p}</option>)}
+                  {provinces.map((p) => <option key={p.psgc_code} value={p.psgc_code}>{p.name}</option>)}
                 </Select>
               </FormField>
               <FormField label="Municipality / City">
-                <Select value={form.municipality || ''} disabled={!form.province} onChange={(e) => setForm({ ...form, municipality: e.target.value, barangay: '' })}>
-                  <option value="">{form.province ? '— Select municipality —' : 'Select a province first'}</option>
-                  {munis.map((mn) => <option key={mn}>{mn}</option>)}
+                <Select value={form.psgc_municipality || ''} disabled={!form.psgc_province} onChange={(e) => pickPlace('municipality', e.target.value, munis)}>
+                  <option value="">{form.psgc_province ? '— Select municipality —' : 'Select a province first'}</option>
+                  {munis.map((m) => <option key={m.psgc_code} value={m.psgc_code}>{m.name}</option>)}
                 </Select>
               </FormField>
-              <FormField label="Barangay">
-                <Select value={form.barangay || ''} disabled={!form.municipality} onChange={(e) => setForm({ ...form, barangay: e.target.value })}>
-                  <option value="">{form.municipality ? '— Select barangay —' : 'Select a municipality first'}</option>
-                  {brgys.map((b) => <option key={b}>{b}</option>)}
+              <FormField label="Barangay" hint={brgys.length ? `${brgys.length} in this municipality` : undefined}>
+                <Select value={form.psgc_barangay || ''} disabled={!form.psgc_municipality} onChange={(e) => pickPlace('barangay', e.target.value, brgys)}>
+                  <option value="">{form.psgc_municipality ? '— Select barangay —' : 'Select a municipality first'}</option>
+                  {brgys.map((b) => <option key={b.psgc_code} value={b.psgc_code}>{b.name}</option>)}
                 </Select>
               </FormField>
+              {/* An address typed before the picker existed has no code, so the
+                  selects above sit empty and would look like a blank address.
+                  Show what the record actually says. */}
+              {!form.psgc_province && (form.province || form.municipality || form.barangay) && (
+                <div style={{ gridColumn: '1 / -1', fontSize: 12.5, color: 'var(--text-muted)', padding: '10px 12px', background: 'var(--ink-50)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
+                  Recorded before the address list existed:{' '}
+                  <strong style={{ color: 'var(--text-strong)' }}>
+                    {[form.barangay, form.municipality, form.province].filter(Boolean).join(', ')}
+                  </strong>
+                  . Re-pick it above to attach the official codes — the text stays either way.
+                </div>
+              )}
             </div>
           </section>
           )}
