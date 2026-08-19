@@ -402,6 +402,9 @@ The Settings screen states which posture is active — on-premises shows
 
 ### Before real case data is loaded
 
+- [x] Render's own PostgreSQL deleted (2026-08-18). It held a full copy of the
+      case data from the migration to Neon — suspension would have left that
+      copy in place, unmanaged and unbacked-up, in a service no longer in use.
 - [ ] Data-processing agreement executed with **Render**
 - [ ] Data-processing agreement executed with **Neon**
 - [ ] Data-processing agreement executed with **Cloudflare**
