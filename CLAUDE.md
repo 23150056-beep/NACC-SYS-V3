@@ -82,6 +82,13 @@ in the form.
 nothing else — a wrong `DJANGO_SECRET_KEY` still boots the app fine and only
 shows up as broken sign-in.
 
+## Local copy
+
+`setup-local.bat` then `run-local.bat` from the repo root — SQLite, files on
+disk, no Google sign-in, no email. Verified from an empty database: migrate,
+seed_initial_data, seed_psgc, sign in, every screen renders. Details in
+docs/LOCAL-SETUP.md.
+
 ## Before bundling anything
 
 Both of these, every time:

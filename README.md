@@ -74,6 +74,11 @@ npm install && npm run dev                    # http://localhost:5173
 
 Default admin (change the password immediately): `admin@racco1.gov.ph` / `admin1234`
 
+**On Windows**, double-click `setup-local.bat` once, then `run-local.bat` to
+start it — see [`docs/LOCAL-SETUP.md`](docs/LOCAL-SETUP.md). The local copy uses
+SQLite and the local disk, so it reaches neither the live database nor the live
+bucket.
+
 Tests: `.venv/bin/python manage.py test` (backend suite, 379 tests).
 
 ## Deploying
