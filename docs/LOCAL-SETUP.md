@@ -45,6 +45,28 @@ Two windows open (API and frontend) and your browser opens on
 
 Sign in as `admin@racco1.gov.ph` / `admin1234`.
 
+## Filling it with something to look at
+
+A fresh database has no children, which makes every cross-caseload screen look
+broken rather than empty:
+
+```
+cd backend
+.venv\Scripts\python manage.py seed_demo_data
+```
+
+Invents 40 children across the four Region I provinces, with roughly six months
+of remarks, self-reports, appointments and problems behind them. Everyone in it
+is fictional — names, notes and answers were all written for that file.
+
+It refuses to run against a hosted database or with `DJANGO_DEBUG=False`, so it
+cannot reach the live system. `--purge` starts clean, `--seed N` changes the
+caseload, and the same seed always produces the same people — so a demo can be
+reproduced exactly.
+
+The notes deliberately mix English, Tagalog and Ilocano, because notes written
+in Region I do.
+
 ## Starting over
 
 Delete `backend/db.sqlite3` and run `setup-local.bat` again for an empty

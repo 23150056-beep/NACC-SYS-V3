@@ -89,6 +89,17 @@ disk, no Google sign-in, no email. Verified from an empty database: migrate,
 seed_initial_data, seed_psgc, sign in, every screen renders. Details in
 docs/LOCAL-SETUP.md.
 
+## Demo data
+
+`manage.py seed_demo_data` invents 40 children with six months of history —
+remarks, self-reports, appointments — so cross-caseload features have something
+to work on. Three cohorts: steady, declining, and one whose self-reports drift
+toward distress while the case notes stay reassuring. That last group is the
+point; it is what a divergence detector would be built to find.
+
+Refuses to run against a hosted database or with DEBUG=False, and the guard
+runs before anything opens a connection.
+
 ## Before bundling anything
 
 Both of these, every time:
