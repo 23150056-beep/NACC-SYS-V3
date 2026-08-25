@@ -2,7 +2,7 @@ from django.urls import path
 
 from assistant.views import (
     AssistantJobFeedbackView, AssistantSettingView, LatestBriefView,
-    PreSessionBriefView, RemarkPolishView,
+    PreSessionBriefView, PrefetchBriefsView, RemarkPolishView,
 )
 
 urlpatterns = [
@@ -16,4 +16,6 @@ urlpatterns = [
          name="assistant-brief"),
     path("assistant/brief/child/<int:child_id>/latest/", LatestBriefView.as_view(),
          name="assistant-brief-latest"),
+    path("assistant/prefetch-briefs/", PrefetchBriefsView.as_view(),
+         name="assistant-prefetch-briefs"),
 ]
