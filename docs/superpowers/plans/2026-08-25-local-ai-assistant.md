@@ -2842,12 +2842,15 @@ Place this after `const caseMix = ...`, so `d` is already in scope:
     setNarrativeBusy(true);
     try {
       // Only finished figures — the model restates these and computes nothing.
+      // Every key must reconcile 1:1 with a number printed on screen. A count of
+      // per_psychologist was removed: the visible table renders the UNION of
+      // per_psychologist and caseload_per_psychologist, which are scoped
+      // differently, so its row count can exceed that length.
       const { draft, job_id } = await censusNarrative({
         period: range,
         completed_pre_assessments: d.total,
         children_seen: d.children,
         pending_pre_assessments: d.pending_pre_assessments,
-        psychologists_reporting: (d.per_psychologist || []).length,
         ...Object.fromEntries(
           Object.entries(d.by_case_type || {}).map(([k, v]) => [`case_type_${k}`, v])),
       });
