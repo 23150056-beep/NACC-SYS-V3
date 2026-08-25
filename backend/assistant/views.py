@@ -1,3 +1,4 @@
+from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -121,5 +122,29 @@ class PreSessionBriefView(AssistantBaseView):
             input_ref=f"child:{child.id}",
             user=request.user)
         return Response({"draft": draft, "job_id": job.id,
+                         "generated_at": job.created_at,
+                         "disclaimer": DISCLAIMER})
+
+
+class LatestBriefView(AssistantBaseView):
+    """Today's already-generated brief, served instantly.
+
+    Reads history only, so it deliberately does NOT gate: a brief drafted this
+    morning stays readable after an administrator switches the assistant off.
+    """
+
+    def get(self, request, child_id):
+        try:
+            child = _visible_children(request).get(pk=child_id)
+        except Child.DoesNotExist:
+            return Response({"detail": "Not found."},
+                            status=status.HTTP_404_NOT_FOUND)
+        job = AssistantJob.objects.filter(
+            job_type="brief", input_ref=f"child:{child.id}", ok=True,
+            created_at__date=timezone.localdate()).first()
+        if not job:
+            return Response({"detail": "No brief drafted today."},
+                            status=status.HTTP_404_NOT_FOUND)
+        return Response({"draft": job.output_text, "job_id": job.id,
                          "generated_at": job.created_at,
                          "disclaimer": DISCLAIMER})

@@ -71,3 +71,57 @@ class BriefTest(BriefTestBase):
         cfg.save()
         self.client.force_authenticate(self.psy)
         self.assertEqual(self.client.post(self._url(self.mine)).status_code, 503)
+
+
+from datetime import timedelta
+
+from django.utils import timezone
+
+
+class LatestBriefTest(BriefTestBase):
+    """Extends the fixture base, NOT BriefTest — inheriting BriefTest's cases
+    would replay its POST tests against this read-only URL."""
+
+    def _url(self, child):
+        return f"/api/assistant/brief/child/{child.id}/latest/"
+
+    def _make_brief(self, child, *, ok=True, days_ago=0):
+        job = AssistantJob.objects.create(
+            job_type="brief", input_ref=f"child:{child.id}",
+            output_text="Yesterday's brief" if days_ago else "Today's brief",
+            ok=ok, created_by=self.psy)
+        if days_ago:
+            AssistantJob.objects.filter(pk=job.pk).update(
+                created_at=timezone.now() - timedelta(days=days_ago))
+        return job
+
+    def test_returns_todays_brief(self):
+        self._make_brief(self.mine)
+        self.client.force_authenticate(self.psy)
+        res = self.client.get(self._url(self.mine))
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["draft"], "Today's brief")
+
+    def test_404_when_none_today(self):
+        self._make_brief(self.mine, days_ago=1)
+        self.client.force_authenticate(self.psy)
+        self.assertEqual(self.client.get(self._url(self.mine)).status_code, 404)
+
+    def test_ignores_failed_jobs(self):
+        self._make_brief(self.mine, ok=False)
+        self.client.force_authenticate(self.psy)
+        self.assertEqual(self.client.get(self._url(self.mine)).status_code, 404)
+
+    def test_another_psychologists_child_is_404(self):
+        self._make_brief(self.theirs)
+        self.client.force_authenticate(self.psy)
+        self.assertEqual(self.client.get(self._url(self.theirs)).status_code, 404)
+
+    def test_works_with_the_assistant_switched_off(self):
+        """It only reads history, so it must not 503."""
+        self._make_brief(self.mine)
+        cfg = AssistantSetting.load()
+        cfg.enabled = False
+        cfg.save()
+        self.client.force_authenticate(self.psy)
+        self.assertEqual(self.client.get(self._url(self.mine)).status_code, 200)
