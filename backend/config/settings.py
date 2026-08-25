@@ -74,6 +74,7 @@ INSTALLED_APPS = [
     "scheduling",
     "activity",
     "samd",
+    "assistant",
 ]
 
 MIDDLEWARE = [
