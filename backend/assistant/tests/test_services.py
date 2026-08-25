@@ -8,7 +8,7 @@ from assistant.models import AssistantJob, AssistantSetting
 
 class NormalizeOutputTest(TestCase):
     def test_replaces_unicode_punctuation_with_ascii(self):
-        raw = "“The child’s mother” – arrived late—again. Noted."
+        raw = "“The child’s mother” – arrived late—again. Noted."
         self.assertEqual(
             services._normalize_output(raw),
             '"The child\'s mother" - arrived late-again. Noted.')
