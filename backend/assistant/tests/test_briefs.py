@@ -125,3 +125,18 @@ class LatestBriefTest(BriefTestBase):
         cfg.save()
         self.client.force_authenticate(self.psy)
         self.assertEqual(self.client.get(self._url(self.mine)).status_code, 200)
+
+    def test_returns_newest_when_two_briefs_today(self):
+        """Guards the .first() ordering dependency on AssistantJob.Meta.ordering."""
+        earlier = AssistantJob.objects.create(
+            job_type="brief", input_ref=f"child:{self.mine.id}",
+            output_text="earlier brief", ok=True, created_by=self.psy)
+        AssistantJob.objects.filter(pk=earlier.pk).update(
+            created_at=timezone.now() - timedelta(hours=2))
+        AssistantJob.objects.create(
+            job_type="brief", input_ref=f"child:{self.mine.id}",
+            output_text="later brief", ok=True, created_by=self.psy)
+        self.client.force_authenticate(self.psy)
+        res = self.client.get(self._url(self.mine))
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["draft"], "later brief")
