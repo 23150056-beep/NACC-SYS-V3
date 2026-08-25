@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { Card, Button, Badge, Alert, Select, FormField, Icon, iconBtn, PAGE, ConfirmDialog } from '../ui';
 import { PA_STATUS_TONES } from '../config/caseData';
+import { polishRemark, sendFeedback } from '../api/assistant';
 
 const CASE_STATUS_META = {
   pre_assessment: { label: 'Pre-Assessment', tone: 'amber' },
@@ -36,6 +37,8 @@ export default function ChildProgressReport() {
   // here with the other state: everything below the early returns runs
   // conditionally, and a hook that only sometimes runs breaks the render.
   const [confirmMove, setConfirmMove] = useState(null); // { next, childName }
+  const [polishing, setPolishing] = useState(false);
+  const [polishJob, setPolishJob] = useState(null); // { id, draft }
   const isStaffOrAdmin = ['Administrator', 'Staff'].includes(user?.role_name);
 
   const load = () => api.get(`/reports/child/${id}/`).then((r) => setData(r.data)).catch(() => setData('error'));
@@ -75,11 +78,36 @@ export default function ChildProgressReport() {
     } catch (err) { toast.error(JSON.stringify(err.response?.data || 'Could not create the survey link.')); }
   };
 
+  const polish = async () => {
+    const raw = remarkText.trim();
+    if (!raw) return;
+    setPolishing(true);
+    try {
+      const { draft, job_id } = await polishRemark(raw);
+      setRemarkText(draft);
+      setPolishJob({ id: job_id, draft });
+    } catch (err) {
+      // 503 means the assistant is off or the runtime is down. That is a normal
+      // state, not an error the psychologist caused.
+      toast.error(err.response?.status === 503
+        ? 'The writing assistant is unavailable right now.'
+        : 'Could not polish the remark.');
+    } finally {
+      setPolishing(false);
+    }
+  };
+
   const addRemark = async () => {
     if (!remarkText.trim()) return;
     const saved = remarkText.trim();
     try {
       await api.post('/remarks/', { child: Number(id), text: saved });
+      if (polishJob) {
+        // Accepted if the saved text is the draft verbatim, else edited.
+        const outcome = saved === polishJob.draft.trim() ? 'accepted' : 'edited';
+        sendFeedback(polishJob.id, outcome).catch(() => {});
+        setPolishJob(null);
+      }
       setRemarkText(''); load(); toast.success('Remark added');
     } catch (err) { toast.error(err.response?.data?.detail || 'Could not add the remark.'); }
   };
@@ -423,9 +451,19 @@ export default function ChildProgressReport() {
         {canWrite && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: data.remarks.length ? 18 : 0 }} className="racco-no-print">
             <textarea value={remarkText} onChange={(e) => setRemarkText(e.target.value)} rows={3} placeholder="Add a dated remark for this child…" style={textarea} />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <Button variant="ghost" onClick={polish}
+                      disabled={!remarkText.trim() || polishing}
+                      iconLeft={<Icon name="sparkles" size={16} />}>
+                {polishing ? 'Polishing…' : 'Polish writing'}
+              </Button>
               <Button variant="primary" onClick={addRemark} iconLeft={<Icon name="plus" size={16} />} disabled={!remarkText.trim()}>Add remark</Button>
             </div>
+            {polishJob && (
+              <Alert tone="info" disclaimer style={{ marginTop: 4 }}>
+                AI-drafted decision support, not a diagnosis. Review and edit before saving.
+              </Alert>
+            )}
           </div>
         )}
         {data.remarks.length === 0 ? (
