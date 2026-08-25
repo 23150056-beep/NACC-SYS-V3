@@ -8,6 +8,7 @@ from assistant import prompts
 from assistant.models import AssistantJob, AssistantSetting
 from assistant.serializers import AssistantSettingSerializer
 from assistant.services import AIUnavailable, DISCLAIMER, gate, run_job
+from children.models import Child
 
 
 def _role(request):
@@ -88,3 +89,37 @@ class AssistantJobFeedbackView(AssistantBaseView):
         job.outcome = outcome
         job.save(update_fields=["outcome"])
         return Response({"outcome": job.outcome})
+
+
+def _visible_children(request):
+    """Children this user may see — the same rule as _ChildScopedClinicalViewSet.
+
+    Scope always comes from request.user. No endpoint accepts an
+    "assigned to me" parameter, so no caller can widen its own view.
+    """
+    qs = Child.objects.all()
+    if _role(request) == Role.PSYCHOLOGIST:
+        qs = qs.filter(assigned_psychologist=request.user)
+    return qs
+
+
+class PreSessionBriefView(AssistantBaseView):
+    """Generate a brief now. This is the ~40s path — the UI reaches for
+    LatestBriefView first and only falls back to here."""
+
+    def post(self, request, child_id):
+        gate("feature_brief")
+        try:
+            child = _visible_children(request).get(pk=child_id)
+        except Child.DoesNotExist:
+            return Response({"detail": "Not found."},
+                            status=status.HTTP_404_NOT_FOUND)
+        draft, job = run_job(
+            "brief",
+            prompts.build_brief_prompt(child),
+            system=prompts.BRIEF_SYSTEM,
+            input_ref=f"child:{child.id}",
+            user=request.user)
+        return Response({"draft": draft, "job_id": job.id,
+                         "generated_at": job.created_at,
+                         "disclaimer": DISCLAIMER})
