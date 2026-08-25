@@ -14,6 +14,7 @@ from assistant.models import AssistantJob, AssistantSetting
 from assistant.serializers import AssistantSettingSerializer
 from assistant.services import AIUnavailable, DISCLAIMER, gate, run_job
 from children.models import Child
+from clinical.models import CaseReferral, PsychologicalReport
 from scheduling.models import Appointment
 
 logger = logging.getLogger(__name__)
@@ -233,3 +234,44 @@ class PrefetchBriefsView(AssistantBaseView):
         if queued:
             _start_prefetch_thread(queued, request.user)
         return Response({"queued": queued, "skipped": skipped})
+
+
+# kind -> (model, input_ref prefix, human label for the prompt)
+_DOC_KINDS = {
+    "report": (PsychologicalReport, "report", "psychological report"),
+    "case-referral": (CaseReferral, "casereferral", "case referral"),
+}
+
+
+class DocumentSummaryView(AssistantBaseView):
+    """Draft a summary of an uploaded document into its `ai_summary` column.
+
+    The draft is saved unconfirmed. It only becomes clinical text when a human
+    confirms it, at which point it is their words, not a draft.
+    """
+    kind = None
+
+    def post(self, request, doc_id):
+        gate("feature_doc_intelligence")
+        model, prefix, label = _DOC_KINDS[self.kind]
+        doc = model.objects.filter(
+            pk=doc_id, child__in=_visible_children(request)).first()
+        if not doc:
+            return Response({"detail": "Not found."},
+                            status=status.HTTP_404_NOT_FOUND)
+        if not (doc.extracted_text or "").strip():
+            return Response(
+                {"detail": "No text could be extracted from this document."},
+                status=status.HTTP_400_BAD_REQUEST)
+
+        draft, job = run_job(
+            "doc_intelligence",
+            prompts.build_summary_prompt(doc.extracted_text, label),
+            system=prompts.SUMMARY_SYSTEM,
+            input_ref=f"{prefix}:{doc.id}",
+            user=request.user)
+        doc.ai_summary = draft
+        doc.ai_summary_confirmed = False
+        doc.save(update_fields=["ai_summary", "ai_summary_confirmed"])
+        return Response({"draft": draft, "job_id": job.id,
+                         "disclaimer": DISCLAIMER})

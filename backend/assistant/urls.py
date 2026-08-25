@@ -1,8 +1,8 @@
 from django.urls import path
 
 from assistant.views import (
-    AssistantJobFeedbackView, AssistantSettingView, LatestBriefView,
-    PreSessionBriefView, PrefetchBriefsView, RemarkPolishView,
+    AssistantJobFeedbackView, AssistantSettingView, DocumentSummaryView,
+    LatestBriefView, PreSessionBriefView, PrefetchBriefsView, RemarkPolishView,
 )
 
 urlpatterns = [
@@ -18,4 +18,10 @@ urlpatterns = [
          name="assistant-brief-latest"),
     path("assistant/prefetch-briefs/", PrefetchBriefsView.as_view(),
          name="assistant-prefetch-briefs"),
+    path("assistant/summarize-report/<int:doc_id>/",
+         DocumentSummaryView.as_view(kind="report"),
+         name="assistant-summarize-report"),
+    path("assistant/summarize-case-referral/<int:doc_id>/",
+         DocumentSummaryView.as_view(kind="case-referral"),
+         name="assistant-summarize-case-referral"),
 ]
