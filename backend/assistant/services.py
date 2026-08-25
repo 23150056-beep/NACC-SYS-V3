@@ -1,0 +1,131 @@
+"""Client seam for the on-premises model runtime.
+
+get_ai_client() returns a live client when the master switch is on, else a
+NullClient. Every caller must handle AIUnavailable — the system is fully
+functional without the assistant.
+
+There is deliberately only one provider. A hosted API would mean sending
+clinical free text to a processor outside the agency's data-processing
+agreements, which is what removed the V2 layer. The seam is kept so adding one
+later is an addition rather than a rewrite; adding one is its own decision.
+"""
+import json
+import logging
+import threading
+import time
+import urllib.error
+import urllib.request
+
+from assistant.models import AssistantJob, AssistantSetting
+
+logger = logging.getLogger(__name__)
+
+DISCLAIMER = ("AI-drafted decision support, not a diagnosis. The licensed "
+              "psychologist reviews, edits, and approves all content.")
+
+# On 4 CPU cores, concurrent generations make every request slower rather than
+# parallel, and each parallel slot multiplies the KV cache against very little
+# free RAM. One generation at a time, always.
+_GENERATION_LOCK = threading.Lock()
+
+
+class AIUnavailable(Exception):
+    """Raised whenever a draft cannot be produced. Always surfaces as a 503."""
+
+
+class NullClient:
+    available = False
+    model = ""
+
+    def generate(self, prompt, system=None):
+        raise AIUnavailable("The assistant is switched off.")
+
+
+class OllamaClient:
+    available = True
+
+    def __init__(self, base_url, model):
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+
+    def generate(self, prompt, system=None):
+        # No num_ctx, no temperature, no options block: each distinct option set
+        # forces Ollama to evict and reload the model (~5-6s).
+        payload = {"model": self.model, "prompt": prompt, "stream": False}
+        if system:
+            payload["system"] = system
+        req = urllib.request.Request(
+            f"{self.base_url}/api/generate",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                data = json.loads(resp.read().decode())
+        except (urllib.error.URLError, TimeoutError, OSError,
+                json.JSONDecodeError) as exc:
+            raise AIUnavailable(f"Local AI runtime unreachable: {exc}") from exc
+        return (data.get("response") or "").strip()
+
+
+def get_ai_client():
+    cfg = AssistantSetting.load()
+    if not cfg.enabled:
+        return NullClient()
+    return OllamaClient(cfg.ollama_url, cfg.model_name)
+
+
+def gate(feature_attr):
+    """Return the config when this feature may run, else raise AIUnavailable."""
+    cfg = AssistantSetting.load()
+    if not cfg.enabled:
+        raise AIUnavailable("The assistant is switched off.")
+    if not getattr(cfg, feature_attr):
+        raise AIUnavailable("This assistant feature is switched off.")
+    return cfg
+
+
+# Post-processing beats prompting the model about punctuation: prompting is
+# advisory, this is certain. Curly quotes render as mojibake in exported PDFs.
+_PUNCTUATION = {
+    "‘": "'", "’": "'",
+    "“": '"', "”": '"',
+    "–": "-", "—": "-",
+    " ": " ",
+}
+
+
+def _normalize_output(text):
+    for bad, good in _PUNCTUATION.items():
+        text = text.replace(bad, good)
+    return text
+
+
+def run_job(job_type, prompt, *, system=None, input_ref="", user=None):
+    """Run one generation and audit it. Returns (text, AssistantJob).
+
+    Writes an AssistantJob row on failure as well as success, so "it stopped
+    working on Tuesday" is answerable from data rather than from memory.
+    """
+    client = get_ai_client()
+    creator = user if getattr(user, "is_authenticated", False) else None
+    started = time.monotonic()
+    try:
+        # Only the generation is serialised; the DB writes below are not.
+        with _GENERATION_LOCK:
+            raw = client.generate(prompt, system=system)
+    except AIUnavailable as exc:
+        AssistantJob.objects.create(
+            job_type=job_type, input_ref=input_ref, ok=False,
+            error=str(exc)[:255], model_used=getattr(client, "model", ""),
+            latency_ms=int((time.monotonic() - started) * 1000),
+            created_by=creator)
+        raise
+
+    text = _normalize_output(raw)
+    job = AssistantJob.objects.create(
+        job_type=job_type, input_ref=input_ref, output_text=text,
+        model_used=client.model, ok=True,
+        latency_ms=int((time.monotonic() - started) * 1000),
+        created_by=creator)
+    return text, job
