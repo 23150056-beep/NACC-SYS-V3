@@ -28,6 +28,16 @@ class PrefetchTest(APITestCase):
         cfg.enabled = True
         cfg.save()
         self.client.force_authenticate(self.psy)
+        self.addCleanup(self._clear_in_flight)
+
+    def _clear_in_flight(self):
+        # _IN_FLIGHT is module-level state, not part of the DB transaction
+        # Django rolls back between tests. Without this, a child id queued by
+        # one test (with _start_prefetch_thread mocked, so nothing ever
+        # removes it) stays in the set and can make a later test's reused id
+        # look already in-flight.
+        with views._IN_FLIGHT_LOCK:
+            views._IN_FLIGHT.clear()
 
     def _appointment(self, child, psychologist, *, days=0):
         # Appointment has no `end` field -- only `start` and `duration_minutes`
