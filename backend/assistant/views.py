@@ -1,7 +1,9 @@
 import logging
 import threading
+from datetime import timedelta
 
 from django.db import connection
+from django.db.models import Avg, Count, Q
 from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
@@ -340,3 +342,47 @@ class CensusNarrativeView(AssistantBaseView):
             user=request.user)
         return Response({"draft": draft, "job_id": job.id,
                          "disclaimer": DISCLAIMER})
+
+
+WINDOW_DAYS = 30
+
+
+class AssistantMetricsView(AssistantBaseView):
+    """Per-feature usage over the last 30 days.
+
+    Reads history only, so it is not gated — an administrator deciding whether
+    to switch the assistant back on needs exactly this while it is off.
+    """
+    permission_classes = [IsAdministrator]
+
+    def get(self, request):
+        since = timezone.now() - timedelta(days=WINDOW_DAYS)
+        rows = []
+        for job_type, _label in AssistantJob.TYPE_CHOICES:
+            qs = AssistantJob.objects.filter(job_type=job_type, created_at__gte=since)
+            # The aggregate alias can't be named "ok" — that collides with the
+            # model's own `ok` field and Django raises "'ok' is an aggregate"
+            # while resolving the sibling Count(filter=Q(ok=...)) calls below.
+            agg = qs.aggregate(
+                runs=Count("id"),
+                n_ok=Count("id", filter=Q(ok=True)),
+                errors=Count("id", filter=Q(ok=False)),
+                avg_latency_ms=Avg("latency_ms"),
+                accepted=Count("id", filter=Q(outcome=AssistantJob.ACCEPTED)),
+                edited=Count("id", filter=Q(outcome=AssistantJob.EDITED)),
+                discarded=Count("id", filter=Q(outcome=AssistantJob.DISCARDED)),
+                pending=Count("id", filter=Q(outcome=AssistantJob.PENDING)),
+            )
+            avg = agg["avg_latency_ms"]
+            rows.append({
+                "job_type": job_type,
+                "runs": agg["runs"],
+                "ok": agg["n_ok"],
+                "errors": agg["errors"],
+                "avg_latency_ms": int(avg) if avg is not None else None,
+                "accepted": agg["accepted"],
+                "edited": agg["edited"],
+                "discarded": agg["discarded"],
+                "pending": agg["pending"],
+            })
+        return Response({"window_days": WINDOW_DAYS, "features": rows})
