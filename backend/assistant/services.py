@@ -9,6 +9,7 @@ clinical free text to a processor outside the agency's data-processing
 agreements, which is what removed the V2 layer. The seam is kept so adding one
 later is an addition rather than a rewrite; adding one is its own decision.
 """
+import http.client
 import json
 import logging
 import threading
@@ -63,7 +64,8 @@ class OllamaClient:
             with urllib.request.urlopen(req, timeout=180) as resp:
                 data = json.loads(resp.read().decode())
         except (urllib.error.URLError, TimeoutError, OSError,
-                json.JSONDecodeError) as exc:
+                json.JSONDecodeError, http.client.HTTPException,
+                UnicodeDecodeError) as exc:
             raise AIUnavailable(f"Local AI runtime unreachable: {exc}") from exc
         return (data.get("response") or "").strip()
 

@@ -1,4 +1,7 @@
-from unittest.mock import patch
+import http.client
+import json
+import urllib.error
+from unittest.mock import MagicMock, patch
 
 from django.test import TestCase
 
@@ -87,3 +90,73 @@ class RunJobTest(TestCase):
         with patch.object(services.OllamaClient, "generate", return_value="ok"):
             _, job = services.run_job("remark_polish", "p", user=None)
         self.assertIsNone(job.created_by)
+
+
+class OllamaClientGenerateTest(TestCase):
+    """Exercises the real generate() body against a mocked transport —
+    urllib.request.urlopen, not OllamaClient.generate itself — so the payload
+    shape and the exception mapping are both actually covered."""
+
+    def _client(self):
+        return services.OllamaClient("http://localhost:11434", "qwen2.5:3b-instruct")
+
+    def _response(self, body_bytes):
+        resp = MagicMock()
+        resp.__enter__.return_value = resp
+        resp.read.return_value = body_bytes
+        return resp
+
+    def test_payload_has_no_extra_keys_without_system(self):
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_urlopen.return_value = self._response(
+                json.dumps({"response": "ok"}).encode())
+            self._client().generate("prompt text")
+        req = mock_urlopen.call_args[0][0]
+        payload = json.loads(req.data.decode())
+        self.assertEqual(set(payload.keys()), {"model", "prompt", "stream"})
+        self.assertIs(payload["stream"], False)
+
+    def test_payload_adds_system_key_only_when_given(self):
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_urlopen.return_value = self._response(
+                json.dumps({"response": "ok"}).encode())
+            self._client().generate("prompt text", system="Be terse.")
+        req = mock_urlopen.call_args[0][0]
+        payload = json.loads(req.data.decode())
+        self.assertEqual(
+            set(payload.keys()), {"model", "prompt", "stream", "system"})
+
+    def test_url_error_maps_to_ai_unavailable(self):
+        with patch("urllib.request.urlopen",
+                    side_effect=urllib.error.URLError("connection refused")):
+            with self.assertRaises(services.AIUnavailable):
+                self._client().generate("prompt")
+
+    def test_timeout_maps_to_ai_unavailable(self):
+        with patch("urllib.request.urlopen", side_effect=TimeoutError("timed out")):
+            with self.assertRaises(services.AIUnavailable):
+                self._client().generate("prompt")
+
+    def test_malformed_json_body_maps_to_ai_unavailable(self):
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_urlopen.return_value = self._response(b"not json")
+            with self.assertRaises(services.AIUnavailable):
+                self._client().generate("prompt")
+
+    def test_incomplete_read_maps_to_ai_unavailable(self):
+        # Raised by resp.read() when the runtime process dies mid-response
+        # (observed on this hardware under OOM). IncompleteRead subclasses
+        # http.client.HTTPException, not OSError, so it needs its own entry
+        # in the except tuple.
+        with patch("urllib.request.urlopen",
+                    side_effect=http.client.IncompleteRead(b"partial")):
+            with self.assertRaises(services.AIUnavailable):
+                self._client().generate("prompt")
+
+    def test_undecodable_body_maps_to_ai_unavailable(self):
+        # .decode() on a truncated multi-byte sequence raises
+        # UnicodeDecodeError, a ValueError subclass not covered by OSError.
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_urlopen.return_value = self._response(b"\xff\xfe\x00\x01")
+            with self.assertRaises(services.AIUnavailable):
+                self._client().generate("prompt")
