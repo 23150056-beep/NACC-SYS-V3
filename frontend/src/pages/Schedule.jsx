@@ -8,6 +8,7 @@ import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { Card, Button, Badge, Input, Select, FormField, Alert, Avatar, Icon, iconBtn, hoverLift, PAGE } from '../ui';
+import { prefetchBriefs } from '../api/assistant';
 
 const localizer = dateFnsLocalizer({ format, parse, startOfWeek, getDay, locales: { 'en-US': enUS } });
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -48,6 +49,13 @@ export default function Schedule() {
     if (!booking?.child) { setSlotHints(null); return; }
     api.get(`/availability/next-slots/?child=${booking.child}`).then((r) => setSlotHints(r.data)).catch(() => setSlotHints(null));
   }, [booking?.child]);
+  // Quietly warms today's brief cache in the background. prefetchBriefs()
+  // already swallows its own errors (including a 503 when the assistant is
+  // off) — this screen must never know or care whether it succeeded.
+  useEffect(() => {
+    prefetchBriefs();
+    /* eslint-disable-next-line */
+  }, []);
 
   const events = useMemo(() => appointments.map((a) => {
     const start = new Date(a.start);

@@ -13,3 +13,14 @@ export const getAssistantSettings = () =>
 
 export const saveAssistantSettings = (payload) =>
   api.put('/assistant/settings/', payload).then((r) => r.data);
+
+export const getLatestBrief = (childId) =>
+  api.get(`/assistant/brief/child/${childId}/latest/`).then((r) => r.data);
+
+export const generateBrief = (childId) =>
+  api.post(`/assistant/brief/child/${childId}/`).then((r) => r.data);
+
+// Fire and forget. Failures here are invisible on purpose: a schedule screen
+// must not report that a background convenience did not happen.
+export const prefetchBriefs = () =>
+  api.post('/assistant/prefetch-briefs/').catch(() => null);

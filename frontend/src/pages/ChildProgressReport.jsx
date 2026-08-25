@@ -4,9 +4,9 @@ import { QRCodeSVG } from 'qrcode.react';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { Card, Button, Badge, Alert, Select, FormField, Icon, iconBtn, PAGE, ConfirmDialog } from '../ui';
+import { Card, Button, Badge, Alert, Select, FormField, Icon, iconBtn, PAGE, ConfirmDialog, Modal } from '../ui';
 import { PA_STATUS_TONES } from '../config/caseData';
-import { polishRemark, sendFeedback } from '../api/assistant';
+import { polishRemark, sendFeedback, getLatestBrief, generateBrief } from '../api/assistant';
 
 const CASE_STATUS_META = {
   pre_assessment: { label: 'Pre-Assessment', tone: 'amber' },
@@ -39,6 +39,8 @@ export default function ChildProgressReport() {
   const [confirmMove, setConfirmMove] = useState(null); // { next, childName }
   const [polishing, setPolishing] = useState(false);
   const [polishJob, setPolishJob] = useState(null); // { id, draft }
+  const [brief, setBrief] = useState(null);   // { draft, generatedAt, jobId }
+  const [briefBusy, setBriefBusy] = useState(false);
   const isStaffOrAdmin = ['Administrator', 'Staff'].includes(user?.role_name);
 
   const load = () => api.get(`/reports/child/${id}/`).then((r) => setData(r.data)).catch(() => setData('error'));
@@ -97,6 +99,26 @@ export default function ChildProgressReport() {
     }
   };
 
+  const openBrief = async ({ regenerate = false } = {}) => {
+    setBriefBusy(true);
+    try {
+      const data = regenerate
+        ? await generateBrief(id)
+        : await getLatestBrief(id).catch((err) => {
+            // 404 just means nothing was drafted today — fall back to the slow path.
+            if (err.response?.status === 404) return generateBrief(id);
+            throw err;
+          });
+      setBrief({ draft: data.draft, generatedAt: data.generated_at, jobId: data.job_id });
+    } catch (err) {
+      toast.error(err.response?.status === 503
+        ? 'The assistant is unavailable right now.'
+        : 'Could not prepare the brief.');
+    } finally {
+      setBriefBusy(false);
+    }
+  };
+
   const addRemark = async () => {
     if (!remarkText.trim()) return;
     const saved = remarkText.trim();
@@ -146,6 +168,9 @@ export default function ChildProgressReport() {
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, gap: 10, flexWrap: 'wrap' }} className="racco-no-print">
         <Button variant="ghost" onClick={() => navigate('/reports')} iconLeft={<Icon name="arrow-left" size={17} />}>Back to Results</Button>
         <div style={{ display: 'flex', gap: 10 }}>
+          <Button variant="secondary" onClick={() => openBrief()} disabled={briefBusy}>
+            {briefBusy ? 'Preparing…' : 'Pre-session brief'}
+          </Button>
           <Button variant="secondary" onClick={() => window.print()} iconLeft={<Icon name="printer" size={17} />}>Print / Save PDF</Button>
         </div>
       </div>
@@ -568,6 +593,30 @@ export default function ChildProgressReport() {
           description={`${confirmMove.childName || 'This child'} moves out of pre-assessment and into counseling. You can move them back, but the change shows in the audit trail either way.`}
           confirmLabel="Move to counseling" cancelLabel="Cancel"
         />
+      )}
+
+      {/* Pre-session brief modal */}
+      {brief && (
+        <Modal open onClose={() => setBrief(null)} title="Pre-session brief"
+               subtitle={`Drafted ${new Date(brief.generatedAt).toLocaleTimeString()}`}
+               width={560}>
+          <Alert tone="info" disclaimer style={{ marginBottom: 12 }}>
+            AI-drafted decision support, not a diagnosis. The licensed psychologist
+            reviews, edits, and approves all content.
+          </Alert>
+          <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.6 }}>{brief.draft}</div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+            <Button variant="ghost" onClick={() => { sendFeedback(brief.jobId, 'discarded').catch(() => {}); setBrief(null); }}>
+              Not useful
+            </Button>
+            <Button variant="ghost" onClick={() => openBrief({ regenerate: true })} disabled={briefBusy}>
+              Regenerate (slow)
+            </Button>
+            <Button variant="primary" onClick={() => { sendFeedback(brief.jobId, 'accepted').catch(() => {}); setBrief(null); }}>
+              Useful
+            </Button>
+          </div>
+        </Modal>
       )}
 
     </div>
