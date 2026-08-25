@@ -1859,9 +1859,11 @@ class PrefetchTest(APITestCase):
 
     def _appointment(self, child, psychologist, *, days=0):
         start = timezone.now() + timedelta(days=days, hours=1)
+        # Appointment has `start` + `duration_minutes` (default 60) — there is
+        # no `end` field. Verified against backend/scheduling/models.py.
         return Appointment.objects.create(
             child=child, psychologist=psychologist, start=start,
-            end=start + timedelta(hours=1), status=Appointment.SCHEDULED)
+            status=Appointment.SCHEDULED)
 
     def test_queues_todays_own_appointments(self):
         self._appointment(self.mine, self.psy)
