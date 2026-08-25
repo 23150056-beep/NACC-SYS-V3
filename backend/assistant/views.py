@@ -3,9 +3,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.permissions import IsAdministrator
+from assistant import prompts
 from assistant.models import AssistantSetting
 from assistant.serializers import AssistantSettingSerializer
-from assistant.services import AIUnavailable
+from assistant.services import AIUnavailable, DISCLAIMER, gate, run_job
 
 
 class AssistantBaseView(generics.GenericAPIView):
@@ -38,3 +39,23 @@ class AssistantSettingView(AssistantBaseView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+
+class RemarkPolishView(AssistantBaseView):
+    """Polish a remark the psychologist is writing. Returns a draft only —
+    nothing is saved to the remark until the human saves it themselves."""
+
+    def post(self, request):
+        gate("feature_remark_polish")
+        raw = (request.data.get("text") or "").strip()
+        if not raw:
+            return Response({"detail": "Nothing to polish."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        draft, job = run_job(
+            "remark_polish",
+            prompts.build_remark_prompt(raw),
+            system=prompts.REMARK_POLISH_SYSTEM,
+            input_ref="remark:draft",
+            user=request.user)
+        return Response({"draft": draft, "job_id": job.id,
+                         "disclaimer": DISCLAIMER})
