@@ -62,10 +62,11 @@ class RemarkPolishView(AssistantBaseView):
 
     def post(self, request):
         gate("feature_remark_polish")
-        raw = (request.data.get("text") or "").strip()
-        if not raw:
+        raw = request.data.get("text")
+        if not isinstance(raw, str) or not raw.strip():
             return Response({"detail": "Nothing to polish."},
                             status=status.HTTP_400_BAD_REQUEST)
+        raw = raw.strip()
         draft, job = run_job(
             "remark_polish",
             prompts.build_remark_prompt(raw),

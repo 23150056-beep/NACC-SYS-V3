@@ -39,6 +39,11 @@ class RemarkPolishTest(APITestCase):
     def test_missing_text_is_rejected(self):
         self.assertEqual(self.client.post(URL, {}, format="json").status_code, 400)
 
+    def test_non_string_text_is_rejected(self):
+        """A non-string JSON value (e.g. {"text": 5}) must 400, not 500."""
+        res = self.client.post(URL, {"text": 5}, format="json")
+        self.assertEqual(res.status_code, 400)
+
     def test_503_when_master_switch_off(self):
         cfg = AssistantSetting.load()
         cfg.enabled = False
