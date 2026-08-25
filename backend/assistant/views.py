@@ -1,5 +1,6 @@
 import logging
 import threading
+import time
 from datetime import timedelta
 
 from django.db import connection
@@ -14,7 +15,7 @@ from accounts.permissions import IsAdministrator, IsAdminOrStaff
 from assistant import prompts
 from assistant.models import AssistantJob, AssistantSetting
 from assistant.serializers import AssistantSettingSerializer
-from assistant.services import AIUnavailable, DISCLAIMER, gate, run_job
+from assistant.services import AIUnavailable, DISCLAIMER, gate, get_ai_client, run_job
 from children.models import Child
 from clinical.models import CaseReferral, PsychologicalReport
 from scheduling.models import Appointment
@@ -386,3 +387,28 @@ class AssistantMetricsView(AssistantBaseView):
                 "pending": agg["pending"],
             })
         return Response({"window_days": WINDOW_DAYS, "features": rows})
+
+
+class AssistantCheckView(AssistantBaseView):
+    """Probe the runtime and describe what happened.
+
+    Returns 200 with ok=false rather than 503: the administrator asked a
+    question about the runtime, and "it is unreachable" is a successful answer
+    to that question. It also does not write an AssistantJob — a connection
+    test is not clinical work and would skew the usage table.
+    """
+    permission_classes = [IsAdministrator]
+
+    def post(self, request):
+        cfg = AssistantSetting.load()
+        if not cfg.enabled:
+            return Response({"ok": False, "latency_ms": None,
+                             "detail": "The assistant is switched off."})
+        started = time.monotonic()
+        try:
+            get_ai_client().generate("Reply with the single word: OK.")
+        except AIUnavailable as exc:
+            return Response({"ok": False, "latency_ms": None, "detail": str(exc)})
+        elapsed = int((time.monotonic() - started) * 1000)
+        return Response({"ok": True, "latency_ms": elapsed,
+                         "detail": f"{cfg.model_name} answered in {elapsed} ms."})

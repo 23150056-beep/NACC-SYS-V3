@@ -1,14 +1,17 @@
 from django.urls import path
 
 from assistant.views import (
-    AssistantJobFeedbackView, AssistantMetricsView, AssistantSettingView,
-    CensusNarrativeView, ConfirmSummaryView, DocumentSummaryView,
-    LatestBriefView, PreSessionBriefView, PrefetchBriefsView, RemarkPolishView,
+    AssistantCheckView, AssistantJobFeedbackView, AssistantMetricsView,
+    AssistantSettingView, CensusNarrativeView, ConfirmSummaryView,
+    DocumentSummaryView, LatestBriefView, PreSessionBriefView,
+    PrefetchBriefsView, RemarkPolishView,
 )
 
 urlpatterns = [
     path("assistant/settings/", AssistantSettingView.as_view(),
          name="assistant-settings"),
+    path("assistant/check/", AssistantCheckView.as_view(),
+         name="assistant-check"),
     path("assistant/polish-remark/", RemarkPolishView.as_view(),
          name="assistant-polish-remark"),
     path("assistant/jobs/<int:job_id>/feedback/",

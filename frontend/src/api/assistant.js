@@ -36,3 +36,9 @@ export const confirmSummary = (kind, id, text) =>
 
 export const censusNarrative = (figures) =>
   api.post('/assistant/census-narrative/', { figures }).then((r) => r.data);
+
+export const getAssistantMetrics = () =>
+  api.get('/assistant/metrics/').then((r) => r.data);
+
+export const checkAssistant = () =>
+  api.post('/assistant/check/').then((r) => r.data);
