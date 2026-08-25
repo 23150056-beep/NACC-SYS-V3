@@ -3,6 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import api from '../api/client';
 import { useToast } from '../context/ToastContext';
 import { Card, StatCard, Button, Badge, Alert, Icon, PAGE } from '../ui';
+import { sendFeedback, censusNarrative } from '../api/assistant';
 
 const RANGES = ['weekly', 'monthly', 'yearly'];
 const EMPTY = { total: 0, children: 0, by_case_type: {}, per_psychologist: [], trend: [], terminations_by_reason: {}, pending_pre_assessments: 0, caseload_per_psychologist: [], nacc_service_users: { age_groups: [], case_categories: [] } };
@@ -11,6 +12,8 @@ export default function AgencySummary() {
   const toast = useToast();
   const [range, setRange] = useState('monthly');
   const [data, setData] = useState(null);
+  const [narrative, setNarrative] = useState(null); // { text, jobId }
+  const [narrativeBusy, setNarrativeBusy] = useState(false);
 
 
   useEffect(() => {
@@ -29,6 +32,29 @@ export default function AgencySummary() {
   const d = data || EMPTY;
   const trend = (d.trend || []).map((t) => ({ bucket: t.bucket, count: t.count }));
   const caseMix = Object.entries(d.by_case_type || {});
+
+  const writeNarrative = async () => {
+    setNarrativeBusy(true);
+    try {
+      // Only finished figures — the model restates these and computes nothing.
+      const { draft, job_id } = await censusNarrative({
+        period: range,
+        completed_pre_assessments: d.total,
+        children_seen: d.children,
+        pending_pre_assessments: d.pending_pre_assessments,
+        psychologists_reporting: (d.per_psychologist || []).length,
+        ...Object.fromEntries(
+          Object.entries(d.by_case_type || {}).map(([k, v]) => [`case_type_${k}`, v])),
+      });
+      setNarrative({ text: draft, jobId: job_id });
+    } catch (err) {
+      toast.error(err.response?.status === 503
+        ? 'The assistant is unavailable right now.'
+        : 'Could not write the narrative.');
+    } finally {
+      setNarrativeBusy(false);
+    }
+  };
 
   return (
     <div style={PAGE} className="racco-print-area">
@@ -49,6 +75,34 @@ export default function AgencySummary() {
         <StatCard label="Children Seen" value={d.children} tone="success" icon={<Icon name="users" size={18} />} />
         <StatCard label="Pending Pre-Assessments" value={d.pending_pre_assessments} tone="amber" icon={<Icon name="loader" size={18} />} />
       </div>
+
+      <Card eyebrow="Assistant" title="Narrative summary" padding="20px" style={{ marginBottom: 20 }}
+            actions={<Button variant="ghost" onClick={writeNarrative} disabled={narrativeBusy} className="racco-no-print">
+                       {narrativeBusy ? 'Writing…' : 'Draft narrative'}
+                     </Button>}>
+        {narrative ? (
+          <>
+            <Alert tone="info" disclaimer style={{ marginBottom: 12 }}>
+              AI-drafted from the figures above. Review before using in any report.
+            </Alert>
+            <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.6 }}>{narrative.text}</div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }} className="racco-no-print">
+              <Button variant="ghost" size="sm"
+                      onClick={() => { sendFeedback(narrative.jobId, 'discarded').catch(() => {}); setNarrative(null); }}>
+                Not useful
+              </Button>
+              <Button variant="ghost" size="sm"
+                      onClick={() => sendFeedback(narrative.jobId, 'accepted').catch(() => {})}>
+                Useful
+              </Button>
+            </div>
+          </>
+        ) : (
+          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+            No narrative drafted yet.
+          </div>
+        )}
+      </Card>
 
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,2fr) minmax(0,1fr)', gap: 20, marginBottom: 20 }}>

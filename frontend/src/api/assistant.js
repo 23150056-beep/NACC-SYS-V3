@@ -33,3 +33,6 @@ export const summarizeDocument = (kind, id) =>
 
 export const confirmSummary = (kind, id, text) =>
   api.post(`/assistant/${CONFIRM[kind]}/${id}/`, { text }).then((r) => r.data);
+
+export const censusNarrative = (figures) =>
+  api.post('/assistant/census-narrative/', { figures }).then((r) => r.data);
