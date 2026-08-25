@@ -1,8 +1,9 @@
 from django.urls import path
 
 from assistant.views import (
-    AssistantJobFeedbackView, AssistantSettingView, DocumentSummaryView,
-    LatestBriefView, PreSessionBriefView, PrefetchBriefsView, RemarkPolishView,
+    AssistantJobFeedbackView, AssistantSettingView, ConfirmSummaryView,
+    DocumentSummaryView, LatestBriefView, PreSessionBriefView,
+    PrefetchBriefsView, RemarkPolishView,
 )
 
 urlpatterns = [
@@ -24,4 +25,10 @@ urlpatterns = [
     path("assistant/summarize-case-referral/<int:doc_id>/",
          DocumentSummaryView.as_view(kind="case-referral"),
          name="assistant-summarize-case-referral"),
+    path("assistant/confirm-summary/<int:doc_id>/",
+         ConfirmSummaryView.as_view(kind="report"),
+         name="assistant-confirm-summary"),
+    path("assistant/confirm-case-referral-summary/<int:doc_id>/",
+         ConfirmSummaryView.as_view(kind="case-referral"),
+         name="assistant-confirm-case-referral-summary"),
 ]

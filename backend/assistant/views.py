@@ -275,3 +275,42 @@ class DocumentSummaryView(AssistantBaseView):
         doc.save(update_fields=["ai_summary", "ai_summary_confirmed"])
         return Response({"draft": draft, "job_id": job.id,
                          "disclaimer": DISCLAIMER})
+
+
+class ConfirmSummaryView(AssistantBaseView):
+    """Confirm a summary as the human's own words.
+
+    Not gated: confirming is the psychologist's act, and must keep working
+    after an administrator switches the assistant off.
+    """
+    kind = None
+
+    def post(self, request, doc_id):
+        model, prefix, _ = _DOC_KINDS[self.kind]
+        doc = model.objects.filter(
+            pk=doc_id, child__in=_visible_children(request)).first()
+        if not doc:
+            return Response({"detail": "Not found."},
+                            status=status.HTTP_404_NOT_FOUND)
+        text = request.data.get("text")
+        if not isinstance(text, str) or not text.strip():
+            return Response({"detail": "A confirmed summary cannot be empty."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        text = text.strip()
+
+        doc.ai_summary = text
+        doc.ai_summary_confirmed = True
+        doc.save(update_fields=["ai_summary", "ai_summary_confirmed"])
+
+        # Whether the human kept the draft verbatim is the evaluation signal.
+        job = AssistantJob.objects.filter(
+            job_type="doc_intelligence", input_ref=f"{prefix}:{doc.id}",
+            ok=True).first()
+        if job:
+            job.outcome = (AssistantJob.ACCEPTED
+                           if job.output_text.strip() == text
+                           else AssistantJob.EDITED)
+            job.save(update_fields=["outcome"])
+
+        return Response({"ai_summary": doc.ai_summary,
+                         "ai_summary_confirmed": doc.ai_summary_confirmed})

@@ -85,3 +85,77 @@ class SummaryTest(SummaryTestBase):
         self.client.force_authenticate(self.psy)
         res = self.client.post(f"/api/assistant/summarize-report/{self.report.id}/")
         self.assertEqual(res.status_code, 503)
+
+
+class ConfirmSummaryTest(SummaryTestBase):
+    """Extends the fixture base, NOT SummaryTest — inheriting its cases would
+    run every summarize test a second time."""
+
+    def _draft(self, text="Draft summary."):
+        with patch.object(services.OllamaClient, "generate", return_value=text):
+            self.client.post(f"/api/assistant/summarize-report/{self.report.id}/")
+        return AssistantJob.objects.filter(input_ref=f"report:{self.report.id}").first()
+
+    def test_confirming_unchanged_text_marks_the_job_accepted(self):
+        self.client.force_authenticate(self.psy)
+        job = self._draft()
+        res = self.client.post(
+            f"/api/assistant/confirm-summary/{self.report.id}/",
+            {"text": "Draft summary."}, format="json")
+        self.assertEqual(res.status_code, 200)
+        self.report.refresh_from_db()
+        job.refresh_from_db()
+        self.assertTrue(self.report.ai_summary_confirmed)
+        self.assertEqual(job.outcome, AssistantJob.ACCEPTED)
+
+    def test_confirming_changed_text_marks_the_job_edited(self):
+        self.client.force_authenticate(self.psy)
+        job = self._draft()
+        self.client.post(f"/api/assistant/confirm-summary/{self.report.id}/",
+                         {"text": "My own words."}, format="json")
+        self.report.refresh_from_db()
+        job.refresh_from_db()
+        self.assertEqual(self.report.ai_summary, "My own words.")
+        self.assertEqual(job.outcome, AssistantJob.EDITED)
+
+    def test_whitespace_only_difference_still_counts_as_accepted(self):
+        self.client.force_authenticate(self.psy)
+        job = self._draft()
+        self.client.post(f"/api/assistant/confirm-summary/{self.report.id}/",
+                         {"text": "  Draft summary.  "}, format="json")
+        job.refresh_from_db()
+        self.assertEqual(job.outcome, AssistantJob.ACCEPTED)
+
+    def test_blank_confirmation_is_rejected(self):
+        self.client.force_authenticate(self.psy)
+        self._draft()
+        res = self.client.post(f"/api/assistant/confirm-summary/{self.report.id}/",
+                               {"text": "   "}, format="json")
+        self.assertEqual(res.status_code, 400)
+
+    def test_unassigned_psychologist_cannot_confirm(self):
+        self.client.force_authenticate(self.psy)
+        self._draft()
+        self.client.force_authenticate(self.other)
+        res = self.client.post(f"/api/assistant/confirm-summary/{self.report.id}/",
+                               {"text": "Anything."}, format="json")
+        self.assertEqual(res.status_code, 404)
+
+    def test_confirming_works_with_the_assistant_switched_off(self):
+        """Confirming is the human's own act — it must not need the model."""
+        self.client.force_authenticate(self.psy)
+        self._draft()
+        cfg = AssistantSetting.load()
+        cfg.enabled = False
+        cfg.save()
+        res = self.client.post(f"/api/assistant/confirm-summary/{self.report.id}/",
+                               {"text": "Mine."}, format="json")
+        self.assertEqual(res.status_code, 200)
+
+    def test_non_string_text_is_rejected(self):
+        """A non-string JSON value (e.g. {"text": 5}) must 400, not 500."""
+        self.client.force_authenticate(self.psy)
+        self._draft()
+        res = self.client.post(f"/api/assistant/confirm-summary/{self.report.id}/",
+                               {"text": 5}, format="json")
+        self.assertEqual(res.status_code, 400)
