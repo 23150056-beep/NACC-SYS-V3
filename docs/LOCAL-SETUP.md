@@ -67,6 +67,45 @@ reproduced exactly.
 The notes deliberately mix English, Tagalog and Ilocano, because notes written
 in Region I do.
 
+## The writing assistant
+
+Off by default. The system is fully usable without it — every AI feature
+degrades to a message the screen absorbs rather than an error. Turning it on
+is optional and entirely local; nothing about it reaches the network.
+
+1. Install [Ollama](https://ollama.com) and pull the model this was built and
+   measured against:
+
+   ```
+   ollama pull qwen2.5:3b-instruct
+   ```
+
+2. Before starting Ollama, set:
+
+   ```
+   OLLAMA_KEEP_ALIVE=-1
+   OLLAMA_NUM_PARALLEL=1
+   OLLAMA_MAX_LOADED_MODELS=1
+   ```
+
+   These keep one model loaded indefinitely and one generation running at a
+   time. Reloading between calls and running generations concurrently were
+   both measured slower on this hardware, not faster.
+
+3. Sign in as the administrator, open **Settings**, and switch on **Assistant
+   enabled** under "Local writing assistant". Confirm it is answering with the
+   **Test connection** button there, or from a terminal:
+
+   ```
+   cd backend
+   .venv\Scripts\python manage.py ai_check
+   ```
+
+A short draft — polishing a remark — takes about 5 seconds. A pre-session
+brief takes about 40 seconds, because it reasons over more text; briefs for a
+day's schedule are generated in the background before anyone opens one, so in
+normal use the brief button is instant rather than a 40-second wait.
+
 ## Starting over
 
 Delete `backend/db.sqlite3` and run `setup-local.bat` again for an empty

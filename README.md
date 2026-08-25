@@ -16,7 +16,7 @@ Containers, managed PostgreSQL, and object storage for uploaded case files.
 | Uploads | `backend/media/` on disk | S3-compatible object storage (private bucket) |
 | Static files | Served ad hoc | WhiteNoise, collected at image build |
 | Config | `.env` file | Environment variables from the platform's secret store |
-| AI runtime | Ollama, loopback-only | **Removed** — see below |
+| AI runtime | Ollama, loopback-only | Ollama, loopback-only — off by default |
 | Deploys | Manual copy + restart | Push to git → CI → platform deploy |
 | Health | — | `/healthz/` readiness probe |
 
@@ -149,25 +149,31 @@ no role is refused at sign-in, so removing access is done by deactivating.
 
 There is no child-facing UI.
 
-## No AI layer
+## The writing assistant
 
-V2 shipped an optional AI layer — pre-session briefs, report summarization,
-remark polishing, a census narrative — running on a local Ollama model. **V3
-removes it entirely** (2026-08-18).
+An optional writing assistant drafts pre-session briefs, document summaries,
+polished remarks, and a census narrative. It is **off by default** and the
+system is fully functional with it off — every feature degrades to a 503 that
+the screens absorb.
 
-The on-premises runtime was what made V2's Data Privacy Act story work: the
-model ran on the office PC and case text never left the building. Cloud
-instances have no GPU and Ollama is loopback-only by design, so that option
-does not exist here. The alternative was a hosted provider, which would have
-meant sending clinical interview narratives and psychologist remarks — the most
-sensitive free text in the system — to a processor outside the agency's
-data-processing agreements.
+The model runs **on this machine**, through Ollama on loopback. Case text is
+never sent to an outside service, which is what makes the Data Privacy Act
+story work: there is no additional processor. There is deliberately no hosted
+provider — adding one would mean sending clinical interview narratives and
+psychologist remarks, the most sensitive free text in the system, to a
+processor outside the agency's data-processing agreements.
 
-Rather than ship a switch that was unsafe to turn on, the layer is gone: the
-`ai` app, its two tables, the Settings panel, and every AI action in the
-clinical screens. Summaries a psychologist had already **confirmed** are kept
-and shown as ordinary clinical text — once confirmed they are the
-psychologist's own words, not a draft.
+Everything it produces is a **draft**. Nothing is auto-applied, and a summary
+only becomes clinical text when a psychologist confirms it — at which point it
+is their words, not the model's. Every call is audited, and Settings shows how
+often drafts were kept, edited, or discarded.
+
+It does not score, rate, or classify children, and it never computes a figure:
+deterministic code supplies every number, and the model only writes prose
+around it.
+
+Setup is in `docs/LOCAL-SETUP.md`. `manage.py ai_check`, or **Test connection**
+in Settings, reports whether the runtime is answering.
 
 **Care-gap alerts are unaffected.** They were always deterministic rules over
 dates and case state, and never involved a model.
