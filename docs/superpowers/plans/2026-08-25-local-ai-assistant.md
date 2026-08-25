@@ -3027,9 +3027,13 @@ class AssistantMetricsView(AssistantBaseView):
         rows = []
         for job_type, _label in AssistantJob.TYPE_CHOICES:
             qs = AssistantJob.objects.filter(job_type=job_type, created_at__gte=since)
+            # The aggregate alias cannot be named "ok": it collides with the
+            # model's own `ok` field when the sibling Q(ok=True) filter is
+            # resolved in the same .aggregate() call, and Django 5.1 raises
+            # FieldError: Cannot compute Count('ok'): 'ok' is an aggregate.
             agg = qs.aggregate(
                 runs=Count("id"),
-                ok=Count("id", filter=Q(ok=True)),
+                n_ok=Count("id", filter=Q(ok=True)),
                 errors=Count("id", filter=Q(ok=False)),
                 avg_latency_ms=Avg("latency_ms"),
                 accepted=Count("id", filter=Q(outcome=AssistantJob.ACCEPTED)),
@@ -3039,6 +3043,7 @@ class AssistantMetricsView(AssistantBaseView):
             )
             avg = agg["avg_latency_ms"]
             agg["avg_latency_ms"] = int(avg) if avg is not None else None
+            agg["ok"] = agg.pop("n_ok")
             rows.append({"job_type": job_type, **agg})
         return Response({"window_days": WINDOW_DAYS, "features": rows})
 ```
