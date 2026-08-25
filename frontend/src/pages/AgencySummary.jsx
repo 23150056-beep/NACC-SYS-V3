@@ -42,7 +42,6 @@ export default function AgencySummary() {
         completed_pre_assessments: d.total,
         children_seen: d.children,
         pending_pre_assessments: d.pending_pre_assessments,
-        psychologists_reporting: (d.per_psychologist || []).length,
         ...Object.fromEntries(
           Object.entries(d.by_case_type || {}).map(([k, v]) => [`case_type_${k}`, v])),
       });
@@ -103,7 +102,6 @@ export default function AgencySummary() {
           </div>
         )}
       </Card>
-
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,2fr) minmax(0,1fr)', gap: 20, marginBottom: 20 }}>
         <Card eyebrow="Sessions over time" title="Trend" padding="20px">
