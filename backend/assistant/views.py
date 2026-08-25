@@ -8,7 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.models import Role
-from accounts.permissions import IsAdministrator
+from accounts.permissions import IsAdministrator, IsAdminOrStaff
 from assistant import prompts
 from assistant.models import AssistantJob, AssistantSetting
 from assistant.serializers import AssistantSettingSerializer
@@ -315,3 +315,28 @@ class ConfirmSummaryView(AssistantBaseView):
 
         return Response({"ai_summary": doc.ai_summary,
                          "ai_summary_confirmed": doc.ai_summary_confirmed})
+
+
+class CensusNarrativeView(AssistantBaseView):
+    """Narrate figures the caller already computed.
+
+    The model receives finished numbers and is told to restate them. It never
+    counts anything: a wrong caseload figure in an agency report is far worse
+    than no narrative at all.
+    """
+    permission_classes = [IsAdminOrStaff]
+
+    def post(self, request):
+        gate("feature_census_narrative")
+        figures = request.data.get("figures")
+        if not isinstance(figures, dict) or not figures:
+            return Response({"detail": "figures must be a non-empty object."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        draft, job = run_job(
+            "census_narrative",
+            prompts.build_census_prompt(figures),
+            system=prompts.CENSUS_SYSTEM,
+            input_ref="agency:summary",
+            user=request.user)
+        return Response({"draft": draft, "job_id": job.id,
+                         "disclaimer": DISCLAIMER})
