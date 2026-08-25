@@ -37,6 +37,8 @@ React 18 + Vite, Ollama running `qwen2.5:3b-instruct` on localhost.
 - Commit authorship is `Reynold <jreynoldcanedo@gmail.com>`. No Claude
   attribution, no `Co-Authored-By`, no model name in any commit message or code
   comment (`CLAUDE.md`).
+- **Test expectations are "zero failures, zero errors", never a total count.**
+  Do not hunt for a missing test because a total looks low.
 - Test command: `cd backend && .venv/Scripts/python.exe manage.py test`.
   (CLAUDE.md documents `.venv/bin/python`; this machine's venv is Windows-layout.
   Task 20 fixes that doc.)
@@ -236,7 +238,7 @@ Expected: creates `backend/assistant/migrations/0001_initial.py`
 - [ ] **Step 7: Run tests to verify they pass**
 
 Run: `cd backend && .venv/Scripts/python.exe manage.py test assistant -v 2`
-Expected: PASS (4 tests)
+Expected: PASS — zero failures, zero errors.
 
 - [ ] **Step 8: Commit**
 
@@ -507,7 +509,7 @@ def run_job(job_type, prompt, *, system=None, input_ref="", user=None):
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd backend && .venv/Scripts/python.exe manage.py test assistant -v 2`
-Expected: PASS (14 tests)
+Expected: PASS — zero failures, zero errors.
 
 - [ ] **Step 5: Commit**
 
@@ -737,7 +739,7 @@ def build_census_prompt(figures):
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd backend && .venv/Scripts/python.exe manage.py test assistant -v 2`
-Expected: PASS (23 tests)
+Expected: PASS — zero failures, zero errors.
 
 - [ ] **Step 5: Commit**
 
@@ -920,7 +922,7 @@ In `backend/config/urls.py`, add after the `samd` line:
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd backend && .venv/Scripts/python.exe manage.py test assistant -v 2`
-Expected: PASS (28 tests)
+Expected: PASS — zero failures, zero errors.
 
 - [ ] **Step 6: Commit**
 
@@ -1044,7 +1046,7 @@ class Command(BaseCommand):
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd backend && .venv/Scripts/python.exe manage.py test assistant -v 2`
-Expected: PASS (31 tests)
+Expected: PASS — zero failures, zero errors.
 
 - [ ] **Step 5: Run the full suite — nothing existing may break**
 
@@ -1199,7 +1201,7 @@ In `backend/assistant/urls.py`, import `RemarkPolishView` and add:
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd backend && .venv/Scripts/python.exe manage.py test assistant -v 2`
-Expected: PASS (38 tests)
+Expected: PASS — zero failures, zero errors.
 
 - [ ] **Step 6: Commit**
 
@@ -1341,7 +1343,7 @@ In `backend/assistant/urls.py`, import `AssistantJobFeedbackView` and add:
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd backend && .venv/Scripts/python.exe manage.py test assistant -v 2`
-Expected: PASS (43 tests)
+Expected: PASS — zero failures, zero errors.
 
 - [ ] **Step 6: Commit**
 
@@ -1536,7 +1538,11 @@ from children.models import Child
 User = get_user_model()
 
 
-class BriefTest(APITestCase):
+class BriefTestBase(APITestCase):
+    """Shared fixtures only — no tests. Task 10 extends this too, and a
+    subclass that inherited these tests would re-run POST cases against the
+    read-only `latest` URL."""
+
     def setUp(self):
         psy_role = Role.objects.create(role_name=Role.PSYCHOLOGIST)
         admin_role = Role.objects.create(role_name=Role.ADMINISTRATOR)
@@ -1554,6 +1560,8 @@ class BriefTest(APITestCase):
         cfg.enabled = True
         cfg.save()
 
+
+class BriefTest(BriefTestBase):
     def _url(self, child):
         return f"/api/assistant/brief/child/{child.id}/"
 
@@ -1655,7 +1663,7 @@ assistant returns 503 rather than leaking whether a child id exists.
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd backend && .venv/Scripts/python.exe manage.py test assistant -v 2`
-Expected: PASS (48 tests)
+Expected: PASS — zero failures, zero errors.
 
 - [ ] **Step 6: Commit**
 
@@ -1688,7 +1696,10 @@ from datetime import timedelta
 from django.utils import timezone
 
 
-class LatestBriefTest(BriefTest):
+class LatestBriefTest(BriefTestBase):
+    """Extends the fixture base, NOT BriefTest — inheriting BriefTest's cases
+    would replay its POST tests against this read-only URL."""
+
     def _url(self, child):
         return f"/api/assistant/brief/child/{child.id}/latest/"
 
@@ -1786,7 +1797,7 @@ from django.utils import timezone
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd backend && .venv/Scripts/python.exe manage.py test assistant -v 2`
-Expected: PASS (53 tests)
+Expected: PASS — zero failures, zero errors.
 
 - [ ] **Step 6: Commit**
 
@@ -2020,7 +2031,7 @@ logger = logging.getLogger(__name__)
 - [ ] **Step 6: Run tests to verify they pass**
 
 Run: `cd backend && .venv/Scripts/python.exe manage.py test assistant -v 2`
-Expected: PASS (60 tests)
+Expected: PASS — zero failures, zero errors.
 
 - [ ] **Step 7: Commit**
 
@@ -2202,7 +2213,10 @@ from clinical.models import CaseReferral, PsychologicalReport
 User = get_user_model()
 
 
-class SummaryTest(APITestCase):
+class SummaryTestBase(APITestCase):
+    """Shared fixtures only — no tests. Task 14 extends this too, and a
+    subclass inheriting these tests would silently run them twice."""
+
     def setUp(self):
         psy_role = Role.objects.create(role_name=Role.PSYCHOLOGIST)
         staff_role = Role.objects.create(role_name=Role.STAFF)
@@ -2221,6 +2235,8 @@ class SummaryTest(APITestCase):
         cfg.enabled = True
         cfg.save()
 
+
+class SummaryTest(SummaryTestBase):
     def test_assigned_psychologist_can_summarize_a_report(self):
         self.client.force_authenticate(self.psy)
         with patch.object(services.OllamaClient, "generate", return_value="Summary."):
@@ -2343,7 +2359,7 @@ from clinical.models import CaseReferral, PsychologicalReport
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd backend && .venv/Scripts/python.exe manage.py test assistant -v 2`
-Expected: PASS (66 tests)
+Expected: PASS — zero failures, zero errors.
 
 - [ ] **Step 6: Commit**
 
@@ -2372,7 +2388,10 @@ git commit -m "Draft a summary of an uploaded document, unconfirmed"
 Append to `backend/assistant/tests/test_summaries.py`:
 
 ```python
-class ConfirmSummaryTest(SummaryTest):
+class ConfirmSummaryTest(SummaryTestBase):
+    """Extends the fixture base, NOT SummaryTest — inheriting its cases would
+    run every summarize test a second time."""
+
     def _draft(self, text="Draft summary."):
         with patch.object(services.OllamaClient, "generate", return_value=text):
             self.client.post(f"/api/assistant/summarize-report/{self.report.id}/")
@@ -2497,7 +2516,7 @@ class ConfirmSummaryView(AssistantBaseView):
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd backend && .venv/Scripts/python.exe manage.py test assistant -v 2`
-Expected: PASS (72 tests)
+Expected: PASS — zero failures, zero errors.
 
 - [ ] **Step 6: Commit**
 
@@ -2771,7 +2790,7 @@ Add `IsAdminOrStaff` to the `accounts.permissions` import in `views.py`.
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd backend && .venv/Scripts/python.exe manage.py test assistant -v 2`
-Expected: PASS (78 tests)
+Expected: PASS — zero failures, zero errors.
 
 - [ ] **Step 6: Commit**
 
@@ -3038,7 +3057,7 @@ from django.db.models import Avg, Count, Q
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd backend && .venv/Scripts/python.exe manage.py test assistant -v 2`
-Expected: PASS (83 tests)
+Expected: PASS — zero failures, zero errors.
 
 - [ ] **Step 6: Commit**
 
@@ -3179,7 +3198,7 @@ In `backend/assistant/urls.py`, import `AssistantCheckView` and add:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd backend && .venv/Scripts/python.exe manage.py test assistant -v 2`
-Expected: PASS (87 tests)
+Expected: PASS — zero failures, zero errors.
 
 - [ ] **Step 5: Extend the API module**
 
