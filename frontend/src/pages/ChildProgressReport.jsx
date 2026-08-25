@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { Card, Button, Badge, Alert, Select, FormField, Icon, iconBtn, PAGE, ConfirmDialog, Modal } from '../ui';
 import { PA_STATUS_TONES } from '../config/caseData';
-import { polishRemark, sendFeedback, getLatestBrief, generateBrief } from '../api/assistant';
+import { polishRemark, sendFeedback, getLatestBrief, generateBrief, summarizeDocument, confirmSummary } from '../api/assistant';
 
 const CASE_STATUS_META = {
   pre_assessment: { label: 'Pre-Assessment', tone: 'amber' },
@@ -41,6 +41,8 @@ export default function ChildProgressReport() {
   const [polishJob, setPolishJob] = useState(null); // { id, draft }
   const [brief, setBrief] = useState(null);   // { draft, generatedAt, jobId }
   const [briefBusy, setBriefBusy] = useState(false);
+  const [summary, setSummary] = useState(null); // { kind, id, text, confirmed }
+  const [summaryBusy, setSummaryBusy] = useState(false);
   const isStaffOrAdmin = ['Administrator', 'Staff'].includes(user?.role_name);
 
   const load = () => api.get(`/reports/child/${id}/`).then((r) => setData(r.data)).catch(() => setData('error'));
@@ -116,6 +118,29 @@ export default function ChildProgressReport() {
         : 'Could not prepare the brief.');
     } finally {
       setBriefBusy(false);
+    }
+  };
+
+  const draftSummary = async (kind, docId) => {
+    setSummaryBusy(true);
+    try {
+      const { draft } = await summarizeDocument(kind, docId);
+      setSummary({ kind, id: docId, text: draft, confirmed: false });
+    } catch (err) {
+      toast.error(err.response?.status === 503
+        ? 'The assistant is unavailable right now.'
+        : err.response?.data?.detail || 'Could not summarise this document.');
+    } finally {
+      setSummaryBusy(false);
+    }
+  };
+
+  const saveSummary = async () => {
+    try {
+      await confirmSummary(summary.kind, summary.id, summary.text);
+      setSummary(null); load(); toast.success('Summary confirmed');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Could not confirm the summary.');
     }
   };
 
@@ -351,6 +376,15 @@ export default function ChildProgressReport() {
                     </div>
                   )}
                 </div>
+                <Button variant="ghost" size="sm" disabled={summaryBusy} className="racco-no-print"
+                        onClick={() => draftSummary('case-referral', f.id)}>
+                  {f.ai_summary ? 'Re-summarise' : 'AI summary'}
+                </Button>
+                {f.ai_summary && (
+                  <Badge tone={f.ai_summary_confirmed ? 'success' : 'amber'} size="sm">
+                    {f.ai_summary_confirmed ? 'Confirmed' : 'Draft (unconfirmed)'}
+                  </Badge>
+                )}
                 <Button variant="ghost" onClick={async () => {
                   try {
                     const res = await api.get(`/case-referrals/${f.id}/download/`, { responseType: 'blob' });
@@ -416,6 +450,15 @@ export default function ChildProgressReport() {
                     </div>
                   )}
                 </div>
+                <Button variant="ghost" size="sm" disabled={summaryBusy} className="racco-no-print"
+                        onClick={() => draftSummary('report', f.id)}>
+                  {f.ai_summary ? 'Re-summarise' : 'AI summary'}
+                </Button>
+                {f.ai_summary && (
+                  <Badge tone={f.ai_summary_confirmed ? 'success' : 'amber'} size="sm">
+                    {f.ai_summary_confirmed ? 'Confirmed' : 'Draft (unconfirmed)'}
+                  </Badge>
+                )}
                 <Button variant="ghost" onClick={() => download(f)} iconLeft={<Icon name="download" size={15} />} className="racco-no-print">Download</Button>
               </div>
             ))}
@@ -614,6 +657,24 @@ export default function ChildProgressReport() {
             </Button>
             <Button variant="primary" onClick={() => { sendFeedback(brief.jobId, 'accepted').catch(() => {}); setBrief(null); }}>
               Useful
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Document summary modal */}
+      {summary && (
+        <Modal open onClose={() => setSummary(null)} title="Document summary" width={620}>
+          <Alert tone="info" disclaimer style={{ marginBottom: 12 }}>
+            AI-drafted decision support, not a diagnosis. Edit freely — confirming
+            makes this your own clinical text.
+          </Alert>
+          <textarea rows={14} style={textarea} value={summary.text}
+                    onChange={(e) => setSummary({ ...summary, text: e.target.value })} />
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+            <Button variant="ghost" onClick={() => setSummary(null)}>Cancel</Button>
+            <Button variant="primary" onClick={saveSummary} disabled={!summary.text.trim()}>
+              Confirm summary
             </Button>
           </div>
         </Modal>

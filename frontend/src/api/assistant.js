@@ -24,3 +24,12 @@ export const generateBrief = (childId) =>
 // must not report that a background convenience did not happen.
 export const prefetchBriefs = () =>
   api.post('/assistant/prefetch-briefs/').catch(() => null);
+
+const SUMMARIZE = { report: 'summarize-report', 'case-referral': 'summarize-case-referral' };
+const CONFIRM = { report: 'confirm-summary', 'case-referral': 'confirm-case-referral-summary' };
+
+export const summarizeDocument = (kind, id) =>
+  api.post(`/assistant/${SUMMARIZE[kind]}/${id}/`).then((r) => r.data);
+
+export const confirmSummary = (kind, id, text) =>
+  api.post(`/assistant/${CONFIRM[kind]}/${id}/`, { text }).then((r) => r.data);
