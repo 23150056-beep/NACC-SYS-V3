@@ -5,7 +5,7 @@ from rest_framework.test import APITestCase
 
 from accounts.models import Role
 from assistant import services
-from assistant.models import AssistantSetting
+from assistant.models import AssistantJob, AssistantSetting
 
 User = get_user_model()
 URL = "/api/assistant/check/"
@@ -35,10 +35,13 @@ class CheckApiTest(APITestCase):
         cfg.enabled = True
         cfg.save()
         self.client.force_authenticate(self.admin)
+        before = AssistantJob.objects.count()
         with patch.object(services.OllamaClient, "generate", return_value="OK"):
             res = self.client.post(URL)
         self.assertTrue(res.data["ok"])
         self.assertIsNotNone(res.data["latency_ms"])
+        # A connection test is not clinical work; it must not skew the usage table.
+        self.assertEqual(AssistantJob.objects.count(), before)
 
     def test_reports_the_error_when_unreachable(self):
         cfg = AssistantSetting.load()

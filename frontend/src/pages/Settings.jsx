@@ -22,21 +22,33 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [check, setCheck] = useState(null);   // { ok, detail }
   const [checking, setChecking] = useState(false);
+  // Runtime URL/model edits stay local until "Save runtime settings" is
+  // pressed. They never live on cfg, so an unrelated switch's save (which
+  // sends the whole cfg as its payload) can never ship a half-typed value.
+  const [draft, setDraft] = useState({ ollama_url: '', model_name: '' });
 
   useEffect(() => {
-    getAssistantSettings().then(setCfg).catch(() => setCfg('error'));
+    getAssistantSettings().then((data) => {
+      setCfg(data);
+      setDraft({ ollama_url: data.ollama_url, model_name: data.model_name });
+    }).catch(() => setCfg('error'));
     getAssistantMetrics().then(setMetrics).catch(() => setMetrics(null));
   }, []);
 
   const save = async (patch) => {
+    const prev = cfg;
     const next = { ...cfg, ...patch };
     setCfg(next);
     setSaving(true);
     try {
-      setCfg(await saveAssistantSettings(next));
+      const saved = await saveAssistantSettings(next);
+      setCfg(saved);
       toast.success('Assistant settings saved');
+      return saved;
     } catch {
+      setCfg(prev);   // the screen must not keep showing a value that never saved
       toast.error('Could not save the assistant settings.');
+      return null;
     } finally {
       setSaving(false);
     }
@@ -75,12 +87,12 @@ export default function Settings() {
                         label={label} />
               ))}
               <FormField label="Runtime URL" hint="The local model runtime. Loopback only.">
-                <Input value={cfg.ollama_url} disabled={saving}
-                       onChange={(e) => setCfg({ ...cfg, ollama_url: e.target.value })} />
+                <Input value={draft.ollama_url} disabled={saving}
+                       onChange={(e) => setDraft({ ...draft, ollama_url: e.target.value })} />
               </FormField>
               <FormField label="Model" hint="Must already be pulled on this machine.">
-                <Input value={cfg.model_name} disabled={saving}
-                       onChange={(e) => setCfg({ ...cfg, model_name: e.target.value })} />
+                <Input value={draft.model_name} disabled={saving}
+                       onChange={(e) => setDraft({ ...draft, model_name: e.target.value })} />
               </FormField>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                 <Button variant="ghost" disabled={checking}
@@ -93,7 +105,15 @@ export default function Settings() {
                   {checking ? 'Checking…' : 'Test connection'}
                 </Button>
                 <Button variant="primary" disabled={saving}
-                        onClick={() => save({})}>Save runtime settings</Button>
+                        onClick={async () => {
+                          const saved = await save({
+                            ollama_url: draft.ollama_url,
+                            model_name: draft.model_name,
+                          });
+                          // Agree with what the server actually stored (it may
+                          // normalize the value); leave the draft alone on failure.
+                          if (saved) setDraft({ ollama_url: saved.ollama_url, model_name: saved.model_name });
+                        }}>Save runtime settings</Button>
               </div>
               {check && (
                 <Alert tone={check.ok ? 'success' : 'warning'}>{check.detail}</Alert>
