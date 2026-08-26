@@ -167,12 +167,43 @@ Settings, no per-feature flags.
   whether the runtime is reachable. Neither runs in the test suite — both need
   a live Ollama. Never claim the output is fine without running `ai_eval`.
 
+## The chatbot
+
+Built 26 Aug 2026. A docked panel on every protected screen, backed by
+`POST /api/assistant/ask/`. Design in
+`docs/superpowers/specs/2026-08-26-assistant-chatbot-design.md`.
+
+- **The model's only output is a tool name and its arguments.** It never sees a
+  result. The server runs the queryset and returns plain data, which the panel
+  renders. That is why a child's name cannot be invented on the way out, and
+  why a turn costs ~2s rather than ~20s.
+- **Scope never comes from the model.** No tool declares a "which children"
+  parameter; `_visible_children(request)` answers that from `request.user`,
+  using the same rule as the clinical viewsets. An invented argument is
+  discarded by the validator before it can reach a queryset.
+- **Stateless — no conversation history.** History would sit after the cached
+  prefix and be re-prefilled at CPU speed every turn.
+- **Concern search matches words, not the whole phrase.** The model says
+  "school refusal"; this agency records "School attendance difficulty".
+  Whole-phrase `icontains` returned **zero children for every real question**
+  and its unit test passed anyway, because the fixture invented text that
+  agreed with the assumption. Write fixtures from what the live database
+  actually contains. When nothing matches, the tool returns the recorded
+  vocabulary rather than an empty list.
+- **Tagalog works.** 55/55 clean over 5 reps x 11 cases, median 2.4s, both
+  registers landing on identical answers. `ai_eval --feature chat` reproduces
+  it, and scores whether the answer was *empty* as well as whether the routing
+  was right — the unmeasured half is the half that broke.
+- **One generation at a time, process-wide.** A question asked while a brief is
+  generating waits for it: measured 1.7s idle, ~19s under that contention.
+  Deliberate — concurrent runs on four cores are slower, not parallel.
+
 ## Before committing or bundling anything
 
 Both of these, every time:
 
 ```
-cd backend && .venv/Scripts/python.exe manage.py test   # 517 tests, ~15 min
+cd backend && .venv/Scripts/python.exe manage.py test   # 582 tests, ~13 min
 cd frontend && npm run lint && npm run build
 ```
 
