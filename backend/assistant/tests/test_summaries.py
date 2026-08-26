@@ -86,6 +86,47 @@ class SummaryTest(SummaryTestBase):
         res = self.client.post(f"/api/assistant/summarize-report/{self.report.id}/")
         self.assertEqual(res.status_code, 503)
 
+    def test_no_history_psychologist_gets_404_for_unauthored_report(self):
+        """Carry-history control: assignee_sees_history=False must stop a
+        document the caller did not author from ever reaching the model."""
+        self.child.assignee_sees_history = False
+        self.child.save()
+        unauthored = PsychologicalReport.objects.create(
+            child=self.child, author=self.other, extracted_text="Someone else's report.")
+        self.client.force_authenticate(self.psy)
+        res = self.client.post(f"/api/assistant/summarize-report/{unauthored.id}/")
+        self.assertEqual(res.status_code, 404)
+        self.assertFalse(AssistantJob.objects.exists())
+
+    def test_no_history_psychologist_gets_404_for_unauthored_referral(self):
+        self.child.assignee_sees_history = False
+        self.child.save()
+        # uploaded_by=self.staff, not self.psy -- same mechanism as the report
+        # case above, exercised through CaseReferral's `uploaded_by` field.
+        other_referral = CaseReferral.objects.create(
+            child=self.child, uploaded_by=self.staff, extracted_text="Another referral.")
+        self.client.force_authenticate(self.psy)
+        res = self.client.post(f"/api/assistant/summarize-case-referral/{other_referral.id}/")
+        self.assertEqual(res.status_code, 404)
+
+    def test_no_history_psychologist_can_still_summarize_their_own_report(self):
+        self.child.assignee_sees_history = False
+        self.child.save()
+        self.client.force_authenticate(self.psy)
+        with patch.object(services.OllamaClient, "generate", return_value="Summary."):
+            res = self.client.post(f"/api/assistant/summarize-report/{self.report.id}/")
+        self.assertEqual(res.status_code, 200)
+
+    def test_history_flag_true_unaffected_for_unauthored_report(self):
+        """assignee_sees_history defaults to True and must stay unaffected."""
+        assert self.child.assignee_sees_history is True
+        unauthored = PsychologicalReport.objects.create(
+            child=self.child, author=self.other, extracted_text="Someone else's report.")
+        self.client.force_authenticate(self.psy)
+        with patch.object(services.OllamaClient, "generate", return_value="Summary."):
+            res = self.client.post(f"/api/assistant/summarize-report/{unauthored.id}/")
+        self.assertEqual(res.status_code, 200)
+
 
 class ConfirmSummaryTest(SummaryTestBase):
     """Extends the fixture base, NOT SummaryTest — inheriting its cases would

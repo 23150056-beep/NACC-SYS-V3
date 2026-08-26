@@ -7,6 +7,7 @@ from accounts.models import Role
 from assistant import services
 from assistant.models import AssistantJob, AssistantSetting
 from children.models import Child
+from clinical.models import RemarkNote
 
 User = get_user_model()
 
@@ -72,8 +73,47 @@ class BriefTest(BriefTestBase):
         self.client.force_authenticate(self.psy)
         self.assertEqual(self.client.post(self._url(self.mine)).status_code, 503)
 
+    def test_no_history_psychologist_brief_excludes_other_authors_remarks(self):
+        """Carry-history control: assignee_sees_history=False must keep the
+        previous psychologist's remarks out of the prompt fed to the model."""
+        self.mine.assignee_sees_history = False
+        self.mine.save()
+        RemarkNote.objects.create(child=self.mine, author=self.other,
+                                  text="OTHER AUTHOR REMARK")
+        RemarkNote.objects.create(child=self.mine, author=self.psy,
+                                  text="MY OWN REMARK")
+        self.client.force_authenticate(self.psy)
+        captured = {}
 
-from datetime import timedelta
+        def fake_generate(prompt, system=None):
+            captured["prompt"] = prompt
+            return "Brief."
+
+        with patch.object(services.OllamaClient, "generate", side_effect=fake_generate):
+            res = self.client.post(self._url(self.mine))
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("MY OWN REMARK", captured["prompt"])
+        self.assertNotIn("OTHER AUTHOR REMARK", captured["prompt"])
+
+    def test_history_flag_true_still_includes_other_authors_remarks(self):
+        """assignee_sees_history defaults to True and must stay unaffected."""
+        assert self.mine.assignee_sees_history is True
+        RemarkNote.objects.create(child=self.mine, author=self.other,
+                                  text="OTHER AUTHOR REMARK")
+        self.client.force_authenticate(self.psy)
+        captured = {}
+
+        def fake_generate(prompt, system=None):
+            captured["prompt"] = prompt
+            return "Brief."
+
+        with patch.object(services.OllamaClient, "generate", side_effect=fake_generate):
+            res = self.client.post(self._url(self.mine))
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("OTHER AUTHOR REMARK", captured["prompt"])
+
+
+from datetime import datetime, time, timedelta
 
 from django.utils import timezone
 
@@ -127,15 +167,25 @@ class LatestBriefTest(BriefTestBase):
         self.assertEqual(self.client.get(self._url(self.mine)).status_code, 200)
 
     def test_returns_newest_when_two_briefs_today(self):
-        """Guards the .first() ordering dependency on AssistantJob.Meta.ordering."""
+        """Guards the .first() ordering dependency on AssistantJob.Meta.ordering.
+
+        Both timestamps are anchored to a fixed mid-day time on today's local
+        date, not offset from now() — offsetting by hours(2) would cross the
+        local date boundary for any run between 00:00 and 02:00, which would
+        make the today-only filter exclude the earlier row and let this test
+        pass with only one row in the queryset (the wrong reason).
+        """
+        today = timezone.localdate()
+        midday = timezone.make_aware(datetime.combine(today, time(12, 0)))
         earlier = AssistantJob.objects.create(
             job_type="brief", input_ref=f"child:{self.mine.id}",
             output_text="earlier brief", ok=True, created_by=self.psy)
-        AssistantJob.objects.filter(pk=earlier.pk).update(
-            created_at=timezone.now() - timedelta(hours=2))
-        AssistantJob.objects.create(
+        AssistantJob.objects.filter(pk=earlier.pk).update(created_at=midday)
+        later = AssistantJob.objects.create(
             job_type="brief", input_ref=f"child:{self.mine.id}",
             output_text="later brief", ok=True, created_by=self.psy)
+        AssistantJob.objects.filter(pk=later.pk).update(
+            created_at=midday + timedelta(hours=2))
         self.client.force_authenticate(self.psy)
         res = self.client.get(self._url(self.mine))
         self.assertEqual(res.status_code, 200)

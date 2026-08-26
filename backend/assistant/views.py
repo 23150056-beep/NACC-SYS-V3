@@ -23,8 +23,21 @@ from scheduling.models import Appointment
 logger = logging.getLogger(__name__)
 
 
+def _role_of(user):
+    return getattr(getattr(user, "role", None), "role_name", None)
+
+
 def _role(request):
-    return getattr(getattr(request.user, "role", None), "role_name", None)
+    return _role_of(request.user)
+
+
+def _brief_only_author(child, user, role):
+    """Author filter for build_brief_prompt(): the carry-history control
+    (Child.assignee_sees_history) is enforced here so a brief can never read
+    a previous psychologist's remarks once that flag hides them elsewhere."""
+    if role == Role.PSYCHOLOGIST and not child.assignee_sees_history:
+        return user
+    return None
 
 
 class AssistantBaseView(generics.GenericAPIView):
@@ -127,9 +140,10 @@ class PreSessionBriefView(AssistantBaseView):
         except Child.DoesNotExist:
             return Response({"detail": "Not found."},
                             status=status.HTTP_404_NOT_FOUND)
+        only_author = _brief_only_author(child, request.user, _role(request))
         draft, job = run_job(
             "brief",
-            prompts.build_brief_prompt(child),
+            prompts.build_brief_prompt(child, only_author=only_author),
             system=prompts.BRIEF_SYSTEM,
             input_ref=f"child:{child.id}",
             user=request.user)
@@ -174,13 +188,15 @@ def _generate_briefs_now(child_ids, user):
     Sequential on purpose: the runtime is CPU-only and concurrent generations
     make every request slower rather than parallel.
     """
+    role = _role_of(user)
     try:
         for child_id in child_ids:
             child = Child.objects.filter(pk=child_id).first()
             if not child:
                 continue
+            only_author = _brief_only_author(child, user, role)
             try:
-                run_job("brief", prompts.build_brief_prompt(child),
+                run_job("brief", prompts.build_brief_prompt(child, only_author=only_author),
                         system=prompts.BRIEF_SYSTEM,
                         input_ref=f"child:{child.id}", user=user)
             except AIUnavailable:
@@ -240,10 +256,10 @@ class PrefetchBriefsView(AssistantBaseView):
         return Response({"queued": queued, "skipped": skipped})
 
 
-# kind -> (model, input_ref prefix, human label for the prompt)
+# kind -> (model, input_ref prefix, human label for the prompt, author field name)
 _DOC_KINDS = {
-    "report": (PsychologicalReport, "report", "psychological report"),
-    "case-referral": (CaseReferral, "casereferral", "case referral"),
+    "report": (PsychologicalReport, "report", "psychological report", "author"),
+    "case-referral": (CaseReferral, "casereferral", "case referral", "uploaded_by"),
 }
 
 
@@ -257,10 +273,17 @@ class DocumentSummaryView(AssistantBaseView):
 
     def post(self, request, doc_id):
         gate("feature_doc_intelligence")
-        model, prefix, label = _DOC_KINDS[self.kind]
+        model, prefix, label, author_field = _DOC_KINDS[self.kind]
         doc = model.objects.filter(
             pk=doc_id, child__in=_visible_children(request)).first()
         if not doc:
+            return Response({"detail": "Not found."},
+                            status=status.HTTP_404_NOT_FOUND)
+        # Carry-history control: without it, a newly assigned psychologist must
+        # not have a document they did not author fed to the model, since the
+        # draft it produces would surface facts this screen otherwise hides.
+        if (_role(request) == Role.PSYCHOLOGIST and not doc.child.assignee_sees_history
+                and getattr(doc, f"{author_field}_id") != request.user.id):
             return Response({"detail": "Not found."},
                             status=status.HTTP_404_NOT_FOUND)
         if not (doc.extracted_text or "").strip():
@@ -290,7 +313,7 @@ class ConfirmSummaryView(AssistantBaseView):
     kind = None
 
     def post(self, request, doc_id):
-        model, prefix, _ = _DOC_KINDS[self.kind]
+        model, prefix, _, _ = _DOC_KINDS[self.kind]
         doc = model.objects.filter(
             pk=doc_id, child__in=_visible_children(request)).first()
         if not doc:

@@ -86,14 +86,21 @@ def child_age(child):
     return str(years)
 
 
-def build_brief_prompt(child):
+def build_brief_prompt(child, *, only_author=None):
+    """`only_author` enforces the carry-history control (Child.assignee_sees_history):
+    when set, only remarks written by that user are ever seen by the model."""
     facts = [
         f"First name: {(child.fullname or '').split(' ')[0]}",
         f"Age: {child_age(child)}",
         f"Gender: {child.gender or 'unspecified'}",
         f"Case status: {child.status or 'unknown'}",
     ]
-    remarks = child.remarks.all()[:5] if child.pk else []
+    remarks = []
+    if child.pk:
+        qs = child.remarks.all()
+        if only_author is not None:
+            qs = qs.filter(author=only_author)
+        remarks = qs[:5]
     if remarks:
         facts.append("Recent remarks (newest first):")
         facts.extend(f"- {r.date}: {r.text}" for r in remarks)

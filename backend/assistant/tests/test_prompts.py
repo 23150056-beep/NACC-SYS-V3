@@ -1,9 +1,14 @@
 from datetime import date
 
+from django.contrib.auth import get_user_model
 from django.test import TestCase
 
+from accounts.models import Role
 from assistant import prompts
 from children.models import Child
+from clinical.models import RemarkNote
+
+User = get_user_model()
 
 
 class ChildAgeTest(TestCase):
@@ -45,6 +50,34 @@ class BriefPromptTest(TestCase):
         self.assertTrue(b.startswith(prompts.BRIEF_INSTRUCTIONS))
         self.assertNotIn("Maria", prompts.BRIEF_INSTRUCTIONS)
         self.assertNotIn("Juan", prompts.BRIEF_INSTRUCTIONS)
+
+
+class BriefPromptOnlyAuthorTest(TestCase):
+    """The carry-history control (Child.assignee_sees_history): when a caller
+    passes only_author, build_brief_prompt must never surface another
+    author's remarks, regardless of what the flag itself is set to."""
+
+    def setUp(self):
+        psy_role = Role.objects.create(role_name=Role.PSYCHOLOGIST)
+        self.psy = User.objects.create_user(
+            email="p@racco1.gov.ph", username="p", password="pass1234", role=psy_role)
+        self.other = User.objects.create_user(
+            email="q@racco1.gov.ph", username="q", password="pass1234", role=psy_role)
+        self.child = Child.objects.create(fullname="Maria Santos")
+        RemarkNote.objects.create(child=self.child, author=self.other,
+                                  text="OTHER AUTHOR REMARK", date=date(2026, 1, 1))
+        RemarkNote.objects.create(child=self.child, author=self.psy,
+                                  text="MY OWN REMARK", date=date(2026, 1, 2))
+
+    def test_only_author_excludes_other_authors_remarks(self):
+        prompt = prompts.build_brief_prompt(self.child, only_author=self.psy)
+        self.assertIn("MY OWN REMARK", prompt)
+        self.assertNotIn("OTHER AUTHOR REMARK", prompt)
+
+    def test_without_only_author_all_remarks_are_visible(self):
+        prompt = prompts.build_brief_prompt(self.child)
+        self.assertIn("MY OWN REMARK", prompt)
+        self.assertIn("OTHER AUTHOR REMARK", prompt)
 
 
 class OtherPromptsTest(TestCase):
