@@ -64,6 +64,29 @@ class _EvalRequest:
         self.user = user
 
 
+FEELING_Q = "How are you feeling this week?"
+WORRY_Q = "Is there anything worrying you?"
+
+# Hand-labelled (question, answer) pairs, every string taken from the live
+# database. The label is a human judgement, not ground truth from the agency.
+# Both columns matter: a detector that flags everything has perfect recall and
+# is worthless, so false alarms are scored too.
+SELF_REPORT_CASES = [
+    ("tl distress", FEELING_Q, "Gusto ko na umuwi. Lagi akong umiiyak sa gabi.", True),
+    ("tl distress", WORRY_Q, "Hindi ko masabi kasi baka magalit sila. Masakit ang dibdib ko.", True),
+    ("tl distress", FEELING_Q, "I feel alone. Ayaw ko na dito, gusto ko na lang matulog.", True),
+    ("mixed distress", WORRY_Q, "Nobody listens to me here. Wala akong makausap.", True),
+    ("ilocano distress", FEELING_Q, "Mabutbuteng. I am scared but I don't tell them.", True),
+    ("ilocano distress", WORRY_Q, "Adda met bassit nga problema but I don't want to say.", True),
+    ("ambiguous", FEELING_Q, "Sometimes I cannot sleep. Naiisip ko yung bahay namin.", True),
+    ("calm control", FEELING_Q, "I feel safe. Ang bait ng nag-aalaga sa akin.", False),
+    ("calm control", FEELING_Q, "Okay lang. I like the food and my bed.", False),
+    ("calm control", FEELING_Q, "Masaya naman ako dito. May kaibigan na ako.", False),
+    ("ilocano calm", FEELING_Q, "Naimbag met. I can sleep at night now.", False),
+    ("calm control", FEELING_Q, "I miss my sister. But the people here are kind.", False),
+]
+
+
 _TAGALOG_HINT = ("naki", "nag-", "ang ", " sa ", " ng ", "mga ", "hindi", "bata")
 
 
@@ -77,7 +100,7 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--feature",
-                            choices=["brief", "polish", "chat", "all"],
+                            choices=["brief", "polish", "chat", "self_report", "all"],
                             default="all")
         parser.add_argument("--reps", type=int, default=2,
                             help="Runs per case; the model is not deterministic.")
@@ -100,6 +123,8 @@ class Command(BaseCommand):
             totals.append(self._polish(options["reps"]))
         if options["feature"] in ("chat", "all"):
             totals.append(self._chat(options["reps"]))
+        if options["feature"] in ("self_report", "all"):
+            totals.append(self._self_report(options["reps"]))
 
         self.stdout.write("\n" + "=" * 62)
         self.stdout.write("SUMMARY")
@@ -249,6 +274,48 @@ class Command(BaseCommand):
         latencies.sort()
         median = latencies[len(latencies) // 2] if latencies else 0
         return ("CHAT", runs, flags, median)
+
+
+    def _self_report(self, reps):
+        """Score the model detector against hand-labelled pairs.
+
+        Reports misses AND false alarms. A detector that flags everything has
+        perfect recall and is worthless, so both columns are printed.
+        """
+        from clinical.self_report_model_check import _parse
+
+        self.stdout.write("\n" + "=" * 62)
+        self.stdout.write(f"SELF-REPORT - {len(SELF_REPORT_CASES)} cases x {reps} reps")
+
+        runs, flags, latencies = 0, {}, []
+        for label, question, answer, expected in SELF_REPORT_CASES:
+            self.stdout.write(f"\n  {label}: {answer[:56]}")
+            for rep in range(1, reps + 1):
+                started = time.monotonic()
+                try:
+                    reply = self.client.generate(
+                        prompts.build_self_report_prompt(question, answer),
+                        system=prompts.SELF_REPORT_SYSTEM)
+                except AIUnavailable as exc:
+                    self.stdout.write(f"    rep{rep}: unavailable - {exc}")
+                    continue
+                ms = int((time.monotonic() - started) * 1000)
+                latencies.append(ms)
+                runs += 1
+
+                got = _parse(reply) is not None
+                found = {}
+                if expected and not got:
+                    found["MISS"] = [answer[:48]]
+                elif got and not expected:
+                    found["false alarm"] = [answer[:48]]
+                for key in found:
+                    flags[key] = flags.get(key, 0) + 1
+                self._report(rep, ms, found, sample=str(reply))
+
+        latencies.sort()
+        median = latencies[len(latencies) // 2] if latencies else 0
+        return ("SELF-REPORT", runs, flags, median)
 
     # -- output -----------------------------------------------------------
 
