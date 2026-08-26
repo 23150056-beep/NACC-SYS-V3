@@ -7,6 +7,7 @@ import { INSTRUMENT_MANAGER_ROLES } from './config/roles';
 import ProtectedRoute from './components/ProtectedRoute';
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
+import AssistantPanel from './components/AssistantPanel';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Children from './pages/Children';
@@ -31,6 +32,9 @@ function Shell({ children }) {
         <Topbar />
         <main className="racco-scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>{children}</main>
       </div>
+      {/* Every protected screen. It is fixed-position, so it sits outside the
+          scrolling main rather than moving with the page. */}
+      <AssistantPanel />
     </div>
   );
 }

@@ -42,3 +42,9 @@ export const getAssistantMetrics = () =>
 
 export const checkAssistant = () =>
   api.post('/assistant/check/').then((r) => r.data);
+
+// The chatbot. Returns { ok, tool, echo, result } — or { ok: false, message }
+// when the model produced something the validator refused. A 503 means the
+// assistant is off or the runtime is down; the panel says so and stays usable.
+export const askAssistant = (question) =>
+  api.post('/assistant/ask/', { question }).then((r) => r.data);
