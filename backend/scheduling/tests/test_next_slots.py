@@ -82,3 +82,33 @@ class NextSlotsTests(APITestCase):
         self.assertNotIn(self.tomorrow.isoformat(), dates)
         next_week = (self.tomorrow + datetime.timedelta(days=7)).isoformat()
         self.assertIn(next_week, dates)
+
+    def test_todays_window_is_dropped_once_its_start_time_has_passed(self):
+        """A slot is booked at its own `start` — both screens fill the booking
+        form straight from it — and the API refuses a start in the past. So a
+        window that has already begun today is a dead end, not an opening."""
+        now = timezone.localtime()
+        if now.hour == 0 and now.minute == 0:
+            self.skipTest("Needs part of today already elapsed.")
+        today = timezone.localdate()
+        AvailabilityBlock.objects.create(
+            psychologist=self.psych, weekday=today.weekday(),
+            start_time=datetime.time(0, 0), end_time=datetime.time(23, 59), capacity=2)
+        r = self.client.get(f"/api/availability/next-slots/?child={self.child.id}")
+        self.assertEqual(r.status_code, 200)
+        todays = [s for s in r.data["slots"] if s["date"] == today.isoformat()]
+        self.assertEqual(todays, [])
+
+    def test_todays_window_is_still_offered_before_it_starts(self):
+        """The guard is about windows that have STARTED, not about today."""
+        now = timezone.localtime()
+        if now.hour >= 22:
+            self.skipTest("No room left in today for a still-future window.")
+        today = timezone.localdate()
+        AvailabilityBlock.objects.create(
+            psychologist=self.psych, weekday=today.weekday(),
+            start_time=datetime.time(now.hour + 1, 0),
+            end_time=datetime.time(23, 59), capacity=2)
+        r = self.client.get(f"/api/availability/next-slots/?child={self.child.id}")
+        dates = [s["date"] for s in r.data["slots"]]
+        self.assertIn(today.isoformat(), dates)

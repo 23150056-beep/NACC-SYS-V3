@@ -86,7 +86,8 @@ class AvailabilityBlockViewSet(viewsets.ModelViewSet):
         if psych is None:
             return Response({"detail": "This child has no assigned psychologist yet."}, status=400)
         blocks = AvailabilityBlock.objects.filter(psychologist=psych, active=True)
-        today = timezone.localdate()
+        now = timezone.localtime()
+        today = now.date()
         slots = []
         for offset in range(0, 14):
             day = today + timedelta(days=offset)
@@ -95,6 +96,13 @@ class AvailabilityBlockViewSet(viewsets.ModelViewSet):
                 if b.date is not None and b.date != day:
                     continue
                 if b.date is None and (b.weekday is None or b.weekday != day.weekday()):
+                    continue
+                # Both screens book at the slot's own start_time, and
+                # AppointmentSerializer.validate_start refuses a start in the
+                # past — so a window that has already begun today is a dead
+                # end, not an opening. Offering it produces a chip that can
+                # only ever answer "Cannot book an appointment in the past."
+                if day == today and b.start_time <= now.time():
                     continue
                 taken = (Appointment.objects
                          .filter(psychologist=psych,
