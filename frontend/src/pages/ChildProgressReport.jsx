@@ -100,10 +100,12 @@ export default function ChildProgressReport() {
       setPolishJob({ id: job_id, draft });
     } catch (err) {
       // 503 means the assistant is off or the runtime is down. That is a normal
-      // state, not an error the psychologist caused.
+      // state, not an error the psychologist caused. A 422 means the draft came
+      // back in the wrong language and was rejected rather than shown — the
+      // server explains why, so surface its message instead of a generic one.
       toast.error(err.response?.status === 503
         ? 'The writing assistant is unavailable right now.'
-        : 'Could not polish the remark.');
+        : err.response?.data?.detail || 'Could not polish the remark.');
     } finally {
       setPolishing(false);
     }

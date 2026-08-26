@@ -12,7 +12,7 @@ from rest_framework.response import Response
 
 from accounts.models import Role
 from accounts.permissions import IsAdministrator, IsAdminOrStaff
-from assistant import prompts
+from assistant import evaluation, prompts
 from assistant.models import AssistantJob, AssistantSetting
 from assistant.serializers import AssistantSettingSerializer
 from assistant.services import AIUnavailable, DISCLAIMER, gate, get_ai_client, run_job
@@ -89,6 +89,26 @@ class RemarkPolishView(AssistantBaseView):
             system=prompts.REMARK_POLISH_SYSTEM,
             input_ref="remark:draft",
             user=request.user)
+
+        # Measured 4/4 against Taglish case notes: asked to rewrite in clear
+        # professional English, the model returned Tagalog instead — once
+        # garbled enough to lose the original meaning entirely. A draft that
+        # drifts is worse than no draft, so it is rejected rather than shown.
+        #
+        # Only polish is guarded this way. A brief legitimately quotes remarks
+        # that are themselves Taglish, so the same check there would reject
+        # correct output.
+        drift = evaluation.language_drift(draft)
+        if drift:
+            job.ok = False
+            job.error = f"rejected: language drift ({', '.join(drift[:4])})"[:255]
+            job.save(update_fields=["ok", "error"])
+            return Response(
+                {"detail": "The draft came back in Tagalog rather than English, "
+                           "so it was not shown. Write the note in your own "
+                           "words, or try again in English."},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
         return Response({"draft": draft, "job_id": job.id,
                          "disclaimer": DISCLAIMER})
 
