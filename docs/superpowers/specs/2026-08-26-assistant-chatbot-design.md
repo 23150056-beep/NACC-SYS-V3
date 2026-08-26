@@ -71,7 +71,7 @@ Four added by this design:
 ```
 question ──▶ POST /api/assistant/ask/   {"question": "who needs follow-up?"}
                   │
-                  ├─ gate("feature_chat")           503 when off or unreachable
+                  ├─ gate()                         503 when off or unreachable
                   ├─ length check (<=150 chars)     400 otherwise
                   ├─ run_job("chat", ...)           model returns ONLY a tool call
                   ├─ validate(tool, args)           normalize · coerce · alias · reject
@@ -281,9 +281,12 @@ notices.
 
 ## Migrations
 
-One migration: `AssistantSetting.feature_chat` (BooleanField, default `True`,
-gated by the master switch as every other feature is), and `"chat"` added to
-`AssistantJob.TYPE_CHOICES`.
+One migration, and it is smaller than this spec first assumed. The per-feature
+flags were removed on 26 Aug 2026 when the assistant became on-by-default, so
+there is no `feature_chat` to add and `gate()` now takes no argument — the
+chatbot sits behind the same single administrator switch as everything else.
+
+The migration adds `"chat"` to `AssistantJob.TYPE_CHOICES`. That is all.
 
 ## Non-goals
 
