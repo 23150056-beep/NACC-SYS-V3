@@ -121,3 +121,34 @@ def build_summary_prompt(extracted_text, kind):
 def build_census_prompt(figures):
     lines = [f"{key}: {value}" for key, value in sorted(figures.items())]
     return CENSUS_INSTRUCTIONS + "\n".join(lines)
+
+
+# --- chatbot --------------------------------------------------------------
+# One static block, byte-identical on every call, so the runtime's prefix cache
+# stays warm — the question is the only thing that varies and it goes last.
+#
+# Each tool carries its own description; what belongs here is the framing and
+# the examples. The examples are worth 9 points of measured accuracy and cost
+# nothing at runtime once the prefix is cached. Half of them are Tagalog or
+# Taglish, which is how the notes are actually written.
+
+CHAT_SYSTEM = """You are the assistant inside NACC SYS, a child psychological \
+assessment system used by a child protection agency in the Philippines. The \
+signed-in user is a psychologist who may write in English, Tagalog, or a mix \
+of both. Every tool is already scoped to what this user may see - never ask \
+about permissions or ownership. Call exactly one tool.
+
+Examples:
+  "What have I got on Friday?"        -> list_my_appointments(when="this_week")
+  "Who am I seeing tomorrow?"         -> list_my_appointments(when="tomorrow")
+  "Ano ang schedule ko bukas?"        -> list_my_appointments(when="tomorrow")
+  "How many kids am I handling?"      -> count_my_children(status="active")
+  "Ilan ang mga bata ko?"             -> count_my_children(status="active")
+  "Any children with sleep problems?" -> search_children_by_concern(concern="sleep problems")
+  "Tell me about Ana Reyes"           -> get_child_summary(name="Ana Reyes")
+  "Sino si Ana Reyes?"                -> get_child_summary(name="Ana Reyes")
+  "Who still needs a report?"         -> list_care_gaps()
+  "Sino ang kailangan ng follow-up?"  -> list_care_gaps()
+  "Good morning!"                     -> answer_directly(reason="greeting_or_closing")
+"""
+

@@ -118,10 +118,26 @@ evaluation run, not a hunch.
 ### What `search_children_by_concern` actually searches
 
 Presenting concerns live in `ProblemEntry` (`clinical/models.py:342`) —
-`description` (free text) and `category`. The resolver matches
-`description__icontains` OR `category__icontains` against
+`description` (free text) and `category`. The resolver matches against
 `ProblemEntry.objects.filter(child__in=_visible_children(request),
-resolved=False)`, and returns the distinct children.
+resolved=False)` and returns the distinct children.
+
+**It matches on words, not on the whole phrase.** The search term is split
+into words of four characters or more, each reduced to its singular form, and
+a child matches if *any* of those words appears in `description` or
+`category`. This is what lets the model's clinical vocabulary reach the
+agency's: "school refusal" finds "School attendance difficulty" through the
+word they share. Whole-phrase matching returned zero for every real question
+tried against live data — see Language below for the measurements.
+
+Short words are dropped deliberately: "of" and "the" occur in so many records
+that matching them would return the entire caseload as a false hit.
+
+**When nothing matches, it returns the vocabulary instead.** The response
+carries `available` — the distinct open-problem descriptions in the caller's
+own scope — so an unrecognised term produces a menu rather than a dead end.
+That list is scoped like every other result and never shows a concern recorded
+only against another psychologist's child.
 
 **Open problems only.** A resolved problem is history, and a psychologist asking
 "who has school refusal" means who has it now.
@@ -207,7 +223,9 @@ active children · concern: school refusal."* This is the mitigation for the one
 failure the spike could not eliminate — a silently dropped filter producing a
 plausible wrong answer. If the model misheard, the user sees it.
 
-Past answers remain on screen. The panel states **"English only"** (see below).
+Past answers remain on screen. The panel says **nothing about language** —
+users write however they write, and both registers are measured to work (see
+Language below).
 
 ## Language
 
@@ -226,11 +244,49 @@ The earlier pessimism came from a single sentence tested four times under naive
 schemas. With the hardened descriptions and the alias table, routing did not
 fail once in either register.
 
-**The model translates concerns by itself.** The case this spec called
-unwinnable — *"Hanapin mo yung mga batang ayaw pumasok sa eskwela"* — resolved
-to `search_children_by_concern(concern="school refusal")`, twice. It produced
-the English clinical term the database actually stores. **No concern
-vocabulary map is needed**, and building one would have been wasted work.
+**The model translates concerns by itself — but into its own vocabulary, not
+the agency's.** The case this spec called unwinnable — *"Hanapin mo yung mga
+batang ayaw pumasok sa eskwela"* — resolved to
+`search_children_by_concern(concern="school refusal")`, and it does so
+consistently over HTTP against the running system.
+
+An earlier draft of this section claimed the model "produced the English
+clinical term the database actually stores." That was false, and it hid a
+defect for a day. This agency records **"School attendance difficulty"**.
+Searching the whole phrase `school refusal` as a substring returned **zero
+children** — exactly as zero as the untranslated Tagalog did. The translation
+was never the problem; the matching was. A confident empty answer is the worst
+failure this tool has, because it reads as "no such children" rather than "I
+did not understand."
+
+The claim survived because the unit test invented its own fixture text
+("School refusal since June") and so agreed with the assumption instead of
+checking it. The resolver tests now use the vocabulary the live database
+actually contains, and the fixture comment says why.
+
+**The fix is token matching, not a vocabulary map.** The search matches on any
+significant word (4+ characters, singular form included), so "school refusal"
+reaches "School attendance difficulty" through the word they share, and
+"emotions" reaches "Difficulty expressing emotion". Measured live:
+
+| Question | Before | After |
+|---|---|---|
+| "Any children with school refusal?" | 0 | 3 |
+| *"Sino ang mga bata na ayaw pumasok sa eskwela?"* | 0 | 3 |
+| "Who has trouble sleeping?" | 0 | 2 |
+| *"May mga bata bang may problema sa pagtulog?"* | 0 | 2 |
+
+Both registers now land on identical answers.
+
+**When nothing matches, the tool answers with the vocabulary it does hold.**
+The recorded concerns in the caller's own scope are returned instead of an
+empty list, so an unrecognised term becomes a menu rather than a dead end —
+which is also what catches a Tagalog phrase the model happens not to
+translate. The list is scoped like everything else: it never shows a concern
+recorded only against another psychologist's child.
+
+A hand-maintained alias map is still not needed, and would still have been
+wasted work — but for a different reason than this spec first gave.
 
 The alias table still earns its place for enum values the model passes through
 untranslated (`bukas → tomorrow`, `ngayon → today`, `aktibo → active`).

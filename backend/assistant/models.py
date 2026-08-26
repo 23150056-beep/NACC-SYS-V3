@@ -45,6 +45,7 @@ class AssistantJob(models.Model):
         ("doc_intelligence", "Document Summary"),
         ("remark_polish", "Remark Polishing"),
         ("census_narrative", "Census Narrative"),
+        ("chat", "Chatbot Question"),
     ]
 
     PENDING, ACCEPTED, EDITED, DISCARDED = "pending", "accepted", "edited", "discarded"

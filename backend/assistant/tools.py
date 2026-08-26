@@ -102,36 +102,166 @@ def validate(tool, raw_args):
 
 
 # --- resolvers ------------------------------------------------------------
-# Each takes (request, args) and returns a plain dict the frontend renders.
-# They are thin on purpose: the querysets and the scoping already exist.
+# Each takes (request, validated args) and returns a plain dict the frontend
+# renders. The model never sees any of this — which is precisely why a
+# hallucinated child name is impossible here: names come out of the database.
+#
+# Scope is taken from request.user through the same helper the rest of the app
+# uses. No resolver reads scope from the model's arguments.
+
+_WINDOWS = {"today": (0, 1), "tomorrow": (1, 2),
+            "this_week": (0, 7), "next_week": (7, 14)}
+
+DIRECT_REPLY = ("I can answer questions about your schedule, your children, "
+                "and who needs follow-up. I can't answer anything else.")
+
+
+def _scope(request):
+    from assistant.views import _visible_children      # local: avoids a cycle
+    return _visible_children(request)
+
 
 def _resolve_appointments(request, args):
-    from assistant.views import _visible_children          # local: avoids a cycle
-    return {"when": args["when"], "children": _visible_children(request)}
+    from django.utils import timezone
+    from datetime import timedelta
+    from scheduling.models import Appointment
+
+    offset, span = _WINDOWS[args["when"]]
+    today = timezone.localdate()
+    start, end = today + timedelta(days=offset), today + timedelta(days=offset + span - offset if span else 1)
+    end = today + timedelta(days=span)
+    appts = (Appointment.objects
+             .filter(psychologist=request.user, status=Appointment.SCHEDULED,
+                     start__date__gte=start, start__date__lt=end)
+             .select_related("child").order_by("start"))
+    return {"kind": "appointments", "when": args["when"], "items": [
+        {"child": a.child.fullname, "when": timezone.localtime(a.start).strftime("%a %d %b, %H:%M"),
+         "purpose": a.get_purpose_display()} for a in appts]}
 
 
 def _resolve_count(request, args):
-    from assistant.views import _visible_children
-    return {"status": args["status"], "children": _visible_children(request)}
+    from children.models import Child
+    qs = _scope(request)
+    if args["status"] == "active":
+        qs = qs.filter(status=Child.ACTIVE)
+    elif args["status"] == "terminated":
+        qs = qs.exclude(status=Child.ACTIVE)
+    return {"kind": "count", "status": args["status"], "count": qs.count()}
+
+
+def _singular(word):
+    """"emotions" -> "emotion", "difficulties" -> "difficulty".
+
+    icontains only looks one way: a record reading "expressing emotion" does
+    not contain "emotions", so the plural the user typed has to be reduced
+    before it is matched. Observed live on exactly that question.
+    """
+    if word.endswith("ies") and len(word) > 4:
+        return word[:-3] + "y"
+    if word.endswith("s") and not word.endswith("ss") and len(word) > 4:
+        return word[:-1]
+    return word
+
+
+def _search_words(term):
+    """Words worth matching on, singular forms included.
+
+    Short words are dropped: "of" and "the" appear inside so many records that
+    matching them would return the whole caseload as a false hit.
+    """
+    words = {w for w in re.findall(r"[\w']+", term.lower()) if len(w) >= 4}
+    return sorted(words | {_singular(w) for w in words})
 
 
 def _resolve_concern(request, args):
-    from assistant.views import _visible_children
-    return {"concern": args["concern"], "children": _visible_children(request)}
+    """Match on shared words, not on the whole phrase.
+
+    Measured against live data: the model says "school refusal"; this agency
+    records "School attendance difficulty". An exact substring search connects
+    those never — it returned zero for the English term as readily as for the
+    Tagalog one, and a confident empty answer is the worst kind.
+
+    Matching any significant word bridges the two vocabularies. When nothing
+    matches at all, the recorded concerns are returned instead, so a dead end
+    becomes something the user can act on — which is also what catches a
+    Tagalog phrase the model did not translate.
+    """
+    from django.db.models import Q
+    from clinical.models import ProblemEntry
+
+    term = args["concern"]
+    open_problems = (ProblemEntry.objects
+                     .filter(child__in=_scope(request), resolved=False)
+                     .select_related("child"))
+
+    hits = []
+    query = Q()
+    for word in _search_words(term):
+        query |= Q(description__icontains=word) | Q(category__icontains=word)
+    if query:
+        hits = list(open_problems.filter(query))
+
+    # Names, never the problem text: ProblemEntry is one of the two models the
+    # carry-history block does not filter, and returning descriptions would
+    # walk straight into that gap.
+    seen, items = set(), []
+    for p in hits:
+        if p.child_id not in seen:
+            seen.add(p.child_id)
+            items.append({"id": p.child_id, "name": p.child.fullname})
+
+    out = {"kind": "children", "concern": term, "items": items}
+    if not items:
+        out["available"] = sorted(
+            {p.description for p in open_problems if p.description})[:12]
+    return out
 
 
 def _resolve_summary(request, args):
-    from assistant.views import _visible_children
-    return {"name": args["name"], "children": _visible_children(request)}
+    from assistant.views import _brief_only_author, _role
+    from clinical.care_gaps import compute_alerts
+    from children.models import Child
+
+    matches = list(_scope(request).filter(fullname__icontains=args["name"])[:6])
+    if not matches:
+        return {"kind": "summary", "match": "none", "name": args["name"]}
+    if len(matches) > 1:
+        return {"kind": "summary", "match": "several", "name": args["name"],
+                "items": [{"id": c.id, "name": c.fullname} for c in matches]}
+
+    child = matches[0]
+    remarks = child.remarks.select_related("author")
+    only = _brief_only_author(child, request.user, _role(request))
+    if only is not None:
+        remarks = remarks.filter(author=only)
+    gaps = compute_alerts(Child.objects.filter(pk=child.pk))
+    return {"kind": "summary", "match": "one", "child": {
+        "id": child.id, "name": child.fullname, "status": child.status,
+        "psychologist": getattr(child.assigned_psychologist, "fullname", None)},
+        "remarks": [{"date": str(r.date), "text": r.text} for r in remarks[:5]],
+        "gaps": [a.get("type") for a in gaps]}
 
 
 def _resolve_care_gaps(request, args):
-    from assistant.views import _visible_children
-    return {"children": _visible_children(request)}
+    """Reuses the same alerts the Monitoring screen shows, so the chatbot can
+    never disagree with the table the user is looking at.
+
+    `message` is carried through rather than `type`: the type is a slug
+    ("consent_missing") that means nothing to a psychologist, while the message
+    is the sentence the screen already shows them.
+    """
+    from clinical.care_gaps import compute_alerts
+    alerts = compute_alerts(_scope(request))
+    return {"kind": "care_gaps", "items": [
+        {"child": a.get("child_name") or a.get("child"),
+         "type": a.get("type"), "message": a.get("message"),
+         "severity": a.get("severity")}
+        for a in alerts]}
 
 
 def _resolve_direct(request, args):
-    return {"reason": args.get("reason", "unsupported")}
+    return {"kind": "message", "reason": args.get("reason", "unsupported"),
+            "text": DIRECT_REPLY}
 
 
 REGISTRY = {
@@ -194,3 +324,26 @@ REGISTRY = {
         "resolve": _resolve_direct,
     },
 }
+
+
+def ollama_payload():
+    """The tools array for /api/chat, derived from REGISTRY.
+
+    Built rather than hand-written so a tool cannot be added to one and
+    forgotten in the other.
+    """
+    out = []
+    for name, spec in REGISTRY.items():
+        props, required = {}, []
+        for param, meta in spec["schema"].items():
+            prop = {"type": "string"}
+            if "enum" in meta:
+                prop["enum"] = meta["enum"]
+            props[param] = prop
+            if meta.get("required"):
+                required.append(param)
+        out.append({"type": "function", "function": {
+            "name": name, "description": spec["description"],
+            "parameters": {"type": "object", "properties": props,
+                           "required": required}}})
+    return out

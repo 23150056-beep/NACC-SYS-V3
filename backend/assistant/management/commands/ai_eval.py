@@ -13,9 +13,10 @@ import time
 
 from django.core.management.base import BaseCommand
 
-from assistant import evaluation, prompts
+from assistant import evaluation, prompts, tools
 from assistant.models import AssistantSetting
 from assistant.services import AIUnavailable, get_ai_client
+from accounts.models import Role
 from children.models import Child
 
 # Fixed polish inputs: Taglish as the notes are actually written, heavy Tagalog,
@@ -30,6 +31,39 @@ POLISH_CASES = [
      "Settling in well. Mixing with the other children during recreation."),
 ]
 
+
+# Chat cases, in both registers. `expect_hits` is the column that matters: a
+# question that routes perfectly and then returns nothing is the failure this
+# eval exists to catch. Searching the phrase "school refusal" as a substring
+# scored 100% on routing and 0% on answers for a full day, because nothing
+# measured the second half.
+CHAT_CASES = [
+    ("appointments en", "Who am I seeing tomorrow?", "list_my_appointments", False),
+    ("appointments tl", "Sino ang makikita ko bukas?", "list_my_appointments", False),
+    ("count en", "How many children am I handling?", "count_my_children", True),
+    ("count tl", "Ilan ang mga bata ko?", "count_my_children", True),
+    ("concern en", "Any children with school refusal?",
+     "search_children_by_concern", True),
+    ("concern tl", "Sino ang mga bata na ayaw pumasok sa eskwela?",
+     "search_children_by_concern", True),
+    ("concern sleep", "Who has trouble sleeping?",
+     "search_children_by_concern", True),
+    ("concern plural", "Any kids struggling with emotions?",
+     "search_children_by_concern", True),
+    ("gaps en", "Who still needs a follow-up?", "list_care_gaps", False),
+    ("gaps tl", "Sino ang kailangan ng follow-up?", "list_care_gaps", False),
+    ("chitchat", "Good morning!", "answer_directly", False),
+]
+
+
+class _EvalRequest:
+    """The two attributes the scope helper reads. A management command has no
+    real request, and scope must still come from a user rather than a flag."""
+
+    def __init__(self, user):
+        self.user = user
+
+
 _TAGALOG_HINT = ("naki", "nag-", "ang ", " sa ", " ng ", "mga ", "hindi", "bata")
 
 
@@ -42,7 +76,8 @@ class Command(BaseCommand):
     help = "Evaluate the assistant's drafting output against real records."
 
     def add_arguments(self, parser):
-        parser.add_argument("--feature", choices=["brief", "polish", "all"],
+        parser.add_argument("--feature",
+                            choices=["brief", "polish", "chat", "all"],
                             default="all")
         parser.add_argument("--reps", type=int, default=2,
                             help="Runs per case; the model is not deterministic.")
@@ -63,6 +98,8 @@ class Command(BaseCommand):
             totals.append(self._briefs(options["reps"], options["limit"]))
         if options["feature"] in ("polish", "all"):
             totals.append(self._polish(options["reps"]))
+        if options["feature"] in ("chat", "all"):
+            totals.append(self._chat(options["reps"]))
 
         self.stdout.write("\n" + "=" * 62)
         self.stdout.write("SUMMARY")
@@ -156,6 +193,62 @@ class Command(BaseCommand):
                 self._report(rep, ms, flags, sample=text, text=text)
 
         return ("REMARK POLISH", runs, counts, self._median(latencies))
+
+
+    def _chat(self, reps):
+        """Route a question, validate it, and run the resolver for real.
+
+        The resolver runs against the live database under a real psychologist's
+        scope, so "found nothing" is measured rather than assumed.
+        """
+        user = (Child.objects.exclude(assigned_psychologist=None)
+                .values_list("assigned_psychologist", flat=True).first())
+        if user is None:
+            self.stdout.write("\nCHAT — no psychologist has a caseload; skipped.")
+            return ("chat", 0, {}, 0)
+        from django.contrib.auth import get_user_model
+        request = _EvalRequest(get_user_model().objects.get(pk=user))
+
+        self.stdout.write("\n" + "=" * 62)
+        self.stdout.write(f"CHAT — {len(CHAT_CASES)} cases x {reps} reps")
+        self.stdout.write(f"Caller: {request.user.email}")
+
+        runs, flags, latencies = 0, {}, []
+        payload = tools.ollama_payload()
+        for label, question, expected, expect_hits in CHAT_CASES:
+            self.stdout.write(f"\n  {label}: {question}")
+            for rep in range(1, reps + 1):
+                started = time.monotonic()
+                try:
+                    tool, raw = self.client.choose_tool(
+                        question, payload, prompts.CHAT_SYSTEM)
+                except AIUnavailable as exc:
+                    self.stdout.write(f"    rep{rep}: unavailable — {exc}")
+                    continue
+                ms = int((time.monotonic() - started) * 1000)
+                latencies.append(ms)
+                runs += 1
+
+                found = {}
+                if tool != expected:
+                    found["wrong tool"] = [f"{tool or 'prose'} != {expected}"]
+                call = tools.validate(tool or "answer_directly", raw)
+                if not call.ok:
+                    found["rejected"] = [call.error]
+                elif expect_hits:
+                    result = tools.REGISTRY[call.tool]["resolve"](request, call.args)
+                    n = result.get("count", len(result.get("items", [])))
+                    if not n:
+                        # The silent failure: a confident empty answer.
+                        found["empty answer"] = [f"{call.args or 'no args'}"]
+                for key, items in found.items():
+                    flags.setdefault(key, 0)
+                    flags[key] += 1
+                self._report(rep, ms, {k: v for k, v in found.items()})
+
+        latencies.sort()
+        median = latencies[len(latencies) // 2] if latencies else 0
+        return ("CHAT", runs, flags, median)
 
     # -- output -----------------------------------------------------------
 

@@ -41,6 +41,9 @@ class NullClient:
     def generate(self, prompt, system=None):
         raise AIUnavailable("The assistant is switched off.")
 
+    def choose_tool(self, question, tool_payload, system=None):
+        raise AIUnavailable("The assistant is switched off.")
+
 
 class OllamaClient:
     available = True
@@ -68,6 +71,40 @@ class OllamaClient:
                 UnicodeDecodeError) as exc:
             raise AIUnavailable(f"Local AI runtime unreachable: {exc}") from exc
         return (data.get("response") or "").strip()
+
+    def choose_tool(self, question, tool_payload, system=None):
+        """Ask the model to pick one tool. Returns (name, raw_args).
+
+        A different endpoint from generate(): tool calling needs /api/chat.
+        Same rule about options — none are sent, because each distinct set
+        makes the runtime evict and reload the model.
+        """
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": question})
+        payload = {"model": self.model, "messages": messages,
+                   "tools": tool_payload, "stream": False}
+        req = urllib.request.Request(
+            f"{self.base_url}/api/chat",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                data = json.loads(resp.read().decode())
+        except (urllib.error.URLError, TimeoutError, OSError,
+                json.JSONDecodeError, http.client.HTTPException,
+                UnicodeDecodeError) as exc:
+            raise AIUnavailable(f"Local AI runtime unreachable: {exc}") from exc
+
+        calls = (data.get("message") or {}).get("tool_calls") or []
+        if not calls:
+            # Prose instead of a tool call. Not an error — the caller treats it
+            # as "nothing I can do", which is a real answer.
+            return None, {}
+        fn = calls[0].get("function") or {}
+        return fn.get("name"), fn.get("arguments") or {}
 
 
 def get_ai_client():
@@ -134,3 +171,13 @@ def run_job(job_type, prompt, *, system=None, input_ref="", user=None):
         latency_ms=int((time.monotonic() - started) * 1000),
         created_by=creator)
     return text, job
+
+
+def services_lock():
+    """The generation lock, for callers that talk to the client directly.
+
+    One generation at a time regardless of which endpoint asked: on four CPU
+    cores concurrent runs are slower rather than parallel, and each parallel
+    slot multiplies the KV cache against very little free RAM.
+    """
+    return _GENERATION_LOCK

@@ -12,10 +12,11 @@ from rest_framework.response import Response
 
 from accounts.models import Role
 from accounts.permissions import IsAdministrator, IsAdminOrStaff
-from assistant import evaluation, prompts
+from assistant import evaluation, prompts, tools
 from assistant.models import AssistantJob, AssistantSetting
 from assistant.serializers import AssistantSettingSerializer
-from assistant.services import AIUnavailable, DISCLAIMER, gate, get_ai_client, run_job
+from assistant.services import (AIUnavailable, DISCLAIMER, gate, get_ai_client,
+                                run_job, services_lock)
 from children.models import Child
 from clinical.models import CaseReferral, PsychologicalReport
 from scheduling.models import Appointment
@@ -453,3 +454,72 @@ class AssistantCheckView(AssistantBaseView):
         elapsed = int((time.monotonic() - started) * 1000)
         return Response({"ok": True, "latency_ms": elapsed,
                          "detail": f"{cfg.model_name} answered in {elapsed} ms."})
+
+
+MAX_QUESTION = 150          # AssistantJob.input_ref is max_length=150, so a
+                            # valid question always fits the audit row whole.
+
+
+class AssistantAskView(AssistantBaseView):
+    """The chatbot. A question in; a validated tool call and its result out.
+
+    The model's entire output is a tool name and arguments — it never sees what
+    comes back. Results go from the database to the response, so a turn costs
+    seconds rather than tens of seconds and a child's name cannot be invented
+    on the way out.
+
+    Stateless: no history is sent. It would sit after the cached prefix and be
+    re-prefilled at CPU speed every turn.
+    """
+
+    def post(self, request):
+        gate()
+        question = request.data.get("question")
+        if not isinstance(question, str) or not question.strip():
+            return Response({"detail": "Ask a question first."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        question = question.strip()
+        if len(question) > MAX_QUESTION:
+            return Response(
+                {"detail": f"Keep the question under {MAX_QUESTION} characters."},
+                status=status.HTTP_400_BAD_REQUEST)
+
+        client = get_ai_client()
+        creator = request.user if request.user.is_authenticated else None
+        started = time.monotonic()
+        try:
+            with services_lock():
+                name, raw_args = client.choose_tool(
+                    question, tools.ollama_payload(), system=prompts.CHAT_SYSTEM)
+        except AIUnavailable as exc:
+            AssistantJob.objects.create(
+                job_type="chat", input_ref=question[:150], ok=False,
+                error=str(exc)[:255], model_used=getattr(client, "model", ""),
+                latency_ms=int((time.monotonic() - started) * 1000),
+                created_by=creator)
+            raise
+
+        # Prose instead of a tool call is not an error — it means nothing here
+        # fits, which is a real answer.
+        if not name:
+            name, raw_args = "answer_directly", {"reason": "unsupported"}
+
+        call = tools.validate(name, raw_args)
+        AssistantJob.objects.create(
+            job_type="chat", input_ref=question[:150],
+            output_text=f"{call.tool}({call.args})"[:2000],
+            model_used=client.model, ok=call.ok, error=call.error[:255],
+            latency_ms=int((time.monotonic() - started) * 1000),
+            created_by=creator)
+
+        if not call.ok:
+            # Never guess. Say what happened and what it can do instead.
+            return Response({
+                "ok": False, "tool": call.tool,
+                "message": "I didn't follow that. I can look up your schedule, "
+                           "your children, or who needs follow-up.",
+                "detail": call.error})
+
+        result = tools.REGISTRY[call.tool]["resolve"](request, call.args)
+        return Response({"ok": True, "tool": call.tool, "echo": call.echo,
+                         "result": result})
