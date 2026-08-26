@@ -5,7 +5,7 @@ from clinical.models import (
     InstrumentCatalog, AgencyFormTemplate, ConsentRecord,
     ClinicalInterviewRecord, ProblemEntry, PreAssessment,
     PsychologicalReport, RemarkNote, TreatmentPlan, ResultEntry, CaseReferral,
-    OpinionnaireInvite,
+    OpinionnaireInvite, SelfReportFlag,
 )
 
 ALLOWED_REPORT_EXTENSIONS = ("pdf", "doc", "docx")
@@ -250,3 +250,19 @@ class ProblemEntrySerializer(serializers.ModelSerializer):
         fields = ["id", "child", "child_name", "description", "category",
                   "identified_on", "resolved", "logged_by", "logged_by_name", "created_at"]
         read_only_fields = ["logged_by"]
+
+
+class SelfReportFlagSerializer(serializers.ModelSerializer):
+    """A child's own words, flagged as worth reading. Read-only: a flag is
+    created by a detector and closed by an acknowledgement, never edited."""
+    is_reviewed = serializers.BooleanField(read_only=True)
+    child_name = serializers.CharField(source="child.fullname", read_only=True)
+    reviewed_by_name = serializers.CharField(
+        source="reviewed_by.fullname", read_only=True, default=None)
+
+    class Meta:
+        model = SelfReportFlag
+        fields = ["id", "child", "child_name", "invite", "question", "answer",
+                  "source", "matched", "created_at", "is_reviewed",
+                  "reviewed_at", "reviewed_by_name", "review_note"]
+        read_only_fields = fields

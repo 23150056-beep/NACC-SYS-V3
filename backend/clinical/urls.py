@@ -6,6 +6,7 @@ from clinical.views import (
     PreAssessmentViewSet, PsychologicalReportViewSet, RemarkNoteViewSet,
     TreatmentPlanViewSet, ResultEntryViewSet, CaseReferralViewSet,
     OpinionnaireInviteViewSet, PublicOpinionnaireView,
+    SelfReportFlagViewSet,
 )
 from clinical.reports_views import (
     ChildReportView, MonitoringListView, SummaryReportView, DashboardView,
@@ -25,6 +26,7 @@ router.register("result-entries", ResultEntryViewSet, basename="result-entry")
 router.register("case-referrals", CaseReferralViewSet, basename="case-referral")
 router.register("opinionnaire-invites", OpinionnaireInviteViewSet, basename="opinionnaire-invite")
 router.register("opinionnaire", PublicOpinionnaireView, basename="opinionnaire-public")
+router.register("self-report-flags", SelfReportFlagViewSet, basename="self-report-flag")
 
 urlpatterns = router.urls + [
     path("reports/child/<int:child_id>/", ChildReportView.as_view(), name="report-child"),

@@ -18,6 +18,7 @@ from clinical.serializers import (
     PreAssessmentSerializer, ResultEntrySerializer, RemarkNoteSerializer,
     TreatmentPlanSerializer, PsychologicalReportSerializer, ProblemEntrySerializer,
     CaseReferralSerializer, OpinionnaireInviteSerializer, ClinicalInterviewRecordSerializer,
+    SelfReportFlagSerializer,
 )
 
 
@@ -48,9 +49,15 @@ class ChildReportView(generics.GenericAPIView):
         case_referrals = child.case_referrals.select_related("uploaded_by")
         opinionnaires = child.opinionnaire_invites.select_related("template")
         interviews = child.clinical_interviews.select_related("template", "interviewer")
+        self_report_flags = child.self_report_flags.select_related("reviewed_by")
 
         # Carry-history control: a newly assigned psychologist without history
         # sees only records they authored themselves.
+        #
+        # self_report_flags is deliberately absent from this block. Self-reports
+        # are the child's own words, not a colleague's prior opinions, and the
+        # person responsible for her now must see them. The omission is a
+        # decision, not an oversight.
         if role == Role.PSYCHOLOGIST and not child.assignee_sees_history:
             pas = pas.filter(psychologist=request.user)
             results = results.filter(entered_by=request.user)
@@ -70,6 +77,7 @@ class ChildReportView(generics.GenericAPIView):
             "problems": ProblemEntrySerializer(problems, many=True).data,
             "case_referrals": CaseReferralSerializer(case_referrals, many=True).data,
             "opinionnaires": OpinionnaireInviteSerializer(opinionnaires, many=True).data,
+            "self_report_flags": SelfReportFlagSerializer(self_report_flags, many=True).data,
         })
 
 

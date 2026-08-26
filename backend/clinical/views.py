@@ -1,7 +1,8 @@
 import logging
 
 from django.db.models import Q
-from rest_framework import viewsets, status
+from django.utils import timezone
+from rest_framework import viewsets, status, mixins, permissions
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
@@ -24,7 +25,7 @@ from clinical.serializers import (
     ProblemEntrySerializer, PreAssessmentSerializer,
     PsychologicalReportSerializer, RemarkNoteSerializer,
     TreatmentPlanSerializer, ResultEntrySerializer, CaseReferralSerializer,
-    OpinionnaireInviteSerializer,
+    OpinionnaireInviteSerializer, SelfReportFlagSerializer,
 )
 from clinical.self_report_detection import detect_concerns
 from clinical.self_report_model_check import start_model_check
@@ -535,3 +536,44 @@ class PublicOpinionnaireView(viewsets.ViewSet):
             logger.exception("Self-report model check could not start")
 
         return Response({"status": "submitted"})
+
+
+class SelfReportFlagViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    """A child's own words, flagged as worth reading.
+
+    Deliberately NOT a `_ChildScopedClinicalViewSet`: self-reports are exempt
+    from the carry-history control. That control spares a newly assigned
+    psychologist a colleague's prior opinions; it must not hide the child from
+    the person now responsible for her.
+    """
+    serializer_class = SelfReportFlagSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+
+    def get_queryset(self):
+        qs = (SelfReportFlag.objects
+              .select_related("child", "reviewed_by").order_by("-created_at"))
+        child_id = self.request.query_params.get("child")
+        if child_id:
+            if not str(child_id).isdigit():
+                return qs.none()
+            qs = qs.filter(child_id=child_id)
+        # Scope from the caller, never from a parameter.
+        if _role(self.request) == Role.PSYCHOLOGIST:
+            qs = qs.filter(child__assigned_psychologist=self.request.user)
+        return qs
+
+    @action(detail=True, methods=["post"])
+    def acknowledge(self, request, pk=None):
+        flag = self.get_queryset().filter(pk=pk).first()
+        if flag is None:
+            return Response({"detail": "Not found."},
+                            status=status.HTTP_404_NOT_FOUND)
+        # First acknowledgement wins. The record of who actually read it first
+        # must not be overwritten by whoever clicked next.
+        if flag.reviewed_at is None:
+            flag.reviewed_by = request.user
+            flag.reviewed_at = timezone.now()
+            flag.review_note = str(request.data.get("note") or "")[:2000]
+            flag.save(update_fields=["reviewed_by", "reviewed_at", "review_note"])
+        return Response(SelfReportFlagSerializer(flag).data)
