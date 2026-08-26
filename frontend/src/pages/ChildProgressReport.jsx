@@ -39,10 +39,17 @@ export default function ChildProgressReport() {
   const [confirmMove, setConfirmMove] = useState(null); // { next, childName }
   const [polishing, setPolishing] = useState(false);
   const [polishJob, setPolishJob] = useState(null); // { id, draft }
+  // The remark text as it stood before "Polish writing" overwrote it, so the
+  // psychologist has a way back to their own words if the draft is worse.
+  // Cleared once the remark is saved or the draft is reverted.
+  const [preRemarkText, setPreRemarkText] = useState(null);
   const [brief, setBrief] = useState(null);   // { draft, generatedAt, jobId }
   const [briefBusy, setBriefBusy] = useState(false);
   const [summary, setSummary] = useState(null); // { kind, id, text, confirmed }
   const [summaryBusy, setSummaryBusy] = useState(false);
+  // Re-summarising an already-confirmed document destroys the psychologist's
+  // own clinical text with no undo, so that path is asked for, not clicked.
+  const [confirmResummarize, setConfirmResummarize] = useState(null); // { kind, id, filename }
   const isStaffOrAdmin = ['Administrator', 'Staff'].includes(user?.role_name);
 
   const load = () => api.get(`/reports/child/${id}/`).then((r) => setData(r.data)).catch(() => setData('error'));
@@ -88,6 +95,7 @@ export default function ChildProgressReport() {
     setPolishing(true);
     try {
       const { draft, job_id } = await polishRemark(raw);
+      setPreRemarkText(remarkText);
       setRemarkText(draft);
       setPolishJob({ id: job_id, draft });
     } catch (err) {
@@ -99,6 +107,13 @@ export default function ChildProgressReport() {
     } finally {
       setPolishing(false);
     }
+  };
+
+  const revertPolish = () => {
+    if (preRemarkText !== null) setRemarkText(preRemarkText);
+    if (polishJob) sendFeedback(polishJob.id, 'discarded').catch(() => {});
+    setPolishJob(null);
+    setPreRemarkText(null);
   };
 
   const openBrief = async ({ regenerate = false } = {}) => {
@@ -155,6 +170,7 @@ export default function ChildProgressReport() {
         sendFeedback(polishJob.id, outcome).catch(() => {});
         setPolishJob(null);
       }
+      setPreRemarkText(null);
       setRemarkText(''); load(); toast.success('Remark added');
     } catch (err) { toast.error(err.response?.data?.detail || 'Could not add the remark.'); }
   };
@@ -377,7 +393,9 @@ export default function ChildProgressReport() {
                   )}
                 </div>
                 <Button variant="ghost" size="sm" disabled={summaryBusy} className="racco-no-print"
-                        onClick={() => draftSummary('case-referral', f.id)}>
+                        onClick={() => f.ai_summary_confirmed
+                          ? setConfirmResummarize({ kind: 'case-referral', id: f.id, filename: f.original_filename })
+                          : draftSummary('case-referral', f.id)}>
                   {f.ai_summary ? 'Re-summarise' : 'AI summary'}
                 </Button>
                 {f.ai_summary && (
@@ -451,7 +469,9 @@ export default function ChildProgressReport() {
                   )}
                 </div>
                 <Button variant="ghost" size="sm" disabled={summaryBusy} className="racco-no-print"
-                        onClick={() => draftSummary('report', f.id)}>
+                        onClick={() => f.ai_summary_confirmed
+                          ? setConfirmResummarize({ kind: 'report', id: f.id, filename: f.original_filename })
+                          : draftSummary('report', f.id)}>
                   {f.ai_summary ? 'Re-summarise' : 'AI summary'}
                 </Button>
                 {f.ai_summary && (
@@ -528,9 +548,12 @@ export default function ChildProgressReport() {
               <Button variant="primary" onClick={addRemark} iconLeft={<Icon name="plus" size={16} />} disabled={!remarkText.trim()}>Add remark</Button>
             </div>
             {polishJob && (
-              <Alert tone="info" disclaimer style={{ marginTop: 4 }}>
-                AI-drafted decision support, not a diagnosis. Review and edit before saving.
-              </Alert>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                <Alert tone="info" disclaimer style={{ flex: 1, marginTop: 0 }}>
+                  AI-drafted decision support, not a diagnosis. Review and edit before saving.
+                </Alert>
+                <Button variant="ghost" size="sm" onClick={revertPolish}>Revert to my text</Button>
+              </div>
             )}
           </div>
         )}
@@ -635,6 +658,20 @@ export default function ChildProgressReport() {
           title="Move to counseling?"
           description={`${confirmMove.childName || 'This child'} moves out of pre-assessment and into counseling. You can move them back, but the change shows in the audit trail either way.`}
           confirmLabel="Move to counseling" cancelLabel="Cancel"
+        />
+      )}
+      {confirmResummarize && (
+        <ConfirmDialog
+          onClose={() => setConfirmResummarize(null)}
+          onConfirm={() => {
+            const { kind, id } = confirmResummarize;
+            setConfirmResummarize(null);
+            draftSummary(kind, id);
+          }}
+          tone="danger" icon={<Icon name="alert-triangle" size={19} />}
+          title="Replace the confirmed summary?"
+          description={`The current summary of "${confirmResummarize.filename || 'this document'}" is the psychologist's own confirmed clinical text, not a draft. Re-summarising replaces it with a new AI draft, and the confirmed text cannot be recovered.`}
+          confirmLabel="Replace with new draft" cancelLabel="Cancel"
         />
       )}
 
