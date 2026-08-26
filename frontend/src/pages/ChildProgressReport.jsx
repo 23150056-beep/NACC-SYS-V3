@@ -8,6 +8,15 @@ import { Card, Button, Badge, Alert, Select, FormField, Icon, iconBtn, PAGE, Con
 import { PA_STATUS_TONES } from '../config/caseData';
 import { polishRemark, sendFeedback, getLatestBrief, generateBrief, summarizeDocument, confirmSummary } from '../api/assistant';
 
+// "In her own words" reads better than a label, but gender is blank=True on
+// the model and must never render as an empty string.
+function ownWordsTitle(child) {
+  const g = String(child?.gender || '').toLowerCase();
+  if (g.startsWith('f')) return 'In her own words';
+  if (g.startsWith('m')) return 'In his own words';
+  return "In the child's own words";
+}
+
 const CASE_STATUS_META = {
   pre_assessment: { label: 'Pre-Assessment', tone: 'amber' },
   counseling: { label: 'Counseling', tone: 'brand' },
@@ -25,6 +34,7 @@ export default function ChildProgressReport() {
   const toast = useToast();
   const isPsych = user?.role_name === 'Psychologist';
   const [data, setData] = useState(null);
+  const [ackBusy, setAckBusy] = useState(null);
   const [remarkText, setRemarkText] = useState('');
   const [result, setResult] = useState(null); // add-result drawer
   const [plan, setPlan] = useState(null); // treatment plan drawer
@@ -53,6 +63,17 @@ export default function ChildProgressReport() {
   const isStaffOrAdmin = ['Administrator', 'Staff'].includes(user?.role_name);
 
   const load = () => api.get(`/reports/child/${id}/`).then((r) => setData(r.data)).catch(() => setData('error'));
+
+  const acknowledgeFlag = async (flagId) => {
+    setAckBusy(flagId);
+    try {
+      await api.post(`/self-report-flags/${flagId}/acknowledge/`, {});
+      await load();
+    } catch {
+      toast.error('Could not mark that as read.');
+    }
+    setAckBusy(null);
+  };
   useEffect(() => {
     load();
     /* eslint-disable-next-line */
@@ -332,6 +353,9 @@ export default function ChildProgressReport() {
           <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0, maxWidth: 520 }}>
             The child answers the agency&apos;s self-report opinionnaire on a secondary device via QR code.
             Agency/government forms only — never published instruments.
+            {' '}Self-reports are always shown — the child&apos;s own words are not part of carried
+            history, so they stay visible even when session history was not carried to a new
+            psychologist.
           </p>
           {(isStaffOrAdmin || canWrite) && child.status === 'active' && (
             <Button variant="primary" onClick={createInvite} iconLeft={<Icon name="qr-code" size={16} />} className="racco-no-print">New QR Survey</Button>
@@ -535,6 +559,48 @@ export default function ChildProgressReport() {
           )}
         </Card>
       </div>
+
+      {/* The child's own words, flagged as worth reading.
+
+          Shown EXPANDED and immediately above the remarks. The words were
+          never missing before this — they were rendered further down, folded
+          behind an "Answers (3)" toggle, one click from anyone who thought to
+          look. Nobody did. Folding them again would rebuild the failure. */}
+      {(data.self_report_flags || []).filter((f) => !f.is_reviewed).length > 0 && (
+        <Card
+          eyebrow="Self-report"
+          title={ownWordsTitle(data.child)}
+          padding="20px"
+          accent="var(--danger-500)"
+        >
+          <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 14 }}>
+            Read these alongside the remarks below. Flagging says only that the
+            child said something worth reading — it is not a judgement about the
+            case or about anyone&apos;s notes.
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {(data.self_report_flags || []).filter((f) => !f.is_reviewed).map((f) => (
+              <div key={f.id} style={{ borderLeft: '3px solid var(--danger-500)', paddingLeft: 14 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{f.question}</div>
+                <div style={{ fontSize: 15.5, lineHeight: 1.5, color: 'var(--text-strong)', margin: '4px 0 6px' }}>
+                  &ldquo;{f.answer}&rdquo;
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+                  <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>
+                    {String(f.created_at || '').slice(0, 10)}
+                    {' · '}
+                    {f.source === 'model' ? 'local model' : 'phrase'}: {f.matched}
+                  </span>
+                  <Button size="sm" variant="secondary" onClick={() => acknowledgeFlag(f.id)}
+                          disabled={ackBusy === f.id} className="racco-no-print">
+                    {ackBusy === f.id ? 'Marking…' : 'Mark as read'}
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {/* Remarks log */}
       <Card eyebrow="Progress log" title="Psychological remark notes" padding="20px">
