@@ -152,3 +152,27 @@ Examples:
   "Good morning!"                     -> answer_directly(reason="greeting_or_closing")
 """
 
+
+# --- self-report concerns -------------------------------------------------
+# The second detector. It reads the same (question, answer) pair the lexicon
+# does, and exists to catch phrasing nobody thought to list — which is where
+# the Ilocano entries are weakest. Static block first, the exchange last.
+
+SELF_REPORT_SYSTEM = (
+    "You read short self-reports written by children in a child protection "
+    "agency in the Philippines. They write in English, Tagalog, Ilocano, or a "
+    "mix. You judge only whether the child expresses distress."
+)
+
+SELF_REPORT_INSTRUCTIONS = (
+    "Does this child's answer express distress, fear, sadness, pain, or being "
+    "alone?\n"
+    "Answer with one word, YES or NO, then a dash and at most eight words "
+    "saying why.\n"
+    "Judge only the answer given. Do not infer anything not written.\n\n"
+    "EXCHANGE:\n"
+)
+
+
+def build_self_report_prompt(question, answer):
+    return SELF_REPORT_INSTRUCTIONS + f"Q: {question}\nA: {answer}"
