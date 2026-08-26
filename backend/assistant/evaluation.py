@@ -35,6 +35,9 @@ _TAGALOG_WORDS = {
 }
 _TAGALOG_PREFIXES = ("nag-", "naka-", "naki-", "pag-", "nakiki")
 
+# English reduplication reads as emphasis, not as a defect.
+_REDUPLICATION_LINKS = {"and", "by", "after", "to", "upon", "for", "on"}
+
 
 def invented_names(prompt, output):
     """Capitalised words the model introduced that the prompt never mentioned.
@@ -84,8 +87,18 @@ def repeated_phrases(output, window=2, min_length=4):
     for i, word in enumerate(words):
         if len(word) < min_length:
             continue
-        ahead = [w.lower() for w in words[i + 1:i + 1 + window]]
-        if word.lower() in ahead and word not in found:
+        ahead = words[i + 1:i + 1 + window]
+        lowered = [w.lower() for w in ahead]
+        if word.lower() not in lowered:
+            continue
+        # "more and more", "step by step", "side by side" are idiomatic English
+        # emphasis, not stutters. The first version of this detector flagged all
+        # of them and put a false 13% defect rate into an evaluation run. A
+        # foreign linker ("na") is deliberately not on the list, so a genuine
+        # repeat across one is still caught.
+        if lowered.index(word.lower()) == 1 and ahead[0].lower() in _REDUPLICATION_LINKS:
+            continue
+        if word not in found:
             found.append(word)
     return found
 

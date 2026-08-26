@@ -122,3 +122,20 @@ class RepeatedPhrasesTest(SimpleTestCase):
     def test_clean_output_reports_nothing(self):
         out = "The child attended the session and completed the drawing task."
         self.assertEqual([], evaluation.repeated_phrases(out))
+
+    def test_ignores_ordinary_english_reduplication(self):
+        # "more and more", "step by step" and friends are idiomatic, not
+        # stutters. The first version of this detector flagged all of them,
+        # which put a false 13% defect rate into an evaluation run.
+        for phrase in ("She is more and more engaged.",
+                       "Progress has been step by step.",
+                       "She opened up little by little.",
+                       "They sat side by side.",
+                       "He asked over and over about the visit."):
+            with self.subTest(phrase=phrase):
+                self.assertEqual([], evaluation.repeated_phrases(phrase))
+
+    def test_still_flags_a_repeat_across_a_foreign_connector(self):
+        # "na" is a Tagalog linker, not an English reduplication connector.
+        out = "Nakikisalamuha na Nakikisalamuha sa ibang bata."
+        self.assertIn("Nakikisalamuha", evaluation.repeated_phrases(out))
