@@ -96,3 +96,29 @@ class LanguageDriftTest(SimpleTestCase):
         # they are ordinary English; a detector that flags them is useless.
         out = "She may attend on Friday. The parameters of the plan are set."
         self.assertEqual([], evaluation.language_drift(out))
+
+
+class RepeatedPhrasesTest(SimpleTestCase):
+    """`repeated_lines` works on whole lines, so it missed a real defect sitting
+    in its own evaluation output: "Nakikisalamuha na Nakikisalamuha" — the same
+    word twice in one sentence. Line-level checks cannot see inside a line.
+    """
+
+    def test_flags_a_word_repeated_within_a_sentence(self):
+        out = "Nakikisalamuha na Nakikisalamuha sa ibang bata dito sa recreation."
+        self.assertIn("Nakikisalamuha", evaluation.repeated_phrases(out))
+
+    def test_flags_an_immediate_stutter(self):
+        self.assertIn("child", evaluation.repeated_phrases("The child child is well."))
+
+    def test_ignores_short_function_words(self):
+        # "the end of the day" repeats "the" close together and is ordinary.
+        self.assertEqual([], evaluation.repeated_phrases("At the end of the day."))
+
+    def test_ignores_a_word_reused_further_along(self):
+        out = "Settling in well and mixing well with the other children."
+        self.assertEqual([], evaluation.repeated_phrases(out))
+
+    def test_clean_output_reports_nothing(self):
+        out = "The child attended the session and completed the drawing task."
+        self.assertEqual([], evaluation.repeated_phrases(out))

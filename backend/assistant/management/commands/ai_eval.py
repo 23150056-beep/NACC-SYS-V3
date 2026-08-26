@@ -89,6 +89,9 @@ class Command(BaseCommand):
         repeats = evaluation.repeated_lines(text)
         if repeats:
             flags["repeated lines"] = repeats
+        stutters = evaluation.repeated_phrases(text)
+        if stutters:
+            flags["repeated words"] = stutters
         if expect_english:
             drift = evaluation.language_drift(text)
             if drift:
@@ -102,7 +105,8 @@ class Command(BaseCommand):
         self.stdout.write(f"BRIEFS — {len(children)} children x {reps} reps")
 
         runs, latencies = 0, []
-        counts = {"invented names": 0, "repeated lines": 0, "language drift": 0}
+        counts = {"invented names": 0, "repeated lines": 0,
+                  "repeated words": 0, "language drift": 0}
 
         for child in children:
             prompt = prompts.build_brief_prompt(child)
@@ -128,7 +132,8 @@ class Command(BaseCommand):
         self.stdout.write(f"REMARK POLISH — {len(POLISH_CASES)} cases x {reps} reps")
 
         runs, latencies = 0, []
-        counts = {"invented names": 0, "repeated lines": 0, "language drift": 0}
+        counts = {"invented names": 0, "repeated lines": 0,
+                  "repeated words": 0, "language drift": 0}
 
         for label, raw in POLISH_CASES:
             prompt = prompts.build_remark_prompt(raw)

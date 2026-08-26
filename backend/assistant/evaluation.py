@@ -67,6 +67,29 @@ def repeated_lines(output):
     return [line for line, n in Counter(lines).items() if n > 1]
 
 
+def repeated_phrases(output, window=2, min_length=4):
+    """Words the model repeated inside a single sentence.
+
+    `repeated_lines` compares whole lines, so it could not see
+    "Nakikisalamuha na Nakikisalamuha" — a defect that appeared in this
+    module's own evaluation output and went unflagged.
+
+    Only words of `min_length` or more count: "at the end of the day" repeats
+    "the" two words apart and is ordinary English. The window is deliberately
+    tight — a word legitimately reused later in a sentence ("settling in well
+    and mixing well") is not a stutter.
+    """
+    words = re.findall(r"\b[\w'-]+\b", output)
+    found = []
+    for i, word in enumerate(words):
+        if len(word) < min_length:
+            continue
+        ahead = [w.lower() for w in words[i + 1:i + 1 + window]]
+        if word.lower() in ahead and word not in found:
+            found.append(word)
+    return found
+
+
 def language_drift(output):
     """Tagalog markers in output that was asked for in English.
 
