@@ -5,10 +5,12 @@ gap so the dashboard list is directly actionable.
 """
 from datetime import timedelta
 
+from django.db.models import Count
 from django.utils import timezone
 
 from children.models import Child
-from clinical.models import PreAssessment, ConsentRecord, PsychologicalReport
+from clinical.models import (PreAssessment, ConsentRecord, PsychologicalReport,
+                             SelfReportFlag)
 from scheduling.models import Appointment
 
 # Thresholds — confirm with RACCO I; kept here so they are easy to tune.
@@ -37,6 +39,13 @@ def compute_alerts(children_qs):
         child_id__in=ids, status=ConsentRecord.SIGNED).values_list("child_id", flat=True))
     has_report = set(PsychologicalReport.objects.filter(
         child_id__in=ids).values_list("child_id", flat=True))
+
+    # Children with an unacknowledged self-report flag. Reads persisted rows —
+    # no text analysis happens here, because this runs on every page load.
+    flagged = dict(SelfReportFlag.objects
+                   .filter(child_id__in=ids, reviewed_at__isnull=True)
+                   .values_list("child_id")
+                   .annotate(n=Count("id")))
 
     alerts = []
 
@@ -80,6 +89,17 @@ def compute_alerts(children_qs):
         if c.id not in has_upcoming:
             add(c, "no_upcoming_appointment",
                 "Active case with no upcoming appointment.", "info")
+
+        # 6. The child said something worth reading. This asserts nothing
+        # about the case notes — they are never read — only that her own
+        # words are waiting. The message deliberately does not quote her:
+        # her words belong on her page beside the notes, not in a caseload
+        # list that gets skimmed.
+        waiting = flagged.get(c.id)
+        if waiting:
+            add(c, "self_report_concern",
+                f"{waiting} self-report answer{'s' if waiting > 1 else ''} "
+                f"awaiting review.", "danger")
 
     severity_rank = {"danger": 0, "warning": 1, "info": 2}
     alerts.sort(key=lambda a: (severity_rank.get(a["severity"], 3), a["child_name"]))

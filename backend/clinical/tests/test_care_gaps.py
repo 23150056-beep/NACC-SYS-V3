@@ -82,3 +82,60 @@ class CareGapTest(APITestCase):
         self.assertIn("intake_vs_termination", resp.data)
         self.assertTrue(any(g["type"] == "no_upcoming_appointment"
                             for g in resp.data["care_gaps"]))
+
+
+class SelfReportConcernAlertTest(APITestCase):
+    """The alert reads persisted flags. No text analysis runs inside
+    compute_alerts — it is called on every page load."""
+
+    def setUp(self):
+        from clinical.models import (AgencyFormTemplate, OpinionnaireInvite,
+                                     SelfReportFlag)
+        role = Role.objects.create(role_name=Role.PSYCHOLOGIST)
+        self.psy = User.objects.create_user(
+            email="sp@racco1.gov.ph", username="sp", password="pass1234", role=role)
+        self.other = User.objects.create_user(
+            email="sq@racco1.gov.ph", username="sq", password="pass1234", role=role)
+        self.mine = Child.objects.create(
+            fullname="Maria Santos", assigned_psychologist=self.psy)
+        self.theirs = Child.objects.create(
+            fullname="Juan Dela Cruz", assigned_psychologist=self.other)
+        template = AgencyFormTemplate.objects.create(
+            title="Self-report",
+            fields=[{"label": "How are you feeling this week?"}])
+        invite = OpinionnaireInvite.objects.create(
+            child=self.mine, template=template,
+            status=OpinionnaireInvite.SUBMITTED, submitted_at=timezone.now(),
+            expires_at=timezone.now() + timedelta(days=7))
+        self.flag = SelfReportFlag.objects.create(
+            invite=invite, child=self.mine,
+            question="How are you feeling this week?",
+            answer="Lagi akong umiiyak sa gabi.",
+            source=SelfReportFlag.LEXICON, matched="umiiyak")
+
+    def _alerts(self, child):
+        return compute_alerts(Child.objects.filter(pk=child.pk))
+
+    def _types(self, child):
+        return [a["type"] for a in self._alerts(child)]
+
+    def test_an_unreviewed_flag_raises_an_alert(self):
+        self.assertIn("self_report_concern", self._types(self.mine))
+
+    def test_the_alert_does_not_quote_the_child(self):
+        # The message says a self-report is waiting. The words themselves
+        # belong on her page beside the notes, not in a skimmed caseload list.
+        alert = [a for a in self._alerts(self.mine)
+                 if a["type"] == "self_report_concern"][0]
+        self.assertNotIn("umiiyak", alert["message"])
+        self.assertEqual("danger", alert["severity"])
+        self.assertEqual("Maria Santos", alert["child_name"])
+
+    def test_an_acknowledged_flag_raises_nothing(self):
+        self.flag.reviewed_by = self.psy
+        self.flag.reviewed_at = timezone.now()
+        self.flag.save()
+        self.assertNotIn("self_report_concern", self._types(self.mine))
+
+    def test_it_is_scoped_to_the_children_passed_in(self):
+        self.assertNotIn("self_report_concern", self._types(self.theirs))
