@@ -208,6 +208,26 @@ carry-history and then sees self-reports appear anyway must read that as
 designed, not broken. The child's page states that self-reports are always
 shown because they are the child's own words, not carried history.
 
+### The psychologist's notes are unaffected
+
+Stated explicitly so the exemption above is never misread as a change to case
+notes. **Nothing in this design alters how notes are carried.** They keep
+following `assignee_sees_history` exactly as they do today:
+
+- **They carry by default.** The field defaults to `True`
+  (`children/models.py:114`), so a newly assigned psychologist sees the full
+  prior history unless someone deliberately unticks the box at reassignment.
+- **They are never deleted.** The control is a read-time query filter
+  (`clinical/reports_views.py:54`), not a deletion. Every remark persists with
+  its author attached, and there is no deletion anywhere in the reassignment
+  path. Tick the box again and the notes reappear intact.
+- **So they remain available for future use** — including for a psychologist
+  assigned years later, or for any administrator, who is never filtered.
+
+The only way a note is hidden from anyone is an administrator choosing a fresh
+start for one specific child, and even then it is hidden from that one
+psychologist's view, not removed from the record.
+
 ## Privacy
 
 Nothing leaves the machine. The model call goes to local Ollama, as every
