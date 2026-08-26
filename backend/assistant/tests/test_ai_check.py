@@ -10,6 +10,9 @@ from assistant.models import AssistantSetting
 
 class AiCheckCommandTest(TestCase):
     def test_reports_switched_off_without_calling_the_runtime(self):
+        cfg = AssistantSetting.load()
+        cfg.enabled = False
+        cfg.save()
         out = StringIO()
         with self.assertRaises(SystemExit) as ctx:
             call_command("ai_check", stdout=out)

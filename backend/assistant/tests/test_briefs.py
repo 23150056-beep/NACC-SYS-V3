@@ -66,9 +66,9 @@ class BriefTest(BriefTestBase):
         self.client.force_authenticate(self.admin)
         self.assertEqual(self.client.post("/api/assistant/brief/child/99999/").status_code, 404)
 
-    def test_503_when_feature_flag_off(self):
+    def test_503_when_the_assistant_is_off(self):
         cfg = AssistantSetting.load()
-        cfg.feature_brief = False
+        cfg.enabled = False
         cfg.save()
         self.client.force_authenticate(self.psy)
         self.assertEqual(self.client.post(self._url(self.mine)).status_code, 503)

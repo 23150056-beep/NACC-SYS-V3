@@ -77,7 +77,7 @@ class RemarkPolishView(AssistantBaseView):
     nothing is saved to the remark until the human saves it themselves."""
 
     def post(self, request):
-        gate("feature_remark_polish")
+        gate()
         raw = request.data.get("text")
         if not isinstance(raw, str) or not raw.strip():
             return Response({"detail": "Nothing to polish."},
@@ -154,7 +154,7 @@ class PreSessionBriefView(AssistantBaseView):
     LatestBriefView first and only falls back to here."""
 
     def post(self, request, child_id):
-        gate("feature_brief")
+        gate()
         try:
             child = _visible_children(request).get(pk=child_id)
         except Child.DoesNotExist:
@@ -247,7 +247,7 @@ class PrefetchBriefsView(AssistantBaseView):
     """
 
     def post(self, request):
-        gate("feature_brief")
+        gate()
         today = timezone.localdate()
         visible = _visible_children(request)
         appts = Appointment.objects.filter(
@@ -290,7 +290,7 @@ class DocumentSummaryView(AssistantBaseView):
     kind = None
 
     def post(self, request, doc_id):
-        gate("feature_doc_intelligence")
+        gate()
         model, prefix, label, author_field = _DOC_KINDS[self.kind]
         doc = model.objects.filter(
             pk=doc_id, child__in=_visible_children(request)).first()
@@ -371,7 +371,7 @@ class CensusNarrativeView(AssistantBaseView):
     permission_classes = [IsAdminOrStaff]
 
     def post(self, request):
-        gate("feature_census_narrative")
+        gate()
         figures = request.data.get("figures")
         if not isinstance(figures, dict) or not figures:
             return Response({"detail": "figures must be a non-empty object."},

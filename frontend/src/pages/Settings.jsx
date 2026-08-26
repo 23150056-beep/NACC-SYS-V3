@@ -77,15 +77,14 @@ export default function Settings() {
                 is never sent to an outside service. Every draft is reviewed and
                 approved by a person before it becomes clinical text.
               </Alert>
+              {/* One switch, not one per feature. It is on by default, so the
+                  assistant works as soon as the runtime is running; the switch
+                  exists so a misbehaving feature can be stopped without waiting
+                  for a code deploy. FEATURE_LABELS is still used below to name
+                  the rows of the usage table. */}
               <Switch checked={cfg.enabled} disabled={saving}
                       onChange={(v) => save({ enabled: v })}
                       label="Assistant enabled" />
-              {Object.entries(FEATURE_LABELS).map(([key, label]) => (
-                <Switch key={key} checked={cfg[`feature_${key}`]}
-                        disabled={saving || !cfg.enabled}
-                        onChange={(v) => save({ [`feature_${key}`]: v })}
-                        label={label} />
-              ))}
               <FormField label="Runtime URL" hint="The local model runtime. Loopback only.">
                 <Input value={draft.ollama_url} disabled={saving}
                        onChange={(e) => setDraft({ ...draft, ollama_url: e.target.value })} />

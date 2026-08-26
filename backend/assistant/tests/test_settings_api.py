@@ -22,7 +22,7 @@ class AssistantSettingsApiTest(APITestCase):
         self.client.force_authenticate(self.admin)
         res = self.client.get("/api/assistant/settings/")
         self.assertEqual(res.status_code, 200)
-        self.assertFalse(res.data["enabled"])
+        self.assertTrue(res.data["enabled"])
         self.assertEqual(res.data["model_name"], "qwen2.5:3b-instruct")
 
     def test_psychologist_cannot_read_settings(self):
@@ -35,8 +35,7 @@ class AssistantSettingsApiTest(APITestCase):
     def test_administrator_can_switch_the_assistant_on(self):
         self.client.force_authenticate(self.admin)
         res = self.client.put("/api/assistant/settings/", {
-            "enabled": True, "feature_brief": True, "feature_doc_intelligence": True,
-            "feature_remark_polish": True, "feature_census_narrative": True,
+            "enabled": True,
             "ollama_url": "http://localhost:11434",
             "model_name": "qwen2.5:3b-instruct",
         }, format="json")

@@ -22,7 +22,9 @@ class NormalizeOutputTest(TestCase):
 
 class GetClientTest(TestCase):
     def test_returns_null_client_when_disabled(self):
-        AssistantSetting.load()  # enabled defaults to False
+        cfg = AssistantSetting.load()
+        cfg.enabled = False
+        cfg.save()
         self.assertIsInstance(services.get_ai_client(), services.NullClient)
 
     def test_returns_ollama_client_when_enabled(self):
@@ -40,23 +42,17 @@ class GetClientTest(TestCase):
 
 class GateTest(TestCase):
     def test_raises_when_master_switch_off(self):
-        AssistantSetting.load()
-        with self.assertRaises(services.AIUnavailable):
-            services.gate("feature_remark_polish")
-
-    def test_raises_when_feature_flag_off(self):
         cfg = AssistantSetting.load()
-        cfg.enabled = True
-        cfg.feature_remark_polish = False
+        cfg.enabled = False
         cfg.save()
         with self.assertRaises(services.AIUnavailable):
-            services.gate("feature_remark_polish")
+            services.gate()
 
     def test_returns_config_when_enabled(self):
         cfg = AssistantSetting.load()
         cfg.enabled = True
         cfg.save()
-        self.assertEqual(services.gate("feature_remark_polish").pk, 1)
+        self.assertEqual(services.gate().pk, 1)
 
 
 class RunJobTest(TestCase):

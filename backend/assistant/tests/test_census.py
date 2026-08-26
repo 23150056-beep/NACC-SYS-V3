@@ -56,9 +56,9 @@ class CensusTest(APITestCase):
         self.assertEqual(
             self.client.post(URL, {"figures": "lots"}, format="json").status_code, 400)
 
-    def test_503_when_feature_flag_off(self):
+    def test_503_when_the_assistant_is_off(self):
         cfg = AssistantSetting.load()
-        cfg.feature_census_narrative = False
+        cfg.enabled = False
         cfg.save()
         self.client.force_authenticate(self.admin)
         self.assertEqual(

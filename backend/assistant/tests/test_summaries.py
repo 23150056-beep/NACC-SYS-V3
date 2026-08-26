@@ -78,9 +78,9 @@ class SummaryTest(SummaryTestBase):
         self.assertEqual(self.report.ai_summary, "New.")
         self.assertFalse(self.report.ai_summary_confirmed)
 
-    def test_503_when_feature_flag_off(self):
+    def test_503_when_the_assistant_is_off(self):
         cfg = AssistantSetting.load()
-        cfg.feature_doc_intelligence = False
+        cfg.enabled = False
         cfg.save()
         self.client.force_authenticate(self.psy)
         res = self.client.post(f"/api/assistant/summarize-report/{self.report.id}/")

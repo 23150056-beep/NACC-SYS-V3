@@ -25,6 +25,9 @@ class CheckApiTest(APITestCase):
         self.assertEqual(self.client.post(URL).status_code, 403)
 
     def test_reports_not_ok_when_switched_off(self):
+        cfg = AssistantSetting.load()
+        cfg.enabled = False
+        cfg.save()
         self.client.force_authenticate(self.admin)
         res = self.client.post(URL)
         self.assertEqual(res.status_code, 200)  # a 200 describing a false, not a 503

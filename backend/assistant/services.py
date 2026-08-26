@@ -77,13 +77,16 @@ def get_ai_client():
     return OllamaClient(cfg.ollama_url, cfg.model_name)
 
 
-def gate(feature_attr):
-    """Return the config when this feature may run, else raise AIUnavailable."""
+def gate():
+    """Return the config when the assistant may run, else raise AIUnavailable.
+
+    One switch, not one per feature: an administrator who needs to stop the
+    assistant needs it stopped, and a per-feature matrix was a configuration
+    surface nobody used.
+    """
     cfg = AssistantSetting.load()
     if not cfg.enabled:
         raise AIUnavailable("The assistant is switched off.")
-    if not getattr(cfg, feature_attr):
-        raise AIUnavailable("This assistant feature is switched off.")
     return cfg
 
 

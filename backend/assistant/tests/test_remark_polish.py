@@ -51,9 +51,9 @@ class RemarkPolishTest(APITestCase):
         res = self.client.post(URL, {"text": "note"}, format="json")
         self.assertEqual(res.status_code, 503)
 
-    def test_503_when_feature_flag_off(self):
+    def test_503_when_the_assistant_is_off(self):
         cfg = AssistantSetting.load()
-        cfg.feature_remark_polish = False
+        cfg.enabled = False
         cfg.save()
         res = self.client.post(URL, {"text": "note"}, format="json")
         self.assertEqual(res.status_code, 503)

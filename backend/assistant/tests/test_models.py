@@ -4,11 +4,12 @@ from assistant.models import AssistantSetting, AssistantJob
 
 
 class AssistantSettingTest(TestCase):
-    def test_load_creates_singleton_with_safe_defaults(self):
+    def test_load_creates_singleton_with_expected_defaults(self):
         cfg = AssistantSetting.load()
         self.assertEqual(cfg.pk, 1)
-        # Off by default: installing the app must change nothing.
-        self.assertFalse(cfg.enabled)
+        # On by default: once the runtime is installed the assistant is simply
+        # available, rather than waiting for someone to find a toggle.
+        self.assertTrue(cfg.enabled)
         self.assertEqual(cfg.model_name, "qwen2.5:3b-instruct")
         self.assertEqual(cfg.ollama_url, "http://localhost:11434")
 

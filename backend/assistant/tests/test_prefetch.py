@@ -92,9 +92,9 @@ class PrefetchTest(APITestCase):
             views._generate_briefs_now([self.mine.id], self.psy)  # must not raise
         self.assertFalse(AssistantJob.objects.get().ok)
 
-    def test_503_when_feature_flag_off(self):
+    def test_503_when_the_assistant_is_off(self):
         cfg = AssistantSetting.load()
-        cfg.feature_brief = False
+        cfg.enabled = False
         cfg.save()
         self.assertEqual(self.client.post(URL).status_code, 503)
 

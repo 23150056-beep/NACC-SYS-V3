@@ -3,17 +3,18 @@ from django.db import models
 
 
 class AssistantSetting(models.Model):
-    """Singleton (pk=1): assistant feature flags plus local runtime config.
+    """Singleton (pk=1): the assistant switch plus local runtime config.
 
-    Everything is off by default — the system is fully functional with the
-    assistant switched off, and installing this app must change nothing.
+    The system stays fully functional with the assistant off — every feature
+    degrades to a 503 the screens absorb — but it is on by default, so it
+    works as soon as the local runtime is running.
     """
 
-    enabled = models.BooleanField(default=False)  # master switch
-    feature_brief = models.BooleanField(default=True)
-    feature_doc_intelligence = models.BooleanField(default=True)
-    feature_remark_polish = models.BooleanField(default=True)
-    feature_census_narrative = models.BooleanField(default=True)
+    # On by default: once the runtime is installed the assistant is simply
+    # available, rather than waiting for someone to discover a toggle. The
+    # switch remains so an administrator can stop a misbehaving feature
+    # without a code deploy — which is the only remedy otherwise.
+    enabled = models.BooleanField(default=True)
 
     # On-premises runtime only. There is no hosted provider: sending clinical
     # free text to an outside processor is what removed the V2 layer.
