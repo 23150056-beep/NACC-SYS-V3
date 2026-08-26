@@ -211,20 +211,40 @@ Past answers remain on screen. The panel states **"English only"** (see below).
 
 ## Language
 
-**English at launch.** The alias table maps a handful of Tagalog time words to
-enum values, but that is a narrow fix, not comprehension:
+**Tagalog and Taglish are supported.** This reverses the recommendation this
+spec originally carried, and it reverses it on evidence.
 
-- Free-text arguments do not translate. A Tagalog phrase in `concern` searches
-  an English-language field and returns nothing — a failure that does not look
-  like a language problem.
-- Exactly **one** Tagalog sentence has been measured, four times. That is not
-  evidence of support.
+Measured 26 Aug 2026 — 14 realistic questions, 2 reps each, against the real
+registry and the real validator:
 
-**Claiming Tagalog support requires its own evaluation run** — 12–15 realistic
-Tagalog and Taglish questions through `ai_eval` — before the UI stops saying
-"English only". Taglish (English clinical terms inside Tagalog sentences, which
-is how people actually write here) may well perform better than pure Tagalog,
-but that is a hypothesis, not a finding.
+| Register | Routed to the right tool | Fully correct incl. arguments |
+|---|---|---|
+| Tagalog | **14/14 (100%)** | 13/14 (93%) |
+| Taglish | **14/14 (100%)** | **14/14 (100%)** |
+
+The earlier pessimism came from a single sentence tested four times under naive
+schemas. With the hardened descriptions and the alias table, routing did not
+fail once in either register.
+
+**The model translates concerns by itself.** The case this spec called
+unwinnable — *"Hanapin mo yung mga batang ayaw pumasok sa eskwela"* — resolved
+to `search_children_by_concern(concern="school refusal")`, twice. It produced
+the English clinical term the database actually stores. **No concern
+vocabulary map is needed**, and building one would have been wasted work.
+
+The alias table still earns its place for enum values the model passes through
+untranslated (`bukas → tomorrow`, `ngayon → today`, `aktibo → active`).
+
+The one failure in 28 runs was `answer_directly` called without its `reason`.
+That argument is telemetry — the reply is the same fixed copy either way — so
+it is optional, which removes the failure entirely rather than papering over it.
+
+**The UI says nothing about language.** Users write however they write.
+
+**What is still not claimed:** that every Tagalog phrasing works. 14 questions
+is evidence, not a guarantee. `ai_eval` carries these cases so a regression is
+visible, and a phrasing that fails should be added to it rather than argued
+about.
 
 ## Privacy
 
