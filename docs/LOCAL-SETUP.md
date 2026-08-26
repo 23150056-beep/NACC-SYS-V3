@@ -10,7 +10,7 @@ free-tier service being awake.
 |---|---|---|
 | Database | Neon (PostgreSQL) | SQLite, a file in `backend/` |
 | Uploaded files | Cloudflare R2 | `backend/media/` on disk |
-| Google Sign-In | on | off — the button hides itself |
+| Google Sign-In | on | off — the button hides itself ([turn it on](#google-sign-in-on-your-own-machine)) |
 | Assignment emails | Brevo | not sent; skipped with a log line |
 | Addresses (PSGC) | seeded on deploy | seeded by the setup script |
 
@@ -106,6 +106,90 @@ brief takes about 40 seconds, because it reasons over more text; briefs for a
 day's schedule are generated in the background before anyone opens one, so in
 normal use the brief button is instant rather than a 40-second wait.
 
+## Google Sign-In on your own machine
+
+Off by default. The login page asks the API whether the feature is configured,
+gets `{"enabled": false}`, and renders no button at all — deliberately, so you
+see the password form rather than a button that fails when clicked.
+
+You do not need it: `admin@racco1.gov.ph / admin1234` and the demo accounts
+cover everything. Turn it on only if you are changing the sign-in flow itself.
+
+### Make a separate client — never reuse the live one
+
+**Do not add `localhost` to the production OAuth client.** That client belongs
+to the deployed app, and editing it puts a live sign-in path at risk to test a
+local one. Make a second client instead. It costs nothing.
+
+1. Google Cloud Console → **APIs & Services → Credentials**
+2. **Create Credentials → OAuth client ID → Web application**
+3. Name it something obviously local, e.g. `NACC SYS V3 (local dev)`
+4. Under **Authorised JavaScript origins**, add exactly:
+   ```
+   http://localhost:5173
+   ```
+   Not `127.0.0.1`, not a trailing slash, not `https`. Google matches the
+   origin string literally, and a mismatch fails as a silent, buttonless page.
+
+   **Check the port the frontend window actually printed.** Vite takes 5174 if
+   5173 is already in use — from an earlier window still running — and says so
+   only in its own startup line. The origin then no longer matches and Google
+   refuses, with nothing on screen to explain why. Add whichever port it
+   reports, or close the stray window and restart.
+5. Leave **Authorised redirect URIs** empty — Google Identity Services returns
+   the credential to the page, so no redirect is used.
+6. Copy the **Client ID**. The client *secret* is not used and is not needed.
+
+### Point the local API at it
+
+In `backend/.env`:
+
+```
+GOOGLE_OAUTH_CLIENT_ID=<the id you just copied>
+```
+
+Optionally restrict which addresses may sign in:
+
+```
+GOOGLE_ALLOWED_DOMAINS=racco1.gov.ph
+```
+
+Leave it unset while testing with a personal Gmail address, or that address is
+refused before Google is ever consulted.
+
+**Restart the API window.** `run-local.bat` does not reload on settings
+changes, so a new client ID is not picked up until you restart it. Confirm:
+
+```
+curl http://localhost:8000/api/auth/google/config/
+```
+
+`{"enabled": true, ...}` means the button will render. `false` means the API
+did not see the variable — check the file and the restart before touching
+anything in Google.
+
+### Three things that look like bugs and are not
+
+- **Administrators are always refused**, with *"Administrator accounts sign in
+  with email and password, not Google."* This is deliberate: the admin account
+  is the recovery path, and tying it to a third-party identity provider means
+  an outage or a lost Google account locks the agency out of its own records.
+  Test with a **staff or psychologist** account.
+- **An unknown Google address does not sign in.** It creates an *access
+  request* for an administrator to approve, and the caller is told the request
+  is pending. That is the intended flow, not a failure. To sign in directly,
+  first create a user whose email is exactly your Google address, with role
+  Staff or Psychologist.
+- **A Google app left in Testing mode refuses every account** that is not on
+  its test-user list, and does so in a way that looks exactly like a broken
+  button. Either add your address under **OAuth consent screen → Test users**,
+  or publish the app.
+
+### Turning it back off
+
+Comment the variable out of `backend/.env` and restart the API. The button
+disappears again; nothing else changes.
+
 ## Starting over
 
 Delete `backend/db.sqlite3` and run `setup-local.bat` again for an empty
@@ -118,7 +202,7 @@ cd backend
 .venv\Scripts\python manage.py test
 ```
 
-379 tests. This is the local copy's real purpose: change something, prove it
+666 tests. This is the local copy's real purpose: change something, prove it
 still works, and only then send it to the live system.
 
 ## Manual setup, if you prefer
