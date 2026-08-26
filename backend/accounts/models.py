@@ -90,6 +90,24 @@ class User(AbstractUser):
                 kwargs["update_fields"] = update_fields | {"is_active"}
         super().save(*args, **kwargs)
 
+    def is_last_active_administrator(self):
+        """Is this the only administrator left who can still sign in?
+
+        Nothing in the product can mint a replacement: approving an access
+        request refuses the role, reactivating refuses administrators outright,
+        and creating one needs an administrator already signed in. The seeded
+        administrator is also the Django superuser, so /admin/ goes down with
+        it (is_active follows status). Deactivating this account therefore
+        leaves direct database access as the only way back into the system —
+        which is why both doors that could do it, archive/ and a plain status
+        edit, ask here first.
+        """
+        if not (self.role and self.role.role_name == Role.ADMINISTRATOR):
+            return False
+        return not (type(self).objects
+                    .filter(role__role_name=Role.ADMINISTRATOR, status=self.ACTIVE)
+                    .exclude(pk=self.pk).exists())
+
     @property
     def fullname(self):
         parts = [self.first_name, self.middle_initial, self.last_name]

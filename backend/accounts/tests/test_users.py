@@ -81,6 +81,41 @@ class UserManagementTest(APITestCase):
         self.assertEqual(login.status_code, 200)
         self.assertTrue(login.data["user"]["must_change_password"])
 
+    def test_last_administrator_cannot_be_deactivated(self):
+        """The agency's recovery account cannot be deactivated while it is the
+        only one. Nothing in the product can mint a replacement — approve/
+        reactivate both refuse administrators and creating one needs an
+        administrator — so allowing this locks everyone out permanently."""
+        self._auth("admin@racco1.gov.ph", "admin1234")
+        resp = self.client.post(f"/api/users/{self.admin.id}/archive/")
+        self.assertEqual(resp.status_code, 400)
+        self.admin.refresh_from_db()
+        self.assertEqual(self.admin.status, User.ACTIVE)
+        self.assertTrue(self.admin.is_active)
+
+    def test_last_administrator_cannot_be_deactivated_by_editing_status(self):
+        """archive/ is not the only door: `status` is writable on the ordinary
+        update endpoint, so the rule has to live where both paths pass."""
+        self._auth("admin@racco1.gov.ph", "admin1234")
+        resp = self.client.patch(f"/api/users/{self.admin.id}/",
+                                 {"status": "archived"}, format="json")
+        self.assertEqual(resp.status_code, 400)
+        self.admin.refresh_from_db()
+        self.assertEqual(self.admin.status, User.ACTIVE)
+        self.assertTrue(self.admin.is_active)
+
+    def test_administrator_can_be_deactivated_while_another_remains(self):
+        """The guard is about the LAST administrator, not administrators in
+        general — the handover flow depends on being able to archive one."""
+        self._auth("admin@racco1.gov.ph", "admin1234")
+        other = User.objects.create_user(
+            email="admin2@racco1.gov.ph", username="admin2",
+            password="admin1234", role=self.admin_role)
+        resp = self.client.post(f"/api/users/{other.id}/archive/")
+        self.assertEqual(resp.status_code, 200)
+        other.refresh_from_db()
+        self.assertEqual(other.status, User.ARCHIVED)
+
     def test_reactivate_on_an_active_user_is_400(self):
         self._auth("admin@racco1.gov.ph", "admin1234")
         resp = self.client.post(f"/api/users/{self.staff.id}/reactivate/")

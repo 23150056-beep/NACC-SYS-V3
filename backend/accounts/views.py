@@ -252,6 +252,12 @@ class UserViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def archive(self, request, pk=None):
         user = self.get_object()
+        if user.is_last_active_administrator():
+            return Response(
+                {"detail": "This is the only administrator account. Create the "
+                           "replacement administrator first — that hands over "
+                           "properly — then deactivate this one."},
+                status=status.HTTP_400_BAD_REQUEST)
         user.status = User.ARCHIVED
         # is_active follows status automatically (User.save).
         user.save(update_fields=["status", "updated_at"])

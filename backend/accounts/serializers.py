@@ -89,6 +89,16 @@ class UserWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"role": "Removing the role would lock this account out. "
                          "Deactivate the account instead."})
+        # `status` is writable here, so this endpoint is a second way to
+        # deactivate the last administrator — the one account the system
+        # cannot replace. Any move off ACTIVE counts: is_active follows
+        # status, so "pending" locks them out exactly as "archived" does.
+        if (self.instance is not None and attrs.get("status", User.ACTIVE) != User.ACTIVE
+                and self.instance.is_last_active_administrator()):
+            raise serializers.ValidationError(
+                {"status": "This is the only administrator account. Create the "
+                           "replacement administrator first — that hands over "
+                           "properly — then deactivate this one."})
         return attrs
 
     def create(self, validated_data):

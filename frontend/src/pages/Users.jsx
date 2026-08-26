@@ -390,6 +390,19 @@ export default function Users() {
 
   const pendingHandoffs = users.filter((u) => u.must_change_password && u.status !== 'archived').length;
 
+  // Mirrors the server guard in UserViewSet.archive. Nothing in the product can
+  // mint a replacement administrator — approving a request refuses the role,
+  // reactivating refuses administrators, and creating one needs an
+  // administrator signed in — so deactivating the last one locks everyone out.
+  // Raw `status`, not statusOf(): an admin owing a password change is still an
+  // active account, and that is exactly what the server counts.
+  const activeAdmins = useMemo(
+    () => users.filter((u) => u.role_name === 'Administrator' && u.status === 'active').length,
+    [users]);
+  const isLastAdmin = (u) => (
+    u?.role_name === 'Administrator' && u?.status === 'active' && activeAdmins <= 1);
+  const LAST_ADMIN_HINT = 'The only administrator account. Create the replacement administrator first.';
+
   const visible = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const rows = users.filter((u) => {
@@ -452,6 +465,8 @@ export default function Users() {
           label: 'Deactivate account',
           icon: 'user-x',
           tone: 'danger',
+          disabled: isLastAdmin(u),
+          hint: isLastAdmin(u) ? LAST_ADMIN_HINT : undefined,
           onSelect: () => setConfirm({ kind: 'archive', user: u }),
         },
     ];
@@ -697,7 +712,7 @@ export default function Users() {
                 ) : (
                   <>
                     <Button variant="secondary" size="sm" iconLeft={<Icon name="key-round" size={15} />} onClick={() => setConfirm({ kind: 'reset', user: form })}>Temporary password</Button>
-                    <Button variant="ghost" size="sm" iconLeft={<Icon name="user-x" size={15} />} style={{ color: 'var(--red-600)' }} onClick={() => setConfirm({ kind: 'archive', user: form })}>Deactivate</Button>
+                    <Button variant="ghost" size="sm" iconLeft={<Icon name="user-x" size={15} />} style={{ color: 'var(--red-600)' }} disabled={isLastAdmin(form)} title={isLastAdmin(form) ? LAST_ADMIN_HINT : undefined} onClick={() => setConfirm({ kind: 'archive', user: form })}>Deactivate</Button>
                   </>
                 )}
               </div>
