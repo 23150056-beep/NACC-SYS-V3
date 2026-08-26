@@ -13,9 +13,9 @@ Do not propose changes to them, do not debug them, do not touch `render.yaml`
 or `backend/entrypoint.sh` unless asked in so many words. The Infrastructure
 section below is background for reading code, not a to-do list.
 
-Bundles stay the way work leaves this machine (see below). A push to
-`cloud-setup` does auto-deploy Render — that is expected and is not a reason to
-avoid pushing.
+**Since 27 Aug 2026 work is pushed to a separate repository**, so that pushing
+cannot deploy anything. See "Getting changes onto GitHub" — the short version
+is that `git push` is safe and `git push origin` is not.
 
 ## Commit authorship
 
@@ -32,20 +32,36 @@ it stands.
 
 ## Getting changes onto GitHub
 
-**It depends where the agent is running, and the answer changed on 26 Aug 2026.**
+**There are two remotes, and only one of them is safe.** Changed 27 Aug 2026.
 
-- **Working directly in `C:\dev\nacc-sys-v3`** — which is the normal case now —
-  `git push origin cloud-setup` **just works**. The commits are already in this
-  repo, so the bundle dance below is a no-op: fetching a bundle into the same
-  repo the commits were made in merges them with themselves. Just push.
+| Remote | Repository | Deploys Render |
+|---|---|---|
+| `local-ver` | `NACC-SYS-V3.1-LOCAL-VER` | **no** |
+| `origin` | `nacc-sys-v3` | **yes, on `cloud-setup`** |
+
+The branch `cloud-setup` tracks `local-ver/main`, so:
+
+```
+git push
+```
+
+is correct and goes to the local-version repo. **Do not `git push origin`** —
+the owner has said he does not want Render touched, and that push is what
+deploys it. Pushing there needs asking first, in so many words.
+
+The branch is still called `cloud-setup` locally and lands as `main` on the new
+repo. The name is history, not intent.
+
+### If the push is refused
+
+Working directly in the repo, `git push` just works. Two other cases exist:
+
+- **The permission classifier blocks it.** The command is fine; the harness
+  declined to run it. Say so and hand the owner the exact command rather than
+  looking for another way to run it.
 - **Running in a sandbox**, `git push` returns 403 at the proxy and the GitHub
   MCP tools return `403 Resource not accessible by integration` even on a bare
-  branch creation. That is where the bundle workflow earns its keep.
-
-GitHub also renamed the repo to **`NACC-SYS-V3`** (uppercase). The remote here
-still says `nacc-sys-v3` and works by redirect; fixing it is
-`git remote set-url origin https://github.com/23150056-beep/NACC-SYS-V3.git`,
-but check Render's deploy settings at the same time.
+  branch creation. That is where the bundle workflow below earns its keep.
 
 For the sandbox case, the working method is a **git bundle**, applied in
 **Command Prompt**:
@@ -55,7 +71,7 @@ cd /d C:\dev\nacc-sys-v3
 git fetch "%USERPROFILE%\Downloads\<bundle-file>" cloud-setup
 git merge FETCH_HEAD
 git log --oneline -1
-git push origin cloud-setup
+git push
 ```
 
 Facts that cost real time when forgotten:
@@ -70,8 +86,7 @@ Facts that cost real time when forgotten:
   rather than a typo.
 - Build the bundle from a commit the owner definitely has:
   `git bundle create <file> <their-HEAD>..cloud-setup`.
-- Working branch is `cloud-setup`. Verify a push landed with the GitHub MCP
-  read tools (`list_branches`) rather than asking.
+- Verify a push landed with `git ls-remote local-ver` rather than asking.
 
 ## Infrastructure (live — reference only, see Scope)
 
