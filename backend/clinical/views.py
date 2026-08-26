@@ -1,3 +1,5 @@
+import logging
+
 from django.db.models import Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -14,7 +16,7 @@ from clinical.models import (
     InstrumentCatalog, AgencyFormTemplate, ConsentRecord,
     ClinicalInterviewRecord, ProblemEntry, PreAssessment,
     PsychologicalReport, RemarkNote, TreatmentPlan, ResultEntry, CaseReferral,
-    OpinionnaireInvite,
+    OpinionnaireInvite, SelfReportFlag,
 )
 from clinical.serializers import (
     InstrumentCatalogSerializer, AgencyFormTemplateSerializer,
@@ -24,7 +26,11 @@ from clinical.serializers import (
     TreatmentPlanSerializer, ResultEntrySerializer, CaseReferralSerializer,
     OpinionnaireInviteSerializer,
 )
+from clinical.self_report_detection import detect_concerns
+from clinical.self_report_model_check import start_model_check
 from clinical.services import extract_pdf_text
+
+logger = logging.getLogger(__name__)
 
 
 def _role(request):
@@ -448,6 +454,23 @@ class OpinionnaireInviteViewSet(viewsets.ModelViewSet):
         instance.delete()
 
 
+def _flag_self_report(invite, answers):
+    """Create a lexicon flag for every (question, answer) pair that fires.
+
+    One flag per question: `matched` names the first phrase that fired, which
+    is what a reviewer needs to see why. The unique constraint makes this safe
+    to call again over the same submission.
+    """
+    for question, answer in (answers or {}).items():
+        for hit in detect_concerns(question, answer):
+            SelfReportFlag.objects.get_or_create(
+                invite=invite, question=question,
+                source=SelfReportFlag.LEXICON,
+                defaults={"child": invite.child, "answer": answer,
+                          "matched": hit["phrase"]})
+            break
+
+
 class PublicOpinionnaireView(viewsets.ViewSet):
     """Unauthenticated, token-gated survey endpoints for the child's device.
     Exposes the agency form fields and the child's FIRST NAME only."""
@@ -495,4 +518,20 @@ class PublicOpinionnaireView(viewsets.ViewSet):
         invite.status = OpinionnaireInvite.SUBMITTED
         invite.submitted_at = timezone.now()
         invite.save(update_fields=["answers", "status", "submitted_at"])
+
+        # The lexicon runs here: deterministic, sub-millisecond, and the floor
+        # that holds when the model is unavailable. Nothing it does may fail
+        # the request — losing a child's answers to a detector bug would be far
+        # worse than missing a flag.
+        try:
+            _flag_self_report(invite, cleaned)
+        except Exception:                                    # noqa: BLE001
+            logger.exception("Self-report flagging failed for invite %s", invite.pk)
+
+        # The model runs out of band. A child on her own device does not wait.
+        try:
+            start_model_check(invite.pk)
+        except Exception:                                    # noqa: BLE001
+            logger.exception("Self-report model check could not start")
+
         return Response({"status": "submitted"})
