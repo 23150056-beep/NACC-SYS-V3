@@ -319,7 +319,7 @@ once the contracts exist.
 | Object storage | Cloudflare R2, bucket `nacc-v3-media` | Set by the bucket's location hint — **confirm this in the R2 dashboard** | Uploaded reports, consent scans |
 | Sign-in | Google Identity Services | Google global | Email and display name of staff and psychologists only. **No child data reaches Google.** |
 | Transactional mail | Brevo | Brevo (EU) | One message: "a case has been assigned to you", carrying the **case number only**. No child name, no case type, no clinical detail. |
-| AI | *removed* | — | — |
+| AI (writing assistant) | None — does not run on this deployment (see below) | — | — |
 
 **State it plainly, because a panel will ask:** under this deployment, no
 personal data is stored in the Philippines. Everything sits in Singapore or in
@@ -360,26 +360,39 @@ jurisdiction instead of scattered across several. `render.yaml` pins
    the agency's Data Protection Officer against the live text. Do not take this
    document's word for it.
 
-### Decision: there is no AI layer
+### Decision: the AI layer is on-premises only, and absent here
 
-The AI layer was removed outright on 2026-08-18, rather than shipped switched
-off. The reasoning, on the record:
+An AI writing assistant exists — see `DEPLOYMENT.md` — but it is a feature of
+the **on-premises** deployment only, and it ships off by default even there.
+It drafts pre-session briefs, document summaries, remark polishing and census
+narratives; a psychologist reviews and confirms every draft before it becomes
+clinical text, nothing is auto-applied, and no draft ever scores or classifies
+a child. It uses no external processor: the model runs locally via Ollama,
+restricted to loopback, so case text never leaves the machine it runs on.
 
-- **The on-premises option does not exist on this deployment.** Ollama is
-  restricted to loopback by design and these instances have no GPU, so V2's
-  "the model runs in the office and case text never leaves" cannot be true here.
-- **The hosted option was the only one left, and it was the wrong one.** It
-  would have sent clinical interview narratives and psychologist remarks — the
-  most sensitive free text in the system — to a processor outside the agency's
-  data-processing agreements.
-- **Nothing was lost.** Every AI output was a draft a psychologist had to
-  confirm. Care-gap alerts are deterministic rules over dates and case state and
-  never involved a model; they still run.
-- A switch that is unsafe to turn on is worse than no switch: it invites someone
-  to turn it on later without revisiting this section.
+That last property is exactly what this (cloud) deployment cannot offer, which
+is why the assistant does not run here:
 
-Summaries a psychologist had already confirmed are retained and displayed as
-ordinary clinical text — once confirmed they are that psychologist's words.
+- **The on-premises shape does not exist on this deployment.** Ollama is
+  restricted to loopback by design and these instances have no GPU, so "the
+  model runs in the office and case text never leaves" cannot be true on
+  rented cloud infrastructure.
+- **A hosted alternative would be the wrong trade.** It would send clinical
+  interview narratives and psychologist remarks — the most sensitive free text
+  in the system — to a processor outside the agency's data-processing
+  agreements, for the sake of a drafting convenience.
+- **Nothing here depends on it.** Every AI output is a draft a psychologist
+  has to confirm; care-gap alerts are deterministic rules over dates and case
+  state, never involved a model, and run the same with the assistant off.
+
+This is a constraint of the infrastructure, not a decision that could be
+switched by a setting: giving these instances a GPU and unblocking outbound
+access to a model host would still need its own data-processing agreement and
+its own entry in the table above before anything changed here.
+
+Summaries a psychologist had already confirmed, on a deployment where the
+assistant does run, are retained and displayed as ordinary clinical text —
+once confirmed they are that psychologist's words.
 
 ### The assignment email
 
@@ -397,8 +410,13 @@ Instrument copyright compliance is unaffected either way: no instrument
 questions, scales, scoring keys or norms are stored in V3, only titles and
 metadata.
 
-The Settings screen states which posture is active — on-premises shows
-"Private by design", hosted shows "Processed by a contracted provider".
+There is no hosted AI posture to display: a single on-premises provider is a
+deliberate design choice, not a setting, so the Settings screen has no
+provider control to show either way. Where the assistant card is visible at
+all, it states plainly that drafts are produced by a model running on that
+machine and case text is never sent to an outside service — which on this
+(cloud) deployment is moot, since no local runtime exists here for the switch
+to reach.
 
 ### Before real case data is loaded
 
@@ -546,8 +564,8 @@ untested backup is not a backup.
 - [ ] No instrument content in the database — spot-check
       `tbl_instrument_catalog` (titles/metadata only) and
       `tbl_agency_form_template` (attestation set).
-- [ ] If the AI layer is on, the provider is covered by a data-processing
-      agreement (§6).
+- [ ] AI writing assistant: not applicable to this deployment — it is an
+      on-premises-only feature and does not run here (§6).
 - [ ] Access matrix below still holds after any permission change.
 
 | Capability | Admin | Psychologist | Staff |

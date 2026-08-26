@@ -49,14 +49,21 @@ to `http://<server-ip>:8000/api` for other machines on the network.
 ### Optional: local AI (Ollama)
 ```powershell
 winget install ollama.ollama
-ollama pull qwen2.5:7b-instruct     # ~5 GB; needs ~8 GB free RAM
+ollama pull qwen2.5:3b-instruct     # ~2 GB; the model this branch was built and measured against
 ```
-Then in the app: Settings → AI Assistance → enable the master switch and leave
-the runtime provider set to **On-premises (Ollama)**. That provider restricts
-the endpoint to loopback, so case data never leaves this machine — which is the
-whole point of choosing the on-premises path.
-If the machine has only 8 GB RAM, keep AI off during heavy use — every
-feature works without it (care-gap alerts are deterministic and always on).
+The target office PC measured for this feature had **1.16 GB free RAM**, and
+a 2B model at Q8 quantization failed to allocate on it. `qwen2.5:3b-instruct`
+is the model this branch was actually built and measured against, and it ran
+within that budget.
+
+Then in the app: **Settings → Local writing assistant** → enable the master
+switch, then confirm it can reach the runtime with **Test connection** (or,
+from a terminal, `manage.py ai_check`). There is no runtime provider to
+choose — Ollama on loopback is the only provider this deployment has, by
+design, so case data never leaves this machine.
+If the machine is tight on RAM, keep the assistant off during heavy use —
+every other feature works without it (care-gap alerts are deterministic and
+always on).
 
 ## 2. Backup (do this weekly, before any update)
 
