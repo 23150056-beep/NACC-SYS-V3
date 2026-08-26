@@ -232,9 +232,7 @@ class PrefetchBriefsView(AssistantBaseView):
         visible = _visible_children(request)
         appts = Appointment.objects.filter(
             child__in=visible, status=Appointment.SCHEDULED,
-            start__date=today)
-        if _role(request) == Role.PSYCHOLOGIST:
-            appts = appts.filter(psychologist=request.user)
+            start__date=today, psychologist=request.user)
 
         child_ids = list(dict.fromkeys(appts.values_list("child_id", flat=True)))
         already = set(AssistantJob.objects.filter(

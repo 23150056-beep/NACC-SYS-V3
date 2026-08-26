@@ -97,3 +97,40 @@ class PrefetchTest(APITestCase):
         cfg.feature_brief = False
         cfg.save()
         self.assertEqual(self.client.post(URL).status_code, 503)
+
+
+class AdminPrefetchTest(APITestCase):
+    """An administrator has no sessions of their own to prepare for, so
+    prefetch must never queue another psychologist's appointments for them —
+    doing so would queue a brief per scheduled appointment agency-wide,
+    serialized behind the single generation lock, for a role with no clinical
+    relationship to those children."""
+
+    def setUp(self):
+        admin_role = Role.objects.create(role_name=Role.ADMINISTRATOR)
+        psy_role = Role.objects.create(role_name=Role.PSYCHOLOGIST)
+        self.admin = User.objects.create_user(
+            email="a@racco1.gov.ph", username="a", password="pass1234", role=admin_role)
+        self.psy = User.objects.create_user(
+            email="p@racco1.gov.ph", username="p", password="pass1234", role=psy_role)
+        self.child = Child.objects.create(fullname="Maria", assigned_psychologist=self.psy)
+        cfg = AssistantSetting.load()
+        cfg.enabled = True
+        cfg.save()
+        self.client.force_authenticate(self.admin)
+        self.addCleanup(self._clear_in_flight)
+
+    def _clear_in_flight(self):
+        with views._IN_FLIGHT_LOCK:
+            views._IN_FLIGHT.clear()
+
+    def test_administrator_prefetch_queues_nothing_for_a_psychologists_appointment(self):
+        start = timezone.now() + timedelta(hours=1)
+        Appointment.objects.create(
+            child=self.child, psychologist=self.psy, start=start,
+            status=Appointment.SCHEDULED)
+        with patch.object(views, "_start_prefetch_thread") as spawn:
+            res = self.client.post(URL)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["queued"], [])
+        spawn.assert_not_called()
