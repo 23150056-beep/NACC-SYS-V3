@@ -1,6 +1,6 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { askAssistant } from '../api/assistant';
-import { Icon, Input } from '../ui';
+import { Icon } from '../ui';
 
 /* The chatbot, docked on every protected screen.
  *
@@ -12,7 +12,8 @@ import { Icon, Input } from '../ui';
  * The echo line is not decoration. A turn can go wrong in exactly one way the
  * validator cannot catch: the model hears "this week" as "today" and produces
  * a plausible answer to a question nobody asked. Showing what was understood,
- * above the answer, is the mitigation.
+ * above the answer, is the mitigation — so it stays visible no matter how the
+ * chrome around it changes.
  */
 
 const SUGGESTIONS = [
@@ -28,10 +29,31 @@ const MAX_QUESTION = 150;
 function Line({ children, muted = false }) {
   return (
     <div style={{
-      fontSize: 'var(--text-sm)',
+      fontSize: 13.5,
+      lineHeight: 1.55,
       color: muted ? 'var(--text-muted)' : 'var(--text-body)',
-      padding: '3px 0',
+      padding: '2px 0',
     }}>{children}</div>
+  );
+}
+
+/* Three dots, the gesture everyone already reads as "it is working". */
+function Typing() {
+  return (
+    <div style={{ display: 'flex', gap: 4, alignItems: 'center', padding: '4px 2px' }}
+         aria-label="The assistant is answering">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="racco-typing-dot"
+          style={{
+            width: 6, height: 6, borderRadius: '50%',
+            background: 'var(--text-muted)',
+            animationDelay: `${i * 0.16}s`,
+          }}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -42,10 +64,10 @@ function Answer({ result }) {
     return (
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
         <span style={{
-          fontFamily: 'var(--font-display)', fontSize: 'var(--text-2xl)',
-          fontWeight: 700, color: 'var(--text-strong)',
+          fontFamily: 'var(--font-display)', fontSize: 26,
+          fontWeight: 700, color: 'var(--text-strong)', lineHeight: 1.1,
         }}>{result.count}</span>
-        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
+        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
           {result.status === 'any' ? 'children on record' : `${result.status} children`}
         </span>
       </div>
@@ -74,7 +96,7 @@ function Answer({ result }) {
         <Line muted>No open concern matches that wording.</Line>
         {result.available?.length > 0 && (
           <div style={{ marginTop: 6 }}>
-            <Line muted>Concerns currently recorded in your caseload:</Line>
+            <Line muted>Concerns recorded in your caseload:</Line>
             {result.available.map((d) => <Line key={d}>· {d}</Line>)}
           </div>
         )}
@@ -134,33 +156,46 @@ export default function AssistantPanel() {
   const [busy, setBusy] = useState(false);
   const [turns, setTurns] = useState([]);
   const scroller = useRef(null);
+  const input = useRef(null);
+
+  const toBottom = useCallback(() => {
+    requestAnimationFrame(() => {
+      if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
+    });
+  }, []);
+
+  // Keep the newest turn in view while the dots are showing, not only after
+  // the answer lands.
+  useEffect(() => { if (open) toBottom(); }, [open, turns, busy, toBottom]);
+  useEffect(() => { if (open) input.current?.focus(); }, [open]);
 
   const send = useCallback(async (text) => {
     const asked = (text ?? '').trim();
     if (!asked || busy) return;
     setBusy(true);
     setQuestion('');
-    let turn;
+    // The question appears immediately, the way a message does everywhere
+    // else. Waiting for the round trip to show it makes the app feel broken.
+    setTurns((prev) => [...prev, { asked, pending: true }]);
+
+    let answered;
     try {
-      const data = await askAssistant(asked);
-      turn = { asked, ...data };
+      answered = await askAssistant(asked);
     } catch (err) {
       // 503 is the assistant switched off or the runtime down. Neither is an
       // error the user caused, and neither may break the panel.
       const off = err?.response?.status === 503;
-      turn = {
-        asked,
+      answered = {
         ok: false,
         message: off
           ? 'The assistant is unavailable right now. Everything else still works.'
           : 'Something went wrong on the way to the assistant.',
       };
     }
-    setTurns((prev) => [...prev, turn]);
+    setTurns((prev) => prev.map((t, i) =>
+      i === prev.length - 1 ? { ...t, ...answered, pending: false } : t));
     setBusy(false);
-    requestAnimationFrame(() => {
-      if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
-    });
+    input.current?.focus();
   }, [busy]);
 
   if (!open) {
@@ -172,81 +207,136 @@ export default function AssistantPanel() {
         style={{
           position: 'fixed', right: 20, bottom: 20, zIndex: 60,
           display: 'flex', alignItems: 'center', gap: 8,
-          padding: '10px 16px', cursor: 'pointer',
+          padding: '11px 18px', cursor: 'pointer',
           background: 'var(--brand)', color: 'var(--text-on-brand)',
           border: 'none', borderRadius: 'var(--radius-pill)',
           boxShadow: 'var(--shadow-lg)',
-          fontFamily: 'var(--font-sans)', fontSize: 'var(--text-sm)', fontWeight: 600,
+          fontFamily: 'var(--font-sans)', fontSize: 13.5, fontWeight: 600,
+          transition: 'transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out)',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'translateY(-2px)';
+          e.currentTarget.style.boxShadow = 'var(--shadow-xl)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'none';
+          e.currentTarget.style.boxShadow = 'var(--shadow-lg)';
         }}
       >
-        <Icon name="message-circle" size={18} />
+        <Icon name="sparkles" size={17} />
         Ask
       </button>
     );
   }
 
+  const empty = turns.length === 0;
+
   return (
     <div
       style={{
         position: 'fixed', right: 20, bottom: 20, zIndex: 60,
-        width: 'min(380px, calc(100vw - 40px))',
-        maxHeight: 'min(560px, calc(100vh - 40px))',
+        width: 'min(390px, calc(100vw - 32px))',
+        height: 'min(580px, calc(100vh - 40px))',
         display: 'flex', flexDirection: 'column',
         background: 'var(--surface)',
         border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-lg)',
+        borderRadius: 'var(--radius-xl)',
         boxShadow: 'var(--shadow-xl)',
         overflow: 'hidden',
+        animation: 'racco-chat-panel-in var(--dur-base) var(--ease-out) both',
       }}
     >
+      {/* Header */}
       <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: 'var(--space-3) var(--space-4)',
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '12px 14px',
         borderBottom: '1px solid var(--border)',
+        background: 'var(--surface-sunken)',
       }}>
         <div style={{
-          fontFamily: 'var(--font-display)', fontWeight: 700,
-          fontSize: 'var(--text-sm)', color: 'var(--text-strong)',
-        }}>Assistant</div>
+          width: 30, height: 30, borderRadius: '50%',
+          background: 'var(--brand)', color: 'var(--text-on-brand)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flex: 'none',
+        }}>
+          <Icon name="sparkles" size={15} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontFamily: 'var(--font-display)', fontWeight: 700,
+            fontSize: 13.5, color: 'var(--text-strong)', lineHeight: 1.2,
+          }}>Assistant</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            {busy ? 'Answering…' : 'Answers from your own records'}
+          </div>
+        </div>
+        {turns.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setTurns([])}
+            aria-label="Clear this conversation"
+            title="Clear"
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: 'var(--text-muted)', display: 'flex', padding: 5,
+              borderRadius: 'var(--radius-sm)',
+            }}
+          >
+            <Icon name="eraser" size={15} />
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setOpen(false)}
           aria-label="Close the assistant"
           style={{
             background: 'none', border: 'none', cursor: 'pointer',
-            color: 'var(--text-muted)', display: 'flex', padding: 4,
+            color: 'var(--text-muted)', display: 'flex', padding: 5,
+            borderRadius: 'var(--radius-sm)',
           }}
         >
           <Icon name="x" size={16} />
         </button>
       </div>
 
+      {/* Conversation */}
       <div
         ref={scroller}
         className="racco-scroll"
-        style={{ flex: 1, overflowY: 'auto', padding: 'var(--space-4)' }}
+        style={{
+          flex: 1, overflowY: 'auto', padding: '16px 14px',
+          display: 'flex', flexDirection: 'column', gap: 16,
+          background: 'var(--bg-app)',
+        }}
       >
-        {turns.length === 0 && (
-          <div>
-            <Line muted>
-              I answer from your own records — your schedule, your children,
-              and who needs follow-up.
-            </Line>
-            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {empty && (
+          <div className="racco-chat-turn">
+            <div style={{
+              background: 'var(--surface)', border: '1px solid var(--border)',
+              borderRadius: '4px 14px 14px 14px', padding: '11px 13px',
+            }}>
+              <Line muted>
+                I answer from your own records — your schedule, your children,
+                and who needs follow-up. English or Tagalog, whichever you
+                prefer.
+              </Line>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 12 }}>
               {SUGGESTIONS.map((s) => (
                 <button
                   key={s}
                   type="button"
                   onClick={() => send(s)}
                   style={{
-                    textAlign: 'left', cursor: 'pointer',
-                    padding: '7px 10px',
-                    background: 'var(--surface-sunken)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius-md)',
-                    color: 'var(--text-body)', font: 'inherit',
-                    fontSize: 'var(--text-sm)',
+                    cursor: 'pointer', padding: '7px 12px',
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border-strong)',
+                    borderRadius: 'var(--radius-pill)',
+                    color: 'var(--text-body)', font: 'inherit', fontSize: 12.5,
+                    transition: 'background var(--dur-fast) var(--ease-out)',
                   }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-brand-soft)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--surface)'; }}
                 >{s}</button>
               ))}
             </div>
@@ -254,63 +344,115 @@ export default function AssistantPanel() {
         )}
 
         {turns.map((t, i) => (
-          <div key={i} style={{ marginBottom: 'var(--space-4)' }}>
-            <div style={{
-              fontSize: 'var(--text-sm)', fontWeight: 600,
-              color: 'var(--text-strong)', marginBottom: 4,
-            }}>{t.asked}</div>
-
-            {/* What the system understood, above the answer it gives. */}
-            {t.echo && (
+          <div key={i} className="racco-chat-turn"
+               style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {/* What was asked — a bubble on the user's side, as everywhere. */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <div style={{
-                fontSize: 'var(--text-xs)', color: 'var(--text-muted)',
-                marginBottom: 6, fontStyle: 'italic',
-              }}>{t.echo}</div>
-            )}
+                maxWidth: '85%',
+                background: 'var(--brand)', color: 'var(--text-on-brand)',
+                borderRadius: '14px 14px 4px 14px',
+                padding: '8px 12px', fontSize: 13.5, lineHeight: 1.45,
+                wordBreak: 'break-word',
+              }}>{t.asked}</div>
+            </div>
 
-            <div style={{
-              padding: 'var(--space-3)',
-              background: 'var(--surface-sunken)',
-              borderRadius: 'var(--radius-md)',
-            }}>
-              {t.ok ? <Answer result={t.result} /> : <Line muted>{t.message}</Line>}
+            {/* The reply, on the assistant's side. */}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <div style={{
+                width: 24, height: 24, borderRadius: '50%', flex: 'none',
+                background: 'var(--surface-brand-soft)', color: 'var(--brand)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                marginTop: 2,
+              }}>
+                <Icon name="sparkles" size={12} />
+              </div>
+              <div style={{
+                flex: 1, minWidth: 0,
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: '4px 14px 14px 14px',
+                padding: '10px 12px',
+              }}>
+                {t.pending ? <Typing /> : (
+                  <>
+                    {/* What the system understood, above the answer it gives.
+                        This is the mitigation for a silently dropped filter. */}
+                    {t.echo && (
+                      <div style={{
+                        fontSize: 11, color: 'var(--text-muted)',
+                        marginBottom: 7, paddingBottom: 7,
+                        borderBottom: '1px solid var(--border)',
+                        display: 'flex', alignItems: 'center', gap: 5,
+                      }}>
+                        <Icon name="search" size={11} />
+                        {t.echo}
+                      </div>
+                    )}
+                    {t.ok ? <Answer result={t.result} /> : <Line muted>{t.message}</Line>}
+                  </>
+                )}
+              </div>
             </div>
           </div>
         ))}
-
-        {busy && <Line muted>Thinking…</Line>}
       </div>
 
+      {/* Composer */}
       <form
         onSubmit={(e) => { e.preventDefault(); send(question); }}
         style={{
-          display: 'flex', gap: 8, alignItems: 'center',
-          padding: 'var(--space-3) var(--space-4)',
+          display: 'flex', gap: 8, alignItems: 'flex-end',
+          padding: '10px 12px',
           borderTop: '1px solid var(--border)',
+          background: 'var(--surface)',
         }}
       >
-        <Input
-          value={question}
-          onChange={(e) => setQuestion(e.target.value.slice(0, MAX_QUESTION))}
-          placeholder="Ask about your caseload…"
-          size="sm"
-          disabled={busy}
-        />
+        <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+          <input
+            ref={input}
+            value={question}
+            onChange={(e) => setQuestion(e.target.value.slice(0, MAX_QUESTION))}
+            placeholder="Ask about your caseload…"
+            disabled={busy}
+            aria-label="Ask the assistant"
+            style={{
+              width: '100%', boxSizing: 'border-box',
+              padding: '10px 14px',
+              background: 'var(--surface-sunken)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-pill)',
+              color: 'var(--text-body)', font: 'inherit', fontSize: 13.5,
+              outline: 'none',
+            }}
+            onFocus={(e) => { e.currentTarget.style.boxShadow = 'var(--shadow-focus)'; }}
+            onBlur={(e) => { e.currentTarget.style.boxShadow = 'none'; }}
+          />
+        </div>
         <button
           type="submit"
           disabled={busy || !question.trim()}
           aria-label="Send"
           style={{
-            flex: 'none', display: 'flex', padding: 8,
+            flex: 'none', display: 'flex', alignItems: 'center',
+            justifyContent: 'center', width: 38, height: 38,
             cursor: busy || !question.trim() ? 'default' : 'pointer',
             opacity: busy || !question.trim() ? 0.4 : 1,
             background: 'var(--brand)', color: 'var(--text-on-brand)',
-            border: 'none', borderRadius: 'var(--radius-md)',
+            border: 'none', borderRadius: '50%',
+            transition: 'opacity var(--dur-fast) var(--ease-out)',
           }}
         >
-          <Icon name="send" size={16} />
+          <Icon name="arrow-up" size={17} />
         </button>
       </form>
+
+      {question.length > MAX_QUESTION - 30 && (
+        <div style={{
+          fontSize: 11, color: 'var(--text-muted)', textAlign: 'right',
+          padding: '0 14px 8px',
+        }}>{MAX_QUESTION - question.length} characters left</div>
+      )}
     </div>
   );
 }

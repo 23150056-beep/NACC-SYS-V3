@@ -369,6 +369,45 @@ tr:focus-visible {
   }
 }
 
+/* Chat panel: each turn rises into place, and the assistant "thinks" with the
+   three dots people already recognise from every messenger. */
+@keyframes racco-chat-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes racco-chat-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes racco-typing-dot {
+  0%, 60%, 100% {
+    opacity: 0.28;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
+}
+.racco-typing-dot {
+  animation: racco-typing-dot 1.25s infinite ease-in-out;
+}
+.racco-chat-turn {
+  animation: racco-chat-rise var(--dur-base) var(--ease-out) both;
+}
+
 /* Login card. Two columns on a desktop, stacked on a phone — inline styles
    cannot express a media query, and this is the one screen every user meets
    before they have any reason to trust the system. */
