@@ -106,7 +106,7 @@ class Command(BaseCommand):
 
         runs, latencies = 0, []
         counts = {"invented names": 0, "repeated lines": 0,
-                  "repeated words": 0, "language drift": 0}
+                  "repeated words": 0}
 
         for child in children:
             prompt = prompts.build_brief_prompt(child)
@@ -120,10 +120,14 @@ class Command(BaseCommand):
                     continue
                 runs += 1
                 latencies.append(ms)
-                flags = self._score(prompt, text, expect_english=True)
+                # BRIEF_SYSTEM does not ask for English — it asks for the
+                # facts it was given. A brief quoting a Taglish remark is
+                # correct, so scoring drift here measured a requirement that
+                # does not exist and reported 8% against briefs that were fine.
+                flags = self._score(prompt, text, expect_english=False)
                 for key in flags:
                     counts[key] += 1
-                self._report(rep, ms, flags)
+                self._report(rep, ms, flags, text=text)
 
         return ("BRIEFS", runs, counts, self._median(latencies))
 
@@ -149,20 +153,40 @@ class Command(BaseCommand):
                 flags = self._score(prompt, text, expect_english=True)
                 for key in flags:
                     counts[key] += 1
-                self._report(rep, ms, flags, sample=text)
+                self._report(rep, ms, flags, sample=text, text=text)
 
         return ("REMARK POLISH", runs, counts, self._median(latencies))
 
     # -- output -----------------------------------------------------------
 
-    def _report(self, rep, ms, flags, sample=None):
+    def _report(self, rep, ms, flags, sample=None, text=None):
         if not flags:
             self.stdout.write(f"    rep{rep}: clean  ({ms} ms)")
             return
         parts = ", ".join(f"{k}={v}" for k, v in flags.items())
         self.stdout.write(f"    rep{rep}: {parts}  ({ms} ms)")
+        # A flag without its surrounding text is a number nobody can act on —
+        # it forces whoever reads the run to go and reproduce it by hand, which
+        # is how two false-positive detectors survived long enough to put wrong
+        # rates in a report. Every flag shows where it fired.
+        if text:
+            for label, items in flags.items():
+                if label == "language drift":
+                    continue          # markers are scattered; the sample below shows them
+                for item in items[:3]:
+                    self.stdout.write(f"        {label}: {self._context(text, item)}")
         if sample:
             self.stdout.write(f"        out: {sample.strip()[:140]}")
+
+    @staticmethod
+    def _context(text, needle, width=60):
+        """The offending phrase with enough either side to judge it."""
+        flat = " ".join(text.split())
+        i = flat.find(needle)
+        if i < 0:
+            return f"(…{needle}…)"
+        start = max(0, i - width // 2)
+        return "…" + flat[start:i + len(needle) + width // 2] + "…"
 
     @staticmethod
     def _median(values):

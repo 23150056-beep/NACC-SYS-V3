@@ -139,3 +139,18 @@ class RepeatedPhrasesTest(SimpleTestCase):
         # "na" is a Tagalog linker, not an English reduplication connector.
         out = "Nakikisalamuha na Nakikisalamuha sa ibang bata."
         self.assertIn("Nakikisalamuha", evaluation.repeated_phrases(out))
+
+    def test_ignores_a_word_repeated_across_a_heading_boundary(self):
+        # "**Percival's Case Brief** **Case Status:** Active" — "Case" twice in
+        # two adjacent headings is document structure, not a stutter. Counting
+        # across boundaries put a false 13% defect rate into a 60-run report.
+        out = "**Percival's Case Brief**\n**Case Status:** Active and engaged."
+        self.assertEqual([], evaluation.repeated_phrases(out))
+
+    def test_ignores_a_word_repeated_across_a_sentence_boundary(self):
+        out = "Recent Changes. Recent progress has been steady."
+        self.assertEqual([], evaluation.repeated_phrases(out))
+
+    def test_still_flags_a_stutter_inside_one_segment(self):
+        out = "**Case Status:** Nakikisalamuha na Nakikisalamuha sa ibang bata."
+        self.assertIn("Nakikisalamuha", evaluation.repeated_phrases(out))

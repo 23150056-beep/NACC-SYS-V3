@@ -82,8 +82,18 @@ def repeated_phrases(output, window=2, min_length=4):
     tight — a word legitimately reused later in a sentence ("settling in well
     and mixing well") is not a stutter.
     """
-    words = re.findall(r"\b[\w'-]+\b", output)
+    # Repetition only counts inside one segment. A word appearing in two
+    # adjacent headings — "**Percival's Case Brief** **Case Status:**" — is
+    # document structure, not a stutter, and counting across that boundary
+    # reported a false 13% defect rate across 60 runs.
     found = []
+    for segment in re.split(r"[.!?;:]|\*\*|\n", output):
+        _scan_segment(segment, window, min_length, found)
+    return found
+
+
+def _scan_segment(segment, window, min_length, found):
+    words = re.findall(r"\b[\w'-]+\b", segment)
     for i, word in enumerate(words):
         if len(word) < min_length:
             continue
