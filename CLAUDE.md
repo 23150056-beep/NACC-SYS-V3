@@ -198,12 +198,40 @@ Built 26 Aug 2026. A docked panel on every protected screen, backed by
   generating waits for it: measured 1.7s idle, ~19s under that contention.
   Deliberate — concurrent runs on four cores are slower, not parallel.
 
+## Self-report concerns
+
+Built 27 Aug 2026. Flags distress in a child's own words. Design in
+`docs/superpowers/specs/2026-08-27-self-report-concerns-design.md`.
+
+- **The children write Ilocano, not only Taglish.** The agency is RACCO 1 and
+  the self-reports include `mabutbuteng` (scared) and `adda … problema` (there
+  is a problem). A Tagalog-only list passes both.
+  `self_report_detection.LEXICON_REVIEWED["ilo"]` is **False** — the Ilocano
+  entries have not been read by a speaker. That gates launch, not building.
+- **Detection reads the (question, answer) pair, never the answer alone.** 62 of
+  122 reports answer "Who do you talk to when you are sad?" with "Nobody" or
+  "Ako lang" — the largest signal in the data, invisible to anything reading
+  answers on their own.
+- **The lexicon is the floor; the model can only add.** Measured
+  `ai_eval --feature self_report`: the model **missed 28%** (10/36), including
+  the Ilocano disclosure 3 times out of 3 and "Lagi akong umiiyak sa gabi"
+  once. The lexicon caught every string the model missed. Never make the model
+  the primary detector.
+- **No recall figure exists and none may be quoted from demo data** — 366
+  answers are only 17 distinct strings, so any number measures the seeder.
+- **Self-reports are exempt from the carry-history control.** The child's own
+  words are not a colleague's prior opinions. Case notes are unaffected: they
+  still follow `assignee_sees_history`, which defaults to True and filters at
+  read time rather than deleting anything.
+- `manage.py scan_self_reports` backfills and is idempotent; re-run it after
+  adding a phrase.
+
 ## Before committing or bundling anything
 
 Both of these, every time:
 
 ```
-cd backend && .venv/Scripts/python.exe manage.py test   # 582 tests, ~13 min
+cd backend && .venv/Scripts/python.exe manage.py test   # 654 tests, ~14 min
 cd frontend && npm run lint && npm run build
 ```
 
