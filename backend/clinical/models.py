@@ -355,3 +355,56 @@ class ProblemEntry(models.Model):
     class Meta:
         db_table = "tbl_problem_entry"
         ordering = ["resolved", "-identified_on", "-id"]
+
+
+class SelfReportFlag(models.Model):
+    """A child's own words, flagged as worth reading.
+
+    It asserts exactly one thing: this child said something worth reading. It
+    is never a claim that anyone missed anything, that a case is mishandled, or
+    that the child is at risk — those are conclusions for a human who has read
+    the record, and a system that matched a phrase has not read the record.
+
+    The question and answer are snapshotted rather than followed by reference,
+    so editing a form template later cannot rewrite what a child was asked.
+    """
+    LEXICON = "lexicon"
+    MODEL = "model"
+    SOURCE_CHOICES = [(LEXICON, "Phrase list"), (MODEL, "Local model")]
+
+    invite = models.ForeignKey(
+        OpinionnaireInvite, on_delete=models.CASCADE, related_name="flags")
+    # Denormalised and indexed: every query here is "flags for these children".
+    child = models.ForeignKey(
+        Child, on_delete=models.CASCADE, related_name="self_report_flags")
+    question = models.TextField()
+    answer = models.TextField()
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES)
+    matched = models.CharField(
+        max_length=255, blank=True,
+        help_text="The phrase that fired, or the model's one-line reason")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # Acknowledgement. Without it flags accumulate, the list stops being read,
+    # and the feature becomes decoration.
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        blank=True, related_name="self_report_flags_reviewed")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_note = models.TextField(blank=True)
+
+    class Meta:
+        db_table = "tbl_self_report_flag"
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["child", "reviewed_at"])]
+        # One row per (invite, question, source), so re-scanning is idempotent
+        # while still letting both detectors flag the same answer.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["invite", "question", "source"],
+                name="uniq_self_report_flag_per_question_source"),
+        ]
+
+    @property
+    def is_reviewed(self):
+        return self.reviewed_at is not None
