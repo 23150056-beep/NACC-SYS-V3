@@ -53,6 +53,10 @@ CHAT_CASES = [
     ("gaps en", "Who still needs a follow-up?", "list_care_gaps", False),
     ("gaps tl", "Sino ang kailangan ng follow-up?", "list_care_gaps", False),
     ("chitchat", "Good morning!", "answer_directly", False),
+    # Regression: seen in the browser answering "40 active children".
+    ("staff count en", "how many psychologist are in the system?",
+     "answer_directly", False),
+    ("staff count tl", "Ilan ang mga psychologist dito?", "answer_directly", False),
 ]
 
 
@@ -258,6 +262,7 @@ class Command(BaseCommand):
                 if tool != expected:
                     found["wrong tool"] = [f"{tool or 'prose'} != {expected}"]
                 call = tools.validate(tool or "answer_directly", raw)
+                call = tools.correct_obvious_misroute(question, call)
                 if not call.ok:
                     found["rejected"] = [call.error]
                 elif expect_hits:

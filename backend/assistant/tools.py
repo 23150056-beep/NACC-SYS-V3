@@ -101,6 +101,49 @@ def validate(tool, raw_args):
     return ToolCall(tool=tool, args=args, echo=spec["echo"](args))
 
 
+
+# --- misroute guard --------------------------------------------------------
+# Observed in the browser: "how many psychologist are in the system?" answered
+# "40 active children". The cause was count_my_children's own description,
+# which said "Use for questions starting 'how many'". Rewording it fixed two
+# phrasings out of four — not good enough for a tool that answers with a
+# confident number, and a confidently wrong answer is the worst failure this
+# chatbot has. So the wording change is backed by a deterministic check.
+
+_PEOPLE_WHO_WORK_HERE = (
+    "psychologist", "psychologists", "psych", "psikologo", "psychologo",
+    "staff", "employee", "employees", "worker", "workers", "kawani",
+    "tauhan", "empleyado", "user", "users", "account", "accounts",
+    "administrator", "administrators", "admin", "admins", "doctor", "doctors",
+    "social worker", "social workers",
+)
+
+_ABOUT_CHILDREN = (
+    "child", "children", "kid", "kids", "bata", "batang", "case", "cases",
+    "caseload", "ward", "wards", "client", "clients",
+)
+
+
+def correct_obvious_misroute(question, call):
+    """Stop a child count being served as the answer to a staff question.
+
+    Only downgrades to `answer_directly`, never upgrades or re-routes: the
+    guard can make the assistant decline, and cannot make it assert anything.
+    A question naming both — "how many children were referred by staff?" — is
+    left alone, because children are the subject and the tool can answer it.
+    """
+    if not call.ok or call.tool != "count_my_children":
+        return call
+    low = _PUNCT.sub(" ", str(question or "").lower())
+    words = f" {low} "
+    names_people = any(f" {w} " in words for w in _PEOPLE_WHO_WORK_HERE)
+    names_children = any(f" {w} " in words for w in _ABOUT_CHILDREN)
+    if names_people and not names_children:
+        return ToolCall(tool="answer_directly", args={"reason": "unsupported"},
+                        echo="", )
+    return call
+
+
 # --- resolvers ------------------------------------------------------------
 # Each takes (request, validated args) and returns a plain dict the frontend
 # renders. The model never sees any of this — which is precisely why a
@@ -277,8 +320,11 @@ REGISTRY = {
     },
     "count_my_children": {
         "description": (
-            "How many children are in the user's caseload. Use for questions "
-            "starting 'how many'. Do NOT use for schedule questions."),
+            "How many CHILDREN are in the user's caseload. Counts children "
+            "only. Do NOT use to count psychologists, staff, users, "
+            "appointments, reports, or anything else — this tool can only "
+            "count children, and answering a question about staff with a "
+            "child count is wrong. Do NOT use for schedule questions."),
         "schema": {"status": {"enum": ["active", "terminated", "any"],
                               "required": True}},
         "echo": lambda a: f"Looking up: how many {a['status']} children you have",
@@ -313,7 +359,11 @@ REGISTRY = {
         "description": (
             "Use when NO other tool fits: greetings, thanks, sign-offs, general "
             "knowledge, questions about what words mean, or anything not about "
-            "this user's schedule, children or caseload."),
+            "this user's schedule, children or caseload. This includes "
+            "questions about PEOPLE WHO WORK HERE — how many psychologists, "
+            "staff or users the system has — and questions about the system "
+            "itself. Answering one of those with a child count would be "
+            "wrong; use this instead."),
         # `reason` is telemetry, not logic — the response is the same fixed
         # copy either way. Requiring it turned the one case in 28 where the
         # model omitted it into a failed turn, so it defaults instead.

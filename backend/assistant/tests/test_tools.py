@@ -139,3 +139,59 @@ class AnswerDirectlyTest(SimpleTestCase):
     def test_still_coerces_a_reason_when_given(self):
         call = tools.validate("answer_directly", {"reason": "general_knowledge"})
         self.assertEqual(call.args["reason"], "general_knowledge")
+
+
+class MisrouteGuardTest(SimpleTestCase):
+    """Observed in the browser: "how many psychologist are in the system?"
+    answered "40 active children".
+
+    The cause was this tool's own description — it said "Use for questions
+    starting 'how many'", so the model obeyed. Rewording it fixed 2 of 4
+    phrasings, which is not good enough for a tool that answers with a
+    confident number. A confidently wrong answer is worse than "I can't".
+    """
+
+    def _guard(self, question, tool="count_my_children", args=None):
+        call = tools.validate(tool, args if args is not None else {"status": "active"})
+        return tools.correct_obvious_misroute(question, call)
+
+    def test_counting_psychologists_is_not_a_child_count(self):
+        self.assertEqual("answer_directly",
+                         self._guard("how many psychologist are in the system?").tool)
+
+    def test_counting_staff_is_not_a_child_count(self):
+        self.assertEqual("answer_directly",
+                         self._guard("How many staff are in the system?").tool)
+
+    def test_counting_users_is_not_a_child_count(self):
+        self.assertEqual("answer_directly",
+                         self._guard("How many users are there?").tool)
+
+    def test_the_tagalog_phrasing_is_guarded_too(self):
+        self.assertEqual("answer_directly",
+                         self._guard("Ilan ang mga psychologist dito?").tool)
+
+    def test_a_real_child_count_is_untouched(self):
+        call = self._guard("How many children am I handling?")
+        self.assertEqual("count_my_children", call.tool)
+        self.assertEqual("active", call.args["status"])
+
+    def test_a_tagalog_child_count_is_untouched(self):
+        self.assertEqual("count_my_children", self._guard("Ilan ang mga bata ko?").tool)
+
+    def test_a_question_naming_both_still_counts_children(self):
+        # "children" is the subject; "staff" is incidental. Guarding this would
+        # refuse a question the tool can actually answer.
+        self.assertEqual("count_my_children",
+                         self._guard("How many children were referred by staff?").tool)
+
+    def test_it_only_guards_the_count_tool(self):
+        # A psychologist's NAME in a summary lookup must not be guarded.
+        call = self._guard("Tell me about the psychologist's case for Ana",
+                           tool="get_child_summary", args={"name": "Ana"})
+        self.assertEqual("get_child_summary", call.tool)
+
+    def test_a_rejected_call_is_left_alone(self):
+        call = tools.validate("count_my_children", {"status": "someday"})
+        guarded = tools.correct_obvious_misroute("how many staff?", call)
+        self.assertFalse(guarded.ok)

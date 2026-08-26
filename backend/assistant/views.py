@@ -505,6 +505,10 @@ class AssistantAskView(AssistantBaseView):
             name, raw_args = "answer_directly", {"reason": "unsupported"}
 
         call = tools.validate(name, raw_args)
+        # Deterministic backstop for the one misroute seen in the wild: "how
+        # many psychologists are in the system?" answered "40 active children".
+        # It can only make the assistant decline, never assert.
+        call = tools.correct_obvious_misroute(question, call)
         AssistantJob.objects.create(
             job_type="chat", input_ref=question[:150],
             output_text=f"{call.tool}({call.args})"[:2000],

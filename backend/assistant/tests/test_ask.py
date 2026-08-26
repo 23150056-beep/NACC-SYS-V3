@@ -134,3 +134,25 @@ class AskScopeTest(AskTestBase):
     def test_cannot_summarise_another_psychologists_child(self):
         res = self._ask("tell me about Juan", "get_child_summary", {"name": "Juan"})
         self.assertEqual(res.data["result"]["match"], "none")
+
+
+class AskMisrouteTest(AskTestBase):
+    """Seen in the browser: "how many psychologist are in the system?" came
+    back "40 active children" — a confident, wrong number."""
+
+    def test_a_staff_question_does_not_return_a_child_count(self):
+        res = self._ask("how many psychologist are in the system?",
+                        "count_my_children", {"status": "active"})
+        self.assertEqual("answer_directly", res.data["tool"])
+        self.assertNotIn("count", res.data["result"])
+
+    def test_it_says_what_it_can_do_instead(self):
+        res = self._ask("How many staff are in the system?",
+                        "count_my_children", {"status": "active"})
+        self.assertIn("children", res.data["result"]["text"].lower())
+
+    def test_a_real_child_count_still_answers(self):
+        res = self._ask("How many children am I handling?",
+                        "count_my_children", {"status": "active"})
+        self.assertEqual("count_my_children", res.data["tool"])
+        self.assertEqual(1, res.data["result"]["count"])
