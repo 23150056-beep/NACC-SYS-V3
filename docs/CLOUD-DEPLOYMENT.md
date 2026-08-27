@@ -672,88 +672,176 @@ cannot use the login page to discover which addresses belong to agency staff.
 
 ## 11. Demo deployment (free, from the local-version repo)
 
-A second, public deployment for showing the system. It shares nothing with the
-live one except a Render account and a Neon project. Its children are
-fictional; its accounts are real.
+A second, public deployment for showing the system. Its children are fictional;
+its accounts are real. It shares nothing with the live deployment except a
+Render account and a Neon project.
 
 **It deploys from `NACC-SYS-V3.1-LOCAL-VER`, never from `nacc-sys-v3`.** The
 live services are built from the other repository and nothing here touches
 them.
 
-### 1. Neon — branch, do not reuse
+### What you are actually creating
 
-Neon console → the project → **Branches** → **New Branch** from `main`. Name it
-`demo`. Copy its **direct** connection string — a hostname containing `-pooler`
-routes through pgbouncer in transaction mode, which breaks Django's migrations.
+| Thing | New? |
+|---|---|
+| Neon **branch** | A branch of the project you already have. Free, copy-on-write, seconds. |
+| R2 bucket | **Nothing to do.** The demo has no files; `USE_S3=false`. |
+| Render services | Yes — two, named `nacc-v3-demo-*`. Unavoidable: it is a different app from a different repo. |
+| Accounts, tokens, OAuth | Nothing new. All reused. |
 
-The branch exists so the demo inherits the real user accounts while its writes
-never reach production. It also keeps this repo's newer migrations —
-`clinical.0010_selfreportflag` and two on `assistant` — off the live database.
+### Order matters
 
-> **Never paste `main`'s connection string into the demo service.** That single
-> mistake points a public URL at real records, and the demo's import step
-> deletes children.
+Load the demo caseload **before** Render is pointed at the branch. A fresh
+branch is a copy of `main`, so it carries whatever children `main` holds. Create
+the Blueprint first and the demo is publicly reachable, briefly, showing them.
 
-### 2. Cloudflare R2 — nothing to do
+---
 
-**Skip this.** The demo has no files: its caseload comes from a fixture that
-carries no reports, no consent scans and no photographs, and nothing is copied
-from the live bucket. `render.yaml` sets `USE_S3=false`, so there is no bucket
-to create and no token to issue.
+### Step 1 — Create the Neon branch
 
-Anything a visitor uploads lands on the container's disk and disappears on the
-next deploy. For a demo whose records are fictional that is correct — nothing
-of value can be lost, because nothing of value is there.
+1. Go to <https://console.neon.tech> and open the project.
+2. Left sidebar → **Branches** → **New Branch**.
+3. Parent branch: **`main`**. Name: **`demo`**. Include data: **yes** (the
+   default) — the accounts are the point.
+4. **Create branch**.
+5. On the branch page, click **Connect** (or **Connection string**).
+6. In the dropdown, choose **Direct connection**, *not* pooled.
+7. Copy the string. It looks like:
+   `postgresql://user:PASSWORD@ep-something-123456.ap-southeast-1.aws.neon.tech/neondb?sslmode=require`
 
-> Never point the demo at `nacc-v3-media`. A visitor's upload would land among
-> real case files.
+> **Take the direct string.** A hostname containing `-pooler` routes through
+> pgbouncer in transaction mode, which breaks Django's migrations — it fails
+> part-way through `migrate` with an error that does not mention pooling.
 
-### 3. Render — a new Blueprint
+### Step 2 — Put it where the tooling can read it
 
-New → **Blueprint** → connect **NACC-SYS-V3.1-LOCAL-VER**. Render reads
-`render.yaml` and creates `nacc-v3-demo-api` and `nacc-v3-demo-web`. Set in the
-dashboard:
+Open `backend/.env` and add one line:
 
-- `DATABASE_URL` — the **branch** string from step 1
-- `VITE_API_BASE_URL` on the web service — the API's public URL plus `/api`,
-  once the API has a hostname. Vite inlines it at build time, so setting it
-  later needs a rebuild.
+```
+DEMO_DATABASE_URL=postgresql://...the string you just copied...
+```
 
-### 4. Load the demo caseload
+Use that name, **not** `DATABASE_URL`. Your local SQLite setup keeps working,
+and nothing runs against the branch by accident.
 
-Run locally, with `DATABASE_URL` pointing at the **branch**:
+`backend/.env` is gitignored, so the password cannot reach either repository.
+
+### Step 3 — Load the demo caseload
+
+From `backend`, with the branch string in the environment for these commands
+only:
 
 ```
 cd backend
 .venv\Scripts\python manage.py export_demo_data --output ..\demo_fixture.json
-set DATABASE_URL=<the branch connection string>
-.venv\Scripts\python manage.py migrate
-.venv\Scripts\python manage.py import_demo_data --fixture ..\demo_fixture.json --clear --set-password <an-account>:<a-password>
 ```
 
-`--clear` removes any children already on the branch, so the public demo cannot
-show a real record. Check the connection string before running it.
+That writes ~1,067 rows: 40 children and their remarks, appointments,
+self-reports and problems. No users — the branch already has the real ones.
+
+Then, in the same window:
+
+```
+set DATABASE_URL=%DEMO_DATABASE_URL%
+.venv\Scripts\python manage.py migrate
+.venv\Scripts\python manage.py import_demo_data --fixture ..\demo_fixture.json --clear --set-password m.bulan@racco1.gov.ph:<a-password-you-choose>
+```
+
+Expected output:
+
+```
+  cleared N existing children
+  fixture holds 1067 rows
+  password set for m.bulan@racco1.gov.ph
+import_demo_data: 40 children across 3 psychologists.
+```
+
+**Close that terminal afterwards.** `set DATABASE_URL` persists for the life of
+the window, and a later `manage.py` command in it would run against the branch.
+
+> `--clear` **deletes every child** on the target before loading. Check the
+> connection string is the branch and not `main` before you run it. If you are
+> not certain, run `manage.py showmigrations --list | head` first and confirm it
+> connects to what you expect.
 
 `--set-password` gives one existing account a known password to demonstrate
-with. It runs against the branch only; `main` is never written to.
+with. It affects the branch only; `main` is untouched.
 
-The import reassigns every child round-robin to the psychologists that exist on
-the branch — the fixture's assignee ids are local and mean nothing there.
+### Step 4 — Create the Render Blueprint
 
-### 5. Switch the assistant off
+1. <https://dashboard.render.com> → **New** → **Blueprint**.
+2. Connect the GitHub repository **NACC-SYS-V3.1-LOCAL-VER**. If it is not
+   listed, use **Configure account** to grant Render access to it.
+3. Render reads `render.yaml` and offers two services:
+   `nacc-v3-demo-api` and `nacc-v3-demo-web`.
+4. It will prompt for the values marked `sync: false`. Fill them in:
+
+| Service | Key | Value |
+|---|---|---|
+| `nacc-v3-demo-api` | `DATABASE_URL` | the branch string from step 1 |
+| `nacc-v3-demo-api` | `CORS_ALLOWED_ORIGINS` | `https://nacc-v3-demo-web.onrender.com` |
+| `nacc-v3-demo-api` | `GOOGLE_OAUTH_CLIENT_ID` | leave blank |
+| `nacc-v3-demo-api` | `GOOGLE_ALLOWED_DOMAINS` | leave blank |
+| `nacc-v3-demo-web` | `VITE_API_BASE_URL` | `https://nacc-v3-demo-api.onrender.com/api` |
+
+Render's URLs are predictable — `https://<service-name>.onrender.com` — so both
+can be filled in before either service exists, as long as the names are free.
+
+5. **Apply**. The first build takes roughly 5–10 minutes. `entrypoint.sh` runs
+   `migrate` and `seed_psgc` on boot, so nothing else is needed.
+
+`DJANGO_SECRET_KEY` is generated by Render. `ALLOWED_HOSTS` and
+`CSRF_TRUSTED_ORIGINS` pick up the hostname automatically.
+
+### Step 5 — Check it came up
+
+```
+https://nacc-v3-demo-api.onrender.com/healthz/
+```
+
+Expect `{"status": "ok", "database": "ok"}`. That proves the database
+credential and nothing else — a wrong `DJANGO_SECRET_KEY` still boots fine and
+only shows up as broken sign-in.
+
+Then open `https://nacc-v3-demo-web.onrender.com` and sign in with the account
+whose password you set in step 3.
+
+### Step 6 — Switch the assistant off
 
 **There is no `ASSISTANT_ENABLED` variable, and `enabled` defaults to `True`**,
-so the assistant is *on* in a fresh deployment. Sign in as an administrator,
-open **Settings**, and switch off **Assistant enabled**.
+so the assistant is *on* in a fresh deployment with no model behind it.
 
-Until section 6 there is no model configured, so every AI call returns 503.
+Sign in as an administrator → **Settings** → switch off **Assistant enabled**.
+
+Until section 12 there is no model configured, so every AI call returns 503.
 Every screen absorbs that, so nothing breaks — it is simply untidy.
 
-The chat pill stays visible either way and answers "unavailable". That is known
-and deliberate; hiding it is a feature change, not a deployment concern.
+The chat pill stays visible either way and answers "unavailable". Known and
+deliberate; hiding it is a feature change, not a deployment concern.
+
+### Step 7 — Confirm the isolation
+
+Worth doing once, so you know it really is isolated:
+
+- Open the **live** app. Its children should be unchanged.
+- In Neon, check that `main`'s row counts are untouched.
+- Push a trivial commit and confirm only `nacc-v3-demo-*` redeploys.
 
 ### What is normal and not a fault
 
 - The first visitor after ~15 minutes idle waits ~60 seconds while the service
   wakes. Open the page a minute before demonstrating to a panel.
 - Free services sleep. That is the plan, not a misconfiguration.
+- `RUN_SEED=true` stays set. `seed_initial_data` is idempotent; it prints that
+  everything already exists and moves on.
+
+### If something goes wrong
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `migrate` hangs or errors part-way | Pooled connection string | Use the **direct** one, without `-pooler` |
+| Sign-in fails, everything else fine | Password never set on the branch | Re-run step 3's `--set-password` |
+| API calls go to `localhost:8000` | `VITE_API_BASE_URL` unset at build time | Set it and **redeploy the web service** — Vite inlines it at build |
+| CORS errors in the browser console | `CORS_ALLOWED_ORIGINS` missing the web URL | Add the exact origin, no trailing slash |
+| Blank page, no errors | Build succeeded but the API is asleep | Wait 60 seconds and reload |
+| Demo shows real children | `DATABASE_URL` points at `main` | Stop. Repoint at the branch and re-run step 3. |
