@@ -181,3 +181,76 @@ def services_lock():
     slot multiplies the KV cache against very little free RAM.
     """
     return _GENERATION_LOCK
+
+
+class OpenAICompatibleClient:
+    """A model served over /v1/chat/completions with a bearer token.
+
+    Presents the same two methods as OllamaClient, so nothing above this line
+    knows which one it is talking to.
+
+    Written for Cloudflare Workers AI and equally valid against local Ollama's
+    own /v1 endpoint — this is an interface, not a vendor.
+
+    A spike measured @cf/meta/llama-4-scout-17b-16e-instruct at 33/33 routing
+    over three passes, median 0.6s, against the real six-tool schema in both
+    English and Tagalog. It also found that @cf/qwen/qwen3-30b-a3b-fp8 accepts
+    the tools array and then returns the call as raw <tool_call> text instead
+    of the structured field, which reads as "no tool call" here and would turn
+    every question into a polite refusal while the service looked healthy. The
+    model must return structured tool_calls, and changing it means running the
+    spike again rather than trusting a hunch.
+    """
+
+    def __init__(self, base_url, model, token):
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self._token = token
+
+    def _post(self, body):
+        req = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(body).encode(), method="POST",
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {self._token}"})
+        try:
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                return json.loads(resp.read())
+        except Exception as exc:                             # noqa: BLE001
+            raise AIUnavailable(f"Model host unreachable: {exc}") from exc
+
+    @staticmethod
+    def _message(payload):
+        choices = payload.get("choices") or []
+        return (choices[0].get("message") or {}) if choices else {}
+
+    def generate(self, prompt, system=""):
+        return str(self._message(self._post({
+            "model": self.model,
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": prompt}],
+        })).get("content") or "").strip()
+
+    def choose_tool(self, question, tool_payload, system):
+        message = self._message(self._post({
+            "model": self.model,
+            "tools": tool_payload,
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": question}],
+        }))
+        calls = message.get("tool_calls") or []
+        if not calls:
+            # Prose, or a model that emitted <tool_call> text. Either way this
+            # is not a tool call, and manufacturing one from unparsed text
+            # would be worse than declining.
+            return None, {}
+        fn = calls[0].get("function") or {}
+        args = fn.get("arguments")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except ValueError:
+                # The validator downstream reports a missing argument; raising
+                # here would turn a recoverable turn into an error page.
+                args = {}
+        return fn.get("name"), (args or {})
