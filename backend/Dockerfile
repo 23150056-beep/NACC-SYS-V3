@@ -27,10 +27,27 @@ RUN pip install -r requirements.txt
 COPY . .
 
 # Bake static assets into the image so a booting container never has to write
-# to disk before serving. The key here is a throwaway: collectstatic only
-# renders the asset manifest, and the real key arrives from the environment.
+# to disk before serving.
+#
+# Both values here are throwaways. collectstatic only renders the asset
+# manifest — it never signs anything and never opens a database connection —
+# and the real values arrive from the environment at runtime.
+#
+# DATABASE_URL has to be present because settings.py refuses to start with
+# DJANGO_DEBUG=False and no database configured, rather than falling back to a
+# SQLite file the platform destroys on every deploy. That guard is right, and
+# it fires here too: importing settings runs it whether or not the command
+# needs a database. A build-time placeholder satisfies it without weakening it.
+# CORS_ALLOWED_ORIGINS is here only to keep the build log clean: settings.py
+# warns when a non-debug configuration has no deployed origin, which is true
+# and useful at runtime and meaningless during a build. Without it every
+# successful build prints "every browser request from the frontend will be
+# blocked", which is exactly the kind of alarming-but-irrelevant line that
+# sends someone chasing a problem that is not there.
 RUN DJANGO_DEBUG=False \
     DJANGO_SECRET_KEY=build-time-only-never-used-at-runtime \
+    DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build-time-only \
+    CORS_ALLOWED_ORIGINS=https://build-time-only.invalid \
     python manage.py collectstatic --noinput
 
 # Run as a non-root user: a container compromise should not also mean root

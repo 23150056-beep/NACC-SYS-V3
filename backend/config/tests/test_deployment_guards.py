@@ -88,3 +88,37 @@ class HealthzTest(TestCase):
         raw = self.client.get("/healthz/").content.decode().lower()
         for secret in ("password", "@", "://"):
             self.assertNotIn(secret, raw)
+
+
+class BuildEnvironmentTest(SimpleTestCase):
+    """The Dockerfile must still be able to import settings.
+
+    The boot guard broke the image build the first time it shipped:
+    `collectstatic` runs with DJANGO_DEBUG=False and no DATABASE_URL, and
+    importing settings runs the guard whether or not the command needs a
+    database. The test suite could not catch it — it is a build environment,
+    not a test one — so the Dockerfile's own values are asserted here.
+    """
+
+    def test_the_dockerfile_supplies_every_value_the_guards_demand(self):
+        from pathlib import Path
+        text = (Path(__file__).resolve().parents[2] / "Dockerfile").read_text(
+            encoding="utf-8")
+        # The RUN block itself, not the comments above it — "collectstatic"
+        # appears in the explanatory comment first.
+        start = text.index("RUN DJANGO_DEBUG=False")
+        build_step = text[start:text.index("--noinput", start)]
+        for needed in ("DJANGO_SECRET_KEY=", "DATABASE_URL=",
+                       "CORS_ALLOWED_ORIGINS="):
+            with self.subTest(variable=needed):
+                self.assertIn(needed, build_step,
+                              f"{needed} missing from the collectstatic build "
+                              "step; the image build will fail on the boot guard")
+
+    def test_the_dockerfile_values_would_not_trip_the_guards(self):
+        self.assertFalse(sqlite_fallback_is_a_mistake(
+            debug=False,
+            database_url="postgresql://build:build@127.0.0.1:5432/build-time-only",
+            db_engine="sqlite"))
+        self.assertFalse(cors_is_unconfigured(
+            debug=False, origins=["https://build-time-only.invalid"]))
