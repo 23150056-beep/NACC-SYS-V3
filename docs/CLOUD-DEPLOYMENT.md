@@ -669,3 +669,86 @@ cannot use the login page to discover which addresses belong to agency staff.
 | API calls go to `localhost:8000` in production | `VITE_API_BASE_URL` not set at build time | Set it and **rebuild** — Vite inlines it into the bundle. |
 | Assignment emails never arrive | `BREVO_API_KEY` unset, or sender not verified in Brevo | Check the API log for the "BREVO_API_KEY is not set" warning. |
 | Django admin CSS missing | `collectstatic` did not run | It runs at image build; check the build log. |
+
+## 11. Demo deployment (free, from the local-version repo)
+
+A second, public deployment for showing the system. It shares nothing with the
+live one except a Render account and a Neon project. Its children are
+fictional; its accounts are real.
+
+**It deploys from `NACC-SYS-V3.1-LOCAL-VER`, never from `nacc-sys-v3`.** The
+live services are built from the other repository and nothing here touches
+them.
+
+### 1. Neon — branch, do not reuse
+
+Neon console → the project → **Branches** → **New Branch** from `main`. Name it
+`demo`. Copy its **direct** connection string — a hostname containing `-pooler`
+routes through pgbouncer in transaction mode, which breaks Django's migrations.
+
+The branch exists so the demo inherits the real user accounts while its writes
+never reach production. It also keeps this repo's newer migrations —
+`clinical.0010_selfreportflag` and two on `assistant` — off the live database.
+
+> **Never paste `main`'s connection string into the demo service.** That single
+> mistake points a public URL at real records, and the demo's import step
+> deletes children.
+
+### 2. Cloudflare R2 — a new, empty bucket
+
+Create `nacc-v3-demo-media` and an API token scoped to it with **Object Read &
+Write** (Object Read only authenticates perfectly and then fails every upload).
+
+Copy nothing from the live bucket. The demo has no reports, consent scans or
+child photographs because it has none at all — not because they were filtered.
+
+### 3. Render — a new Blueprint
+
+New → **Blueprint** → connect **NACC-SYS-V3.1-LOCAL-VER**. Render reads
+`render.yaml` and creates `nacc-v3-demo-api` and `nacc-v3-demo-web`. Set in the
+dashboard:
+
+- `DATABASE_URL` — the **branch** string from step 1
+- the four R2 variables from step 2
+- `VITE_API_BASE_URL` on the web service — the API's public URL plus `/api`,
+  once the API has a hostname. Vite inlines it at build time, so setting it
+  later needs a rebuild.
+
+### 4. Load the demo caseload
+
+Run locally, with `DATABASE_URL` pointing at the **branch**:
+
+```
+cd backend
+.venv\Scripts\python manage.py export_demo_data --output ..\demo_fixture.json
+set DATABASE_URL=<the branch connection string>
+.venv\Scripts\python manage.py migrate
+.venv\Scripts\python manage.py import_demo_data --fixture ..\demo_fixture.json --clear --set-password <an-account>:<a-password>
+```
+
+`--clear` removes any children already on the branch, so the public demo cannot
+show a real record. Check the connection string before running it.
+
+`--set-password` gives one existing account a known password to demonstrate
+with. It runs against the branch only; `main` is never written to.
+
+The import reassigns every child round-robin to the psychologists that exist on
+the branch — the fixture's assignee ids are local and mean nothing there.
+
+### 5. Switch the assistant off
+
+**There is no `ASSISTANT_ENABLED` variable, and `enabled` defaults to `True`**,
+so the assistant is *on* in a fresh deployment. Sign in as an administrator,
+open **Settings**, and switch off **Assistant enabled**.
+
+Until section 6 there is no model configured, so every AI call returns 503.
+Every screen absorbs that, so nothing breaks — it is simply untidy.
+
+The chat pill stays visible either way and answers "unavailable". That is known
+and deliberate; hiding it is a feature change, not a deployment concern.
+
+### What is normal and not a fault
+
+- The first visitor after ~15 minutes idle waits ~60 seconds while the service
+  wakes. Open the page a minute before demonstrating to a panel.
+- Free services sleep. That is the plan, not a misconfiguration.
