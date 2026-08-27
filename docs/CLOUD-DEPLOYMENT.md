@@ -692,7 +692,8 @@ them.
 ### Order matters
 
 Load the demo caseload **before** Render is pointed at the branch. A fresh
-branch is a copy of `main`, so it carries whatever children `main` holds. Create
+branch is a copy of `production`, so it carries whatever children
+`production` holds. Create
 the Blueprint first and the demo is publicly reachable, briefly, showing them.
 
 ---
@@ -701,8 +702,10 @@ the Blueprint first and the demo is publicly reachable, briefly, showing them.
 
 1. Go to <https://console.neon.tech> and open the project.
 2. Left sidebar → **Branches** → **New Branch**.
-3. Parent branch: **`main`**. Name: **`demo`**. Include data: **yes** (the
-   default) — the accounts are the point.
+3. Parent branch: **`production`** (this project's default branch is named
+   `production`, not `main`). Name: **`demo`**. Auto-delete: **Never**.
+   Choose **Branch data and schema** — that is what carries the user accounts,
+   which are the whole reason for branching rather than starting empty.
 4. **Create branch**.
 5. On the branch page, click **Connect** (or **Connection string**).
 6. In the dropdown, choose **Direct connection**, *not* pooled.
@@ -760,12 +763,12 @@ import_demo_data: 40 children across 3 psychologists.
 the window, and a later `manage.py` command in it would run against the branch.
 
 > `--clear` **deletes every child** on the target before loading. Check the
-> connection string is the branch and not `main` before you run it. If you are
+> connection string is the branch and not `production` before you run it. If you are
 > not certain, run `manage.py showmigrations --list | head` first and confirm it
 > connects to what you expect.
 
 `--set-password` gives one existing account a known password to demonstrate
-with. It affects the branch only; `main` is untouched.
+with. It affects the branch only; `production` is untouched.
 
 ### Step 4 — Create the Render Blueprint
 
@@ -824,7 +827,7 @@ deliberate; hiding it is a feature change, not a deployment concern.
 Worth doing once, so you know it really is isolated:
 
 - Open the **live** app. Its children should be unchanged.
-- In Neon, check that `main`'s row counts are untouched.
+- In Neon, check that `production`'s row counts are untouched.
 - Push a trivial commit and confirm only `nacc-v3-demo-*` redeploys.
 
 ### What is normal and not a fault
@@ -844,4 +847,4 @@ Worth doing once, so you know it really is isolated:
 | API calls go to `localhost:8000` | `VITE_API_BASE_URL` unset at build time | Set it and **redeploy the web service** — Vite inlines it at build |
 | CORS errors in the browser console | `CORS_ALLOWED_ORIGINS` missing the web URL | Add the exact origin, no trailing slash |
 | Blank page, no errors | Build succeeded but the API is asleep | Wait 60 seconds and reload |
-| Demo shows real children | `DATABASE_URL` points at `main` | Stop. Repoint at the branch and re-run step 3. |
+| Demo shows real children | `DATABASE_URL` points at `production` | Stop. Repoint at the branch and re-run step 3. |
