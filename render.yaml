@@ -1,29 +1,36 @@
-# NACC SYS V3 — Render blueprint.
+# NACC SYS V3 — Render blueprint for the DEMO deployment.
 #
-# Deploy: push this repo to GitHub, then Render → New → Blueprint → pick the
-# repo. Render creates the API service and the web frontend from this file.
-# Secrets marked `sync: false` are typed into the dashboard once and never live
-# in git — DATABASE_URL is one of them (see the note below).
+# This file lives in NACC-SYS-V3.1-LOCAL-VER and creates services named
+# nacc-v3-demo-*. The LIVE services (nacc-v3-api, nacc-v3-web) are created from
+# a different repository and are not affected by anything here.
+#
+# The names differ deliberately. Render service names are unique per workspace,
+# so reusing the live names would collide with production.
+#
+# Deploy: Render → New → Blueprint → pick NACC-SYS-V3.1-LOCAL-VER. Secrets
+# marked `sync: false` are typed into the dashboard once and never live in git.
+#
+# DATABASE_URL MUST BE A NEON BRANCH connection string, never main. The branch
+# exists so the demo inherits the real user accounts while its writes — and the
+# migrations in this repo that the live deployment does not have — never reach
+# production. Use the DIRECT endpoint: a hostname containing `-pooler` routes
+# through pgbouncer in transaction mode, which breaks Django's migrations.
+#
+# The R2 variables must point at an EMPTY demo bucket. No object is copied from
+# the live bucket: the demo has no reports, consent scans or child photographs
+# because it has none at all, not because they were filtered.
 #
 # After the first deploy, set RUN_SEED=false on the API service (the seed is
 # idempotent, but there is no reason to run it on every boot).
 #
-# ⚠️  The services here are on Render's FREE plan: they sleep after ~15 minutes
-# idle, so the first request after a quiet period takes ~30 seconds while the
-# container wakes. Fine for building and demoing. To upgrade, change
-# `plan: free` to `plan: starter` on the API service.
-#
-# THE DATABASE IS NOT DECLARED IN THIS FILE. It lives on Neon
-# (ap-southeast-1), outside Render, because Render's free PostgreSQL instance
-# is DELETED 30 days after it is created — data and all. Declaring it here
-# again would be worse than useless: a blueprint re-sync would rebind
-# DATABASE_URL to a Render-managed database and silently send writes somewhere
-# other than the live one. See docs/CLOUD-DEPLOYMENT.md §2.
+# ⚠️  Render's FREE plan: services sleep after ~15 minutes idle, so the first
+# request after a quiet period takes ~60 seconds while the container wakes.
+# That is the plan, not a misconfiguration.
 
 services:
   # ---- Django API ------------------------------------------------------
   - type: web
-    name: nacc-v3-api
+    name: nacc-v3-demo-api
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
@@ -103,7 +110,7 @@ services:
       # Leave unset to deploy with AI disabled. Set the key, then switch the
   # ---- React frontend (static site) ------------------------------------
   - type: web
-    name: nacc-v3-web
+    name: nacc-v3-demo-web
     runtime: static
     buildCommand: cd frontend && npm ci && npm run build
     staticPublishPath: ./frontend/dist

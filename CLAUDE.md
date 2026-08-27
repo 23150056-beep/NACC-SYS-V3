@@ -45,9 +45,13 @@ The branch `cloud-setup` tracks `local-ver/main`, so:
 git push
 ```
 
-is correct and goes to the local-version repo. **Do not `git push origin`** —
-the owner has said he does not want Render touched, and that push is what
-deploys it. Pushing there needs asking first, in so many words.
+is correct and goes to the local-version repo. **Once the demo Blueprint is
+connected, that push also auto-deploys the demo** at `nacc-v3-demo-*`. It still
+cannot touch the live services, which are built from the other repository.
+
+**Do not `git push origin`** — the owner has said he does not want Render
+touched, and that push is what deploys it. Pushing there needs asking first, in
+so many words.
 
 The branch is still called `cloud-setup` locally and lands as `main` on the new
 repo. The name is history, not intent.
