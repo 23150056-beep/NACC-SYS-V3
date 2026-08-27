@@ -847,4 +847,7 @@ Worth doing once, so you know it really is isolated:
 | API calls go to `localhost:8000` | `VITE_API_BASE_URL` unset at build time | Set it and **redeploy the web service** — Vite inlines it at build |
 | CORS errors in the browser console | `CORS_ALLOWED_ORIGINS` missing the web URL | Add the exact origin, no trailing slash |
 | Blank page, no errors | Build succeeded but the API is asleep | Wait 60 seconds and reload |
+| Deploy fails: "Refusing to start" | `DATABASE_URL` not set on the service | Set it. The app now refuses to boot rather than falling back to a SQLite file the platform destroys on every deploy. |
+| Sign-in fails in the browser, works in curl | `CORS_ALLOWED_ORIGINS` missing the web origin | Set it. The API logs a warning at boot when it has no deployed origin. |
+| Unsure which database a service reached | — | `GET /healthz/` names the engine and host, e.g. `{"engine": "postgresql", "host": "ep-...neon.tech"}` |
 | Demo shows real children | `DATABASE_URL` points at `production` | Stop. Repoint at the branch and re-run step 3. |

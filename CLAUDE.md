@@ -250,7 +250,7 @@ Built 27 Aug 2026. Flags distress in a child's own words. Design in
 Both of these, every time:
 
 ```
-cd backend && .venv/Scripts/python.exe manage.py test   # 678 tests, ~14 min
+cd backend && .venv/Scripts/python.exe manage.py test   # 692 tests, ~14 min
 cd frontend && npm run lint && npm run build
 ```
 

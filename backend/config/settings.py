@@ -13,6 +13,8 @@ from pathlib import Path
 from datetime import timedelta
 
 import dj_database_url
+
+from config import guards
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
@@ -147,6 +149,24 @@ else:
         }
     }
 
+# A deployment must never reach the SQLite fallback. It lives on the
+# container's disk, which most platforms destroy on every deploy and every wake
+# from sleep — records are written, reported saved, and quietly disappear. And
+# /healthz/ cannot catch it, because SQLite is a working database: a demo ran
+# for hours reporting {"database": "ok"} while losing everything.
+#
+# Failing to boot is the point. A container that dies makes the deploy fail;
+# one that starts on the wrong database takes traffic.
+if guards.sqlite_fallback_is_a_mistake(
+        debug=DEBUG, database_url=DATABASE_URL,
+        db_engine=os.getenv("DB_ENGINE", "sqlite")):
+    raise ImproperlyConfigured(
+        "DJANGO_DEBUG is False and no database is configured, so this would "
+        "fall back to SQLite on the container's disk — which the platform "
+        "destroys on every deploy. Set DATABASE_URL (or DB_ENGINE=postgres). "
+        "Refusing to start."
+    )
+
 AUTH_USER_MODEL = "accounts.User"
 
 
@@ -271,6 +291,18 @@ SIGNUP_MAX_PENDING = 50      # global ceiling on outstanding requests (DB-counte
 CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
 )
+
+# Not fatal — an API with no browser client is legitimate — but worth saying,
+# because the failure is silent and misleading: curl works perfectly while
+# every request from the frontend is blocked before it leaves the browser, and
+# the console blames CORS without naming the setting.
+if guards.cors_is_unconfigured(debug=DEBUG, origins=CORS_ALLOWED_ORIGINS):
+    import logging as _logging
+    _logging.getLogger("config.guards").warning(
+        "DJANGO_DEBUG is False and CORS_ALLOWED_ORIGINS has no deployed "
+        "origin. Every browser request from the frontend will be blocked, "
+        "while curl and health checks keep working.")
+
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
 for _host_var in ("RENDER_EXTERNAL_HOSTNAME", "PLATFORM_EXTERNAL_HOSTNAME"):
     _host = os.getenv(_host_var)
