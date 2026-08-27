@@ -15,8 +15,8 @@ from accounts.permissions import IsAdministrator, IsAdminOrStaff
 from assistant import evaluation, prompts, tools
 from assistant.models import AssistantJob, AssistantSetting
 from assistant.serializers import AssistantSettingSerializer
-from assistant.services import (AIUnavailable, DISCLAIMER, gate, get_ai_client,
-                                run_job, services_lock)
+from assistant.services import (AIUnavailable, DISCLAIMER, OpenAICompatibleClient,
+                                gate, get_ai_client, run_job, services_lock)
 from children.models import Child
 from clinical.models import CaseReferral, PsychologicalReport
 from scheduling.models import Appointment
@@ -533,3 +533,36 @@ class AssistantAskView(AssistantBaseView):
         result = tools.REGISTRY[call.tool]["resolve"](request, call.args)
         return Response({"ok": True, "tool": call.tool, "echo": call.echo,
                          "result": result})
+
+
+class ModelHealthView(AssistantBaseView):
+    """Does the configured model actually answer? Administrators only.
+
+    /healthz/ proves the database credential and nothing else. Without this,
+    diagnosing "the chatbot is broken" means reading platform logs to work out
+    whether the host is down, the token is wrong, or the model was retired —
+    and a hosted model can be deprecated underneath a running deployment. A
+    spike hit exactly that when @cf/meta/llama-3.1-8b-instruct began returning
+    HTTP 410.
+    """
+    permission_classes = [IsAdministrator]
+
+    def get(self, request):
+        cfg = AssistantSetting.load()
+        if not cfg.enabled:
+            return Response({"reachable": False, "provider": "off", "model": "",
+                             "detail": "The assistant is switched off."})
+
+        client = get_ai_client()
+        provider = ("hosted" if isinstance(client, OpenAICompatibleClient)
+                    else "local")
+        model = getattr(client, "model", "")
+        try:
+            with services_lock():
+                client.generate("Reply with the single word: ok", system="")
+        except AIUnavailable as exc:
+            # Never a 5xx. The question was answered, and the answer is "no".
+            return Response({"reachable": False, "provider": provider,
+                             "model": model, "detail": str(exc)[:300]})
+        return Response({"reachable": True, "provider": provider,
+                         "model": model, "detail": ""})
