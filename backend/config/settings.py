@@ -355,3 +355,22 @@ LOGGING = {
 BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
 BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL", "racco1nacc@gmail.com")
 BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME", "NACC RACCO1")
+
+
+# ---- Hosted model (optional; the demo deployment only) --------------------
+# The assistant normally talks to a local Ollama and nothing leaves the
+# machine. These four allow a hosted, OpenAI-compatible model instead — used
+# by the public demo, whose children are fictional.
+#
+# ASSISTANT_ALLOW_HOSTED_MODEL is a separate, explicit acknowledgement on
+# purpose. Credentials alone must not be enough: someone pasting a key into a
+# dashboard has not decided that clinical free text may leave the building.
+# That decision is what removed the V2 AI layer, and it should have to be made
+# out loud.
+#
+# The live blueprint sets none of these, so the live system cannot acquire a
+# hosted provider by configuration drift.
+ASSISTANT_MODEL_URL = os.getenv("ASSISTANT_MODEL_URL", "").strip()
+ASSISTANT_MODEL_TOKEN = os.getenv("ASSISTANT_MODEL_TOKEN", "").strip()
+ASSISTANT_MODEL_NAME = os.getenv("ASSISTANT_MODEL_NAME", "").strip()
+ASSISTANT_ALLOW_HOSTED_MODEL = env_bool("ASSISTANT_ALLOW_HOSTED_MODEL", False)

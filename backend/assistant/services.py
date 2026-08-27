@@ -108,9 +108,36 @@ class OllamaClient:
 
 
 def get_ai_client():
+    """The one place that decides which model answers.
+
+    Order matters. The administrator's off switch outranks everything; then a
+    hosted model, but only with an explicit acknowledgement AND complete
+    credentials; otherwise the local runtime, which is the default and the only
+    one where nothing leaves the machine.
+
+    The hosted branch deliberately ignores AssistantSetting.ollama_url. That
+    field is administrator-editable, so on a public deployment anyone holding
+    administrator credentials could otherwise repoint the model at a host they
+    control and capture every prompt.
+    """
+    from django.conf import settings
+
     cfg = AssistantSetting.load()
     if not cfg.enabled:
         return NullClient()
+
+    if (settings.ASSISTANT_ALLOW_HOSTED_MODEL
+            and settings.ASSISTANT_MODEL_URL
+            and settings.ASSISTANT_MODEL_TOKEN
+            and settings.ASSISTANT_MODEL_NAME):
+        # Said out loud, every time, so "which model answered this" is never a
+        # guess. The token is never logged.
+        logger.info("Assistant is using the HOSTED model %s at %s",
+                    settings.ASSISTANT_MODEL_NAME, settings.ASSISTANT_MODEL_URL)
+        return OpenAICompatibleClient(settings.ASSISTANT_MODEL_URL,
+                                      settings.ASSISTANT_MODEL_NAME,
+                                      settings.ASSISTANT_MODEL_TOKEN)
+
     return OllamaClient(cfg.ollama_url, cfg.model_name)
 
 
