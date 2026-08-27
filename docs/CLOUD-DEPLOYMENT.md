@@ -694,13 +694,19 @@ never reach production. It also keeps this repo's newer migrations —
 > mistake points a public URL at real records, and the demo's import step
 > deletes children.
 
-### 2. Cloudflare R2 — a new, empty bucket
+### 2. Cloudflare R2 — nothing to do
 
-Create `nacc-v3-demo-media` and an API token scoped to it with **Object Read &
-Write** (Object Read only authenticates perfectly and then fails every upload).
+**Skip this.** The demo has no files: its caseload comes from a fixture that
+carries no reports, no consent scans and no photographs, and nothing is copied
+from the live bucket. `render.yaml` sets `USE_S3=false`, so there is no bucket
+to create and no token to issue.
 
-Copy nothing from the live bucket. The demo has no reports, consent scans or
-child photographs because it has none at all — not because they were filtered.
+Anything a visitor uploads lands on the container's disk and disappears on the
+next deploy. For a demo whose records are fictional that is correct — nothing
+of value can be lost, because nothing of value is there.
+
+> Never point the demo at `nacc-v3-media`. A visitor's upload would land among
+> real case files.
 
 ### 3. Render — a new Blueprint
 
@@ -709,7 +715,6 @@ New → **Blueprint** → connect **NACC-SYS-V3.1-LOCAL-VER**. Render reads
 dashboard:
 
 - `DATABASE_URL` — the **branch** string from step 1
-- the four R2 variables from step 2
 - `VITE_API_BASE_URL` on the web service — the API's public URL plus `/api`,
   once the API has a hostname. Vite inlines it at build time, so setting it
   later needs a rebuild.
