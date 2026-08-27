@@ -76,6 +76,7 @@ class AssistantSettingView(AssistantBaseView):
 class RemarkPolishView(AssistantBaseView):
     """Polish a remark the psychologist is writing. Returns a draft only —
     nothing is saved to the remark until the human saves it themselves."""
+    throttle_scope = "assistant_draft"
 
     def post(self, request):
         gate()
@@ -153,6 +154,7 @@ def _visible_children(request):
 class PreSessionBriefView(AssistantBaseView):
     """Generate a brief now. This is the ~40s path — the UI reaches for
     LatestBriefView first and only falls back to here."""
+    throttle_scope = "assistant_draft"
 
     def post(self, request, child_id):
         gate()
@@ -246,6 +248,7 @@ class PrefetchBriefsView(AssistantBaseView):
     Returns immediately. The caller ignores the result — this is fire and
     forget, and a failure here must never be visible on the schedule screen.
     """
+    throttle_scope = "assistant_draft"
 
     def post(self, request):
         gate()
@@ -288,6 +291,7 @@ class DocumentSummaryView(AssistantBaseView):
     The draft is saved unconfirmed. It only becomes clinical text when a human
     confirms it, at which point it is their words, not a draft.
     """
+    throttle_scope = "assistant_draft"
     kind = None
 
     def post(self, request, doc_id):
@@ -369,6 +373,7 @@ class CensusNarrativeView(AssistantBaseView):
     counts anything: a wrong caseload figure in an agency report is far worse
     than no narrative at all.
     """
+    throttle_scope = "assistant_draft"
     permission_classes = [IsAdminOrStaff]
 
     def post(self, request):
@@ -471,6 +476,7 @@ class AssistantAskView(AssistantBaseView):
     Stateless: no history is sent. It would sit after the cached prefix and be
     re-prefilled at CPU speed every turn.
     """
+    throttle_scope = "assistant_chat"
 
     def post(self, request):
         gate()

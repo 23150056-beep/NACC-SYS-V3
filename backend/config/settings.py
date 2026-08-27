@@ -9,6 +9,7 @@ overrides them explicitly (see docs/CLOUD-DEPLOYMENT.md).
 """
 
 import os
+import sys
 from pathlib import Path
 from datetime import timedelta
 
@@ -240,6 +241,8 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
 # Django REST Framework
+_TESTING = "test" in sys.argv
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "accounts.authentication.ForcePasswordChangeJWTAuthentication",
@@ -247,6 +250,30 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
     ),
+    "DEFAULT_THROTTLE_CLASSES": (
+        "rest_framework.throttling.ScopedRateThrottle",
+    ),
+    # Only the assistant endpoints carry a scope, so nothing else is throttled.
+    #
+    # A visitor asking questions is fine; one holding the process-wide
+    # generation lock all afternoon is not. A hosted allowance is finite —
+    # Cloudflare Workers AI gives 10,000 requests a day across the whole
+    # account — so a per-account ceiling is what stops one person spending
+    # everyone else's.
+    #
+    # Chat and drafting have separate ceilings on purpose: a psychologist
+    # polishing notes all afternoon should not lose the chatbot as well.
+    # None means unthrottled. Off during the test suite deliberately: DRF keeps
+    # throttle history in the cache, and test databases roll back while the
+    # cache does not — so user pk=1 in one test inherits the request history of
+    # user pk=1 in every earlier test, and unrelated suites start failing in an
+    # order-dependent way. The throttling tests patch these rates back on.
+    "DEFAULT_THROTTLE_RATES": {
+        "assistant_chat": None if _TESTING else os.getenv(
+            "ASSISTANT_CHAT_RATE", "30/hour"),
+        "assistant_draft": None if _TESTING else os.getenv(
+            "ASSISTANT_DRAFT_RATE", "20/hour"),
+    },
 }
 
 SIMPLE_JWT = {
