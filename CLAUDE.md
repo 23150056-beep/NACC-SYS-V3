@@ -245,12 +245,48 @@ Built 27 Aug 2026. Flags distress in a child's own words. Design in
 - `manage.py scan_self_reports` backfills and is idempotent; re-run it after
   adding a phrase.
 
+## The demo deployment
+
+Built 27 Aug 2026. Public, free, fictional children, real accounts. Runbook in
+`docs/CLOUD-DEPLOYMENT.md` §11-12; design in
+`docs/superpowers/specs/2026-08-27-free-secure-web-deployment-design.md`.
+
+- **It deploys from `local-ver`, never `origin`.** Services are `nacc-v3-demo-*`;
+  the live ones are `nacc-v3-api`/`nacc-v3-web`, built from the other repo. A
+  bare `git push` auto-deploys the demo.
+- **The database is a Neon BRANCH** named `demo`, off a default branch called
+  **`production`** (not `main`). It exists so the demo inherits the real
+  accounts while its writes — and this repo's newer migrations — never reach
+  production.
+- **Three settings broke it, all silently.** `DATABASE_URL` unset fell back to
+  SQLite on the container disk while `/healthz/` still said "ok";
+  `VITE_API_BASE_URL` unset baked `localhost` into the bundle; and
+  `CORS_ALLOWED_ORIGINS` unset blocked every browser request while `curl`
+  worked. The first is now fatal at boot, `/healthz/` names the engine and
+  host, and the third warns.
+- **The Dockerfile needs those values too.** `collectstatic` runs with
+  `DJANGO_DEBUG=False`, so the boot guard fires during the image build; the
+  build step passes throwaways, and a test asserts it still does.
+- **A hosted model needs `ASSISTANT_ALLOW_HOSTED_MODEL=true` as well as
+  credentials.** Credentials alone are not consent, and the live blueprint sets
+  none of these.
+- **The model must return structured `tool_calls`.**
+  `@cf/qwen/qwen3-30b-a3b-fp8` returns them as raw `<tool_call>` text and the
+  chatbot then refuses everything while looking healthy.
+  `@cf/meta/llama-4-scout-17b-16e-instruct` measures 39/39 at 611ms — about
+  four times faster than the local 3B, same accuracy.
+- **Only the chatbot is hosted.** Polish drifts 67% on Taglish and the
+  self-report detector missed 28%; both belong to `qwen2.5:3b` and transfer to
+  nothing.
+- **Cloudflare retires models** — `llama-3.1-8b` returns 410. Check
+  `/api/assistant/model-health/` before assuming the code broke.
+
 ## Before committing or bundling anything
 
 Both of these, every time:
 
 ```
-cd backend && .venv/Scripts/python.exe manage.py test   # 692 tests, ~14 min
+cd backend && .venv/Scripts/python.exe manage.py test   # 724 tests, ~13 min
 cd frontend && npm run lint && npm run build
 ```
 

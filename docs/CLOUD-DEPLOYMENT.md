@@ -851,3 +851,117 @@ Worth doing once, so you know it really is isolated:
 | Sign-in fails in the browser, works in curl | `CORS_ALLOWED_ORIGINS` missing the web origin | Set it. The API logs a warning at boot when it has no deployed origin. |
 | Unsure which database a service reached | — | `GET /healthz/` names the engine and host, e.g. `{"engine": "postgresql", "host": "ep-...neon.tech"}` |
 | Demo shows real children | `DATABASE_URL` points at `production` | Stop. Repoint at the branch and re-run step 3. |
+
+## 12. Demo deployment — switching the chatbot on
+
+Phase 2. The demo answers questions using **Cloudflare Workers AI** rather than
+a model on a server you own. There is no VM, no tunnel, no firewall and nothing
+to patch — an API key and four environment variables.
+
+**This sends the question text to Cloudflare.** The question only: never a
+result, never a child's record, because the model's entire output is a tool
+name and its arguments. That is acceptable here because the demo's children are
+fictional. It would not be acceptable against real records, which is why the
+guard below exists.
+
+### 1. Get the credentials
+
+Cloudflare dashboard → **AI → Workers AI → Use REST API**. That page gives the
+Account ID and a one-click token with the right permissions prefilled — the
+generic token screen is easy to get wrong.
+
+Copy the token when it is shown. Cloudflare displays it once.
+
+### 2. Set four variables on `nacc-v3-demo-api`
+
+Render → **`nacc-v3-demo-api`** → **Environment**:
+
+```
+ASSISTANT_ALLOW_HOSTED_MODEL=true
+ASSISTANT_MODEL_URL=https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/ai/v1
+ASSISTANT_MODEL_TOKEN=<the token>
+ASSISTANT_MODEL_NAME=@cf/meta/llama-4-scout-17b-16e-instruct
+```
+
+**All four are required, and the flag is deliberate.** Credentials alone do
+nothing: `ASSISTANT_ALLOW_HOSTED_MODEL` must be set as well, because pasting a
+key into a dashboard is not the same as deciding that clinical text may leave
+the building. The live blueprint sets none of these, so the live system cannot
+acquire a hosted model by configuration drift.
+
+Save, wait for the redeploy.
+
+### 3. Switch the assistant on and confirm
+
+Sign in as an administrator → **Settings** → **Assistant enabled** on.
+
+Then, still as an administrator:
+
+```
+GET /api/assistant/model-health/
+```
+
+Expect:
+
+```json
+{"reachable": true, "provider": "hosted",
+ "model": "@cf/meta/llama-4-scout-17b-16e-instruct", "detail": ""}
+```
+
+`"provider": "local"` means the guard did not accept the configuration — one of
+the four variables is missing or empty, and it fell back to Ollama, which is
+not running on Render.
+
+### The model name is not cosmetic
+
+`@cf/qwen/qwen3-30b-a3b-fp8` **accepts the tools array and then returns the call
+as raw `<tool_call>` text** instead of in the structured field. The client reads
+that as "no tool call", so the chatbot politely refuses every question while the
+service looks perfectly healthy. Measured, not theorised.
+
+Use a model that returns structured `tool_calls`. Two are measured:
+
+| Model | Routing | Median |
+|---|---|---|
+| `@cf/meta/llama-4-scout-17b-16e-instruct` | **39/39** | **0.61 s** |
+| `@cf/openai/gpt-oss-20b` (fallback) | 11/11 | 0.80 s |
+
+For comparison, the local `qwen2.5:3b-instruct` scores 55/55 at 2.42 s — so the
+hosted model is about four times faster with no measured loss of accuracy.
+
+**Cloudflare retires models.** `@cf/meta/llama-3.1-8b-instruct` was deprecated
+on 2026-05-30 and returns HTTP 410. If the chatbot stops answering, check
+`/api/assistant/model-health/` before assuming the code broke, and switch
+`ASSISTANT_MODEL_NAME` to the fallback.
+
+### What stays off
+
+**Only the chatbot runs on the hosted model.** Briefs, remark polish, document
+summaries and the self-report model detector are prose generation, and their
+measured behaviour belongs to `qwen2.5:3b-instruct`: polish drifts into Tagalog
+on 67% of Taglish inputs, and the self-report detector missed 28% including an
+Ilocano disclosure three times out of three. **None of those numbers transfer to
+another model.** Each needs its own `ai_eval` run before being switched on
+anywhere.
+
+### Rate limits
+
+The free allowance is **10,000 requests a day** across the whole Cloudflare
+account, reset at 00:00 UTC, and the Workers free plan hard-limits rather than
+billing — so exhausting it is an outage, never a charge.
+
+Per-account ceilings stop one visitor spending everyone's:
+
+```
+ASSISTANT_CHAT_RATE=30/hour     (the chatbot)
+ASSISTANT_DRAFT_RATE=20/hour    (briefs, polish, summaries)
+```
+
+Both are environment-tunable without a deploy. Chat and drafting are separate
+so a psychologist drafting all afternoon does not also lose the chatbot.
+
+### Turning it off
+
+Remove `ASSISTANT_ALLOW_HOSTED_MODEL` (or set it to anything but `true`) and
+redeploy. The assistant falls back to a local Ollama, which is not running on
+Render, so every AI call returns 503 — which every screen absorbs.
