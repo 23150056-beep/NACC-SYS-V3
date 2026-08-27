@@ -37,3 +37,7 @@ yarn-error.log*
 
 # Subagent-driven development scratch (ledger, briefs, review packages)
 .superpowers/
+
+# Demo caseload fixture — regenerate with `manage.py export_demo_data`.
+# Not committed: it is derived data, and it is large.
+demo_fixture.json
