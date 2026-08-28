@@ -1,36 +1,29 @@
-# NACC SYS V3 — Render blueprint for the DEMO deployment.
+# NACC SYS V3 — Render blueprint.
 #
-# This file lives in NACC-SYS-V3.1-LOCAL-VER and creates services named
-# nacc-v3-demo-*. The LIVE services (nacc-v3-api, nacc-v3-web) are created from
-# a different repository and are not affected by anything here.
-#
-# The names differ deliberately. Render service names are unique per workspace,
-# so reusing the live names would collide with production.
-#
-# Deploy: Render → New → Blueprint → pick NACC-SYS-V3.1-LOCAL-VER. Secrets
-# marked `sync: false` are typed into the dashboard once and never live in git.
-#
-# DATABASE_URL MUST BE A NEON BRANCH connection string, never main. The branch
-# exists so the demo inherits the real user accounts while its writes — and the
-# migrations in this repo that the live deployment does not have — never reach
-# production. Use the DIRECT endpoint: a hostname containing `-pooler` routes
-# through pgbouncer in transaction mode, which breaks Django's migrations.
-#
-# The R2 variables must point at an EMPTY demo bucket. No object is copied from
-# the live bucket: the demo has no reports, consent scans or child photographs
-# because it has none at all, not because they were filtered.
+# Deploy: push this repo to GitHub, then Render → New → Blueprint → pick the
+# repo. Render creates the API service and the web frontend from this file.
+# Secrets marked `sync: false` are typed into the dashboard once and never live
+# in git — DATABASE_URL is one of them (see the note below).
 #
 # After the first deploy, set RUN_SEED=false on the API service (the seed is
 # idempotent, but there is no reason to run it on every boot).
 #
-# ⚠️  Render's FREE plan: services sleep after ~15 minutes idle, so the first
-# request after a quiet period takes ~60 seconds while the container wakes.
-# That is the plan, not a misconfiguration.
+# ⚠️  The services here are on Render's FREE plan: they sleep after ~15 minutes
+# idle, so the first request after a quiet period takes ~30 seconds while the
+# container wakes. Fine for building and demoing. To upgrade, change
+# `plan: free` to `plan: starter` on the API service.
+#
+# THE DATABASE IS NOT DECLARED IN THIS FILE. It lives on Neon
+# (ap-southeast-1), outside Render, because Render's free PostgreSQL instance
+# is DELETED 30 days after it is created — data and all. Declaring it here
+# again would be worse than useless: a blueprint re-sync would rebind
+# DATABASE_URL to a Render-managed database and silently send writes somewhere
+# other than the live one. See docs/CLOUD-DEPLOYMENT.md §2.
 
 services:
   # ---- Django API ------------------------------------------------------
   - type: web
-    name: nacc-v3-demo-api
+    name: nacc-v3-api
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
@@ -61,26 +54,38 @@ services:
       - key: WEB_CONCURRENCY
         value: "2"
 
-      # ---- Uploaded files -----------------------------------------------
-      # OFF, deliberately, and this is the demo's whole file story.
+      # ---- Uploaded files (reports, consent scans, child photos) --------
+      # Uploads go to Cloudflare R2. With USE_S3=false they land on the
+      # container's own disk, which Render destroys on every deploy AND every
+      # wake from sleep — reports and consent scans vanish silently, which is
+      # the worst way for a system holding child case files to lose them.
       #
-      # The demo has no files. Its caseload comes from a fixture that carries
-      # no reports, no consent scans and no photographs, and no object is ever
-      # copied from the live bucket. So there is nothing to store, and setting
-      # up object storage would be configuring a bucket to hold nothing.
+      # These four are typed into the dashboard (docs §5a):
+      #   AWS_STORAGE_BUCKET_NAME   AWS_S3_ENDPOINT_URL
+      #   AWS_ACCESS_KEY_ID         AWS_SECRET_ACCESS_KEY
+      # AWS_S3_REGION_NAME is optional and defaults to "auto", which is what
+      # R2 wants.
       #
-      # With USE_S3=false, anything a visitor does upload lands on the
-      # container's own disk and disappears on the next deploy or wake. For a
-      # system holding real case files that would be unacceptable — it is
-      # exactly why the LIVE deployment sets this to true. For a demo whose
-      # records are fictional it is correct: nothing of value can be lost,
-      # because nothing of value is there.
+      # ⚠️  The R2 API token must be "Object Read & Write". "Object Read only"
+      # authenticates perfectly and then fails every upload with AccessDenied,
+      # which reads like a credential problem and is not one. The bucket's own
+      # counters diagnose it in seconds: Class B operations climbing while
+      # Class A stays at zero means reads work and writes are refused.
       #
-      # If this demo ever needs to keep an upload, create a SEPARATE bucket.
-      # Never point it at nacc-v3-media: a demo visitor's upload would land
-      # among real case files.
+      # Keep the bucket PRIVATE. The app serves files only through
+      # authenticated endpoints that check permissions first, never from a
+      # public URL — a readable bucket would put child case files one guessed
+      # filename away from anyone.
       - key: USE_S3
-        value: "false"
+        value: "true"
+      - key: AWS_STORAGE_BUCKET_NAME
+        sync: false
+      - key: AWS_S3_ENDPOINT_URL
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
 
       # ---- Google Sign-In (optional; staff and psychologists only) -------
       # Leave unset to deploy with the password form only. When set, the
@@ -110,7 +115,7 @@ services:
       # Leave unset to deploy with AI disabled. Set the key, then switch the
   # ---- React frontend (static site) ------------------------------------
   - type: web
-    name: nacc-v3-demo-web
+    name: nacc-v3-web
     runtime: static
     buildCommand: cd frontend && npm ci && npm run build
     staticPublishPath: ./frontend/dist
