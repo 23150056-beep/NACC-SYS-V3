@@ -15,6 +15,7 @@ Brevo would have held the save open and, on a small instance, tied up the
 worker. The send now happens after the transaction commits, on a daemon thread:
 the record is the source of truth and the mail must never be able to break it.
 """
+import html
 import json
 import logging
 import threading
@@ -55,7 +56,7 @@ def _post(payload):
 def build_payload(psychologist, case_number):
     """The message itself. Split out so a test can assert what leaves the
     building without standing up an HTTP server."""
-    recipient_name = (
+    recipient_name = html.escape(
         getattr(psychologist, "fullname", "")
         or getattr(psychologist, "username", "")
         or "Psychologist"
@@ -103,7 +104,7 @@ def send_assignment_notification(child):
 
 
 def build_temporary_password_payload(user, temporary_password):
-    recipient_name = (
+    recipient_name = html.escape(
         getattr(user, "fullname", "")
         or getattr(user, "username", "")
         or "User"
