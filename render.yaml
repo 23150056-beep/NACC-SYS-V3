@@ -94,6 +94,18 @@ services:
       - key: GOOGLE_ALLOWED_DOMAINS
         sync: false
 
+      # ---- Transactional mail (Brevo) — optional; unset skips both the
+      # assignment email and the temp-password email, nothing else changes.
+      # BREVO_SENDER_EMAIL must be a sender VERIFIED in the Brevo account
+      # behind BREVO_API_KEY — the code's own default (racco1nacc@gmail.com)
+      # only works if that specific address is verified there too.
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
+      - key: BREVO_SENDER_NAME
+        sync: false
+
       # ---- AI layer (optional; system is fully functional with it off) ---
       # Leave unset to deploy with AI disabled. Set the key, then switch the
   # ---- React frontend (static site) ------------------------------------
