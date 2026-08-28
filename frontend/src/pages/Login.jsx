@@ -17,6 +17,7 @@ export default function Login() {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   // 'login'   — sign-in form
@@ -154,7 +155,25 @@ export default function Login() {
                   <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@racco1.gov.ph" leading={<Icon name="user" size={16} />} required />
                 </FormField>
                 <FormField label="Password">
-                  <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" leading={<Icon name="lock" size={16} />} required />
+                  <Input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value.replace(/\s/g, ''))}
+                    placeholder="••••••••"
+                    leading={<Icon name="lock" size={16} />}
+                    trailing={(
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((visible) => !visible)}
+                        title={showPassword ? 'Hide password' : 'Show password'}
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        style={{ display: 'inline-flex', alignItems: 'center', padding: 2, border: 'none', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                      >
+                        <Icon name={showPassword ? 'eye-off' : 'eye'} size={17} />
+                      </button>
+                    )}
+                    required
+                  />
                 </FormField>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: -6 }}>
                   <button type="button" onClick={() => { setError(''); setView('help'); }} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: 12.5, color: 'var(--blue-600)' }}>Forgot password?</button>

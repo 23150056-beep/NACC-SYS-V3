@@ -100,3 +100,44 @@ def send_assignment_notification(child):
     transaction.on_commit(
         lambda: threading.Thread(target=_post, args=(payload,), daemon=True).start())
     return True
+
+
+def build_temporary_password_payload(user, temporary_password):
+    recipient_name = (
+        getattr(user, "fullname", "")
+        or getattr(user, "username", "")
+        or "User"
+    )
+    return {
+        "sender": {
+            "name": settings.BREVO_SENDER_NAME,
+            "email": settings.BREVO_SENDER_EMAIL,
+        },
+        "to": [{"email": user.email, "name": recipient_name}],
+        "subject": "Your NACC SYS temporary password",
+        "htmlContent": (
+            "<h2>Your NACC SYS account is ready</h2>"
+            f"<p>Dear {recipient_name},</p>"
+            "<p>An administrator created or reset your NACC SYS account.</p>"
+            f"<p><strong>Temporary password:</strong> {temporary_password}</p>"
+            "<p>Sign in using your email address and this password. "
+            "You must change it before accessing the system.</p>"
+            "<br><small>This is an automated notification.</small>"
+        ),
+    }
+
+
+def send_temporary_password_notification(user, temporary_password):
+    """Queue a temporary password email without blocking the account change."""
+    if not getattr(user, "email", ""):
+        return False
+    if not settings.BREVO_API_KEY:
+        logger.warning(
+            "BREVO_API_KEY is not set; skipped temporary password email for user %s",
+            user.id)
+        return False
+
+    payload = build_temporary_password_payload(user, temporary_password)
+    transaction.on_commit(
+        lambda: threading.Thread(target=_post, args=(payload,), daemon=True).start())
+    return True

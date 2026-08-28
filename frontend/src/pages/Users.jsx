@@ -325,7 +325,7 @@ export default function Users() {
         toast.success('User added');
         // Same one-time display contract as reset: show the generated temp
         // password now — the server can never show it again.
-        setResetResult({ user: data, temp_password: data.temp_password });
+        setResetResult({ user: data, temp_password: data.temp_password, email_queued: data.email_queued });
       }
       closeForm();
       load();
@@ -359,7 +359,7 @@ export default function Users() {
         toast.success(`${nameOf(u)} reactivated — they must set a new password at next sign-in`);
       } else if (kind === 'reset') {
         const { data } = await api.post(`/users/${u.id}/reset-password/`);
-        setResetResult({ user: u, temp_password: data.temp_password });
+        setResetResult({ user: u, temp_password: data.temp_password, email_queued: data.email_queued });
       }
       setConfirm(null);
       // These can all be launched from inside the drawer; leaving it open
@@ -897,7 +897,7 @@ export default function Users() {
           tone="warning" icon={<Icon name="key-round" size={19} />}
           title="Issue a temporary password?"
           description={`${nameOf(confirm.user)}'s current password stops working the moment you confirm. The new one is shown once — have a way to hand it over ready.`}
-          confirmLabel="Issue password" cancelLabel="Cancel"
+          confirmLabel="Send password" cancelLabel="Cancel"
         />
       )}
 
@@ -909,12 +909,21 @@ export default function Users() {
           tone="warning" icon={<Icon name="key-round" size={19} />}
           title="Temporary password"
           subtitle={nameOf(resetResult.user)}
-          footer={<Button type="button" variant="primary" onClick={() => setResetResult(null)}>I've handed it over</Button>}
+          footer={<Button type="button" variant="primary" onClick={() => setResetResult(null)}>Close</Button>}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', background: 'var(--ink-50)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
             <span className="racco-mono" style={{ flex: 1, fontSize: 18, fontWeight: 700, color: 'var(--text-strong)', letterSpacing: '0.04em', wordBreak: 'break-all' }}>{resetResult.temp_password}</span>
             <button type="button" title="Copy" aria-label="Copy temporary password" onClick={copyTempPassword} {...hoverLift({ lift: -1, shadow: 'var(--shadow-md)' })} style={iconBtn('var(--blue-600)')}><Icon name="copy" size={15} /></button>
           </div>
+          {resetResult.email_queued ? (
+            <Alert tone="success" icon={<Icon name="mail-check" size={18} />}>
+              The temporary password was sent to {resetResult.user.email}.
+            </Alert>
+          ) : (
+            <Alert tone="danger" icon={<Icon name="mail-warning" size={18} />}>
+              The temporary password was not emailed. Ask the system administrator to configure the Brevo email service, then generate a new password.
+            </Alert>
+          )}
           <Alert tone="warning" icon={<Icon name="alert-triangle" size={18} />}>
             Give this to the user — they'll be required to set a new password at next login.
             This password will not be shown again; generate a new one if it's lost.

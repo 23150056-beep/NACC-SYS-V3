@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
 from accounts.models import Role
@@ -172,7 +174,9 @@ class CreateUserTempPasswordTest(APITestCase):
     def _login(self, email, password):
         return self.client.post("/api/auth/login/", {"email": email, "password": password})
 
-    def test_create_returns_temp_password_and_forces_change(self):
+    @patch("accounts.views.send_temporary_password_notification")
+    def test_create_returns_temp_password_and_forces_change(self, mock_send):
+        mock_send.return_value = True
         self._auth("admin@racco1.gov.ph", "admin1234")
         resp = self.client.post("/api/users/", {
             "email": "new@racco1.gov.ph", "first_name": "New", "last_name": "Staff",
@@ -180,6 +184,9 @@ class CreateUserTempPasswordTest(APITestCase):
         self.assertEqual(resp.status_code, 201)
         temp_password = resp.data["temp_password"]
         self.assertTrue(temp_password)
+        mock_send.assert_called_once()
+        self.assertEqual(mock_send.call_args.args[0].email, "new@racco1.gov.ph")
+        self.assertEqual(mock_send.call_args.args[1], temp_password)
 
         user = User.objects.get(email="new@racco1.gov.ph")
         self.assertTrue(user.must_change_password)

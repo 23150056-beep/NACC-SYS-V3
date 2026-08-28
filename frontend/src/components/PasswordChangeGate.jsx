@@ -51,13 +51,13 @@ export default function PasswordChangeGate({ prefillCurrent = '', title = 'Set a
         <form onSubmit={submit} style={{ marginTop: 22, display: 'flex', flexDirection: 'column', gap: 16 }}>
           {error && <Alert tone="danger" icon={<Icon name="alert-triangle" size={18} />}>{error}</Alert>}
           <FormField label="Current Password">
-            <Input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} placeholder="••••••••" leading={<Icon name="lock" size={16} />} required autoFocus={!prefillCurrent} />
+            <Input type="password" value={current} onChange={(e) => setCurrent(e.target.value.replace(/\s/g, ''))} placeholder="••••••••" leading={<Icon name="lock" size={16} />} required autoFocus={!prefillCurrent} />
           </FormField>
           <FormField label="New Password">
-            <Input type="password" value={next} onChange={(e) => setNext(e.target.value)} placeholder="••••••••" leading={<Icon name="lock-keyhole" size={16} />} required autoFocus={!!prefillCurrent} />
+            <Input type="password" value={next} onChange={(e) => setNext(e.target.value.replace(/\s/g, ''))} placeholder="••••••••" leading={<Icon name="lock-keyhole" size={16} />} required autoFocus={!!prefillCurrent} />
           </FormField>
           <FormField label="Confirm New Password">
-            <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="••••••••" leading={<Icon name="lock-keyhole" size={16} />} required />
+            <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value.replace(/\s/g, ''))} placeholder="••••••••" leading={<Icon name="lock-keyhole" size={16} />} required />
           </FormField>
           <Button type="submit" variant="primary" size="lg" fullWidth disabled={busy} iconRight={busy ? null : <Icon name="check" size={18} />}>
             {busy ? 'Updating…' : 'Set New Password'}

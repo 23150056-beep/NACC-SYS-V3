@@ -24,6 +24,7 @@ from accounts.serializers import (
 from activity.models import ActivityLog
 from activity.serializers import ActivityLogSerializer
 from activity.services import log_activity
+from children.notifications import send_temporary_password_notification
 
 User = get_user_model()
 
@@ -240,9 +241,11 @@ class UserViewSet(viewsets.ModelViewSet):
             user.admin_takeover_pending = True
             update_fields.append("admin_takeover_pending")
         user.save(update_fields=update_fields)
+        email_queued = send_temporary_password_notification(user, temp_password)
         self._log(user, ActivityLog.CREATED)
         data = UserSerializer(user).data
         data["temp_password"] = temp_password
+        data["email_queued"] = email_queued
         return Response(data, status=status.HTTP_201_CREATED)
 
     def perform_update(self, serializer):
@@ -409,8 +412,10 @@ class UserViewSet(viewsets.ModelViewSet):
         user.set_password(temp_password)
         user.must_change_password = True
         user.save(update_fields=["password", "must_change_password", "updated_at"])
+        email_queued = send_temporary_password_notification(user, temp_password)
         self._log(user, ActivityLog.UPDATED)
-        return Response({"temp_password": temp_password}, status=status.HTTP_200_OK)
+        return Response({"temp_password": temp_password, "email_queued": email_queued},
+                status=status.HTTP_200_OK)
 
 
 class RoleListView(generics.ListAPIView):

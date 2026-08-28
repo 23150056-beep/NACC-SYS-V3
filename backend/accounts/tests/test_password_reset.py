@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
 from accounts.models import Role
@@ -32,12 +34,17 @@ class PasswordResetTest(APITestCase):
 
     # ---- admin reset-password action ----
 
-    def test_admin_can_reset_another_users_password(self):
+    @patch("accounts.views.send_temporary_password_notification")
+    def test_admin_can_reset_another_users_password(self, mock_send):
+        mock_send.return_value = True
         self._auth("admin@racco1.gov.ph", "admin1234")
         resp = self.client.post(f"/api/users/{self.staff.id}/reset-password/")
         self.assertEqual(resp.status_code, 200)
         temp_password = resp.data["temp_password"]
         self.assertTrue(temp_password)
+        mock_send.assert_called_once()
+        self.assertEqual(mock_send.call_args.args[0].email, "staff@racco1.gov.ph")
+        self.assertEqual(mock_send.call_args.args[1], temp_password)
 
         self.staff.refresh_from_db()
         self.assertTrue(self.staff.must_change_password)

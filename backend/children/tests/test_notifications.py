@@ -5,7 +5,10 @@ from rest_framework.test import APITestCase
 
 from accounts.models import Role, User
 from children.models import Child
-from children.notifications import build_payload, send_assignment_notification
+from children.notifications import (
+    build_payload, build_temporary_password_payload,
+    send_assignment_notification, send_temporary_password_notification,
+)
 
 
 @override_settings(BREVO_API_KEY="test-key", BREVO_SENDER_EMAIL="from@racco1.gov.ph",
@@ -51,6 +54,16 @@ class AssignmentEmailContentTest(TestCase):
         self.psych.save(update_fields=["email"])
         child = Child.objects.create(fullname="Ana Reyes", assigned_psychologist=self.psych)
         self.assertFalse(send_assignment_notification(child))
+
+    def test_temporary_password_is_sent_to_the_user(self):
+        payload = build_temporary_password_payload(self.psych, "TempPass9")
+        self.assertEqual(payload["to"][0]["email"], "p@racco1.gov.ph")
+        self.assertIn("TempPass9", payload["htmlContent"])
+
+    def test_temporary_password_without_an_address_sends_nothing(self):
+        self.psych.email = ""
+        self.psych.save(update_fields=["email"])
+        self.assertFalse(send_temporary_password_notification(self.psych, "TempPass9"))
 
 
 @override_settings(BREVO_API_KEY="test-key")

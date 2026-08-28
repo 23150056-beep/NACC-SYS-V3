@@ -231,13 +231,13 @@ export default function Topbar() {
             </div>
             {pwError && <Alert tone="danger" icon={<Icon name="alert-triangle" size={18} />}>{pwError}</Alert>}
             <FormField label="Current Password">
-              <Input type="password" value={pw.current_password} onChange={(e) => setPw({ ...pw, current_password: e.target.value })} placeholder="••••••••" leading={<Icon name="lock" size={16} />} required autoFocus />
+              <Input type="password" value={pw.current_password} onChange={(e) => setPw({ ...pw, current_password: e.target.value.replace(/\s/g, '') })} placeholder="••••••••" leading={<Icon name="lock" size={16} />} required autoFocus />
             </FormField>
             <FormField label="New Password">
-              <Input type="password" value={pw.new_password} onChange={(e) => setPw({ ...pw, new_password: e.target.value })} placeholder="••••••••" leading={<Icon name="lock-keyhole" size={16} />} required />
+              <Input type="password" value={pw.new_password} onChange={(e) => setPw({ ...pw, new_password: e.target.value.replace(/\s/g, '') })} placeholder="••••••••" leading={<Icon name="lock-keyhole" size={16} />} required />
             </FormField>
             <FormField label="Confirm New Password">
-              <Input type="password" value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} placeholder="••••••••" leading={<Icon name="lock-keyhole" size={16} />} required />
+              <Input type="password" value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value.replace(/\s/g, '') })} placeholder="••••••••" leading={<Icon name="lock-keyhole" size={16} />} required />
             </FormField>
             <Button type="submit" variant="primary" fullWidth disabled={pwBusy} iconLeft={<Icon name="check" size={16} />}>
               {pwBusy ? 'Updating…' : 'Update Password'}
