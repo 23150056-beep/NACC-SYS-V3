@@ -202,13 +202,20 @@ Unit test fixtures use vocabulary read from the live database, never invented.
 
 | File | Change |
 |---|---|
-| `backend/assistant/tools.py` | `PERIODS`, aliases, three resolvers, one registry entry |
+| `backend/assistant/tools.py` | `PERIODS`, aliases, three resolvers, one registry entry, capability text |
+| `backend/assistant/views.py` | action-request guard wired in; capabilities endpoint |
+| `backend/assistant/urls.py` | route the capabilities endpoint |
 | `backend/assistant/prompts.py` | examples only; prefix stays static |
-| `backend/assistant/tests/` | validator, resolvers, refusal wording |
+| `backend/assistant/tests/` | validator, resolvers, refusal wording, endpoint |
+| `frontend/src/api/assistant.js` | fetch capabilities |
 | `frontend/src/context/AssistantContext.jsx` | new |
-| `frontend/src/components/AssistantPanel.jsx` | context, new renderer, status label |
+| `frontend/src/components/AssistantPanel.jsx` | context, new renderer, status label, empty-state examples |
 | `frontend/src/pages/Dashboard.jsx` | quick action |
-| chat eval cases | new periods, greetings, names, flags |
+| chat eval cases | new periods, greetings, names, flags, expected arguments |
+
+The capabilities endpoint exists so the empty panel and the refusal text read
+one source. A hardcoded frontend list would be a second answer to "what can I
+ask", free to drift from the first.
 
 ## Risks
 
