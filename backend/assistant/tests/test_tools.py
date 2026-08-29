@@ -8,6 +8,8 @@ that was not in the enum, an argument silently dropped.
 The validator is a pure function over the model's output, so none of this needs
 Django or a running Ollama.
 """
+from datetime import date
+
 from django.test import SimpleTestCase
 
 from assistant import tools
@@ -101,10 +103,12 @@ class SchemaShapeTest(SimpleTestCase):
     """Constraints the spike established, asserted so a later edit cannot
     quietly undo them."""
 
-    def test_there_are_exactly_six_tools(self):
+    def test_there_are_exactly_seven_tools(self):
         # Four naive tools produced a misroute; six hardened ones scored 100%
-        # on selection. A seventh needs its own evaluation run, not a hunch.
-        self.assertEqual(6, len(tools.REGISTRY))
+        # on selection. A seventh needs its own evaluation run, not a hunch —
+        # list_self_report_flags was added with one (ai_eval --feature chat),
+        # and an eighth needs the same before this number moves again.
+        self.assertEqual(7, len(tools.REGISTRY))
 
     def test_no_tool_declares_an_optional_free_text_parameter(self):
         # Measured: enum and required parameters survived every call; optional
@@ -195,3 +199,102 @@ class MisrouteGuardTest(SimpleTestCase):
         call = tools.validate("count_my_children", {"status": "someday"})
         guarded = tools.correct_obvious_misroute("how many staff?", call)
         self.assertFalse(guarded.ok)
+
+
+class PeriodRangeTest(SimpleTestCase):
+    """Weeks start on Sunday, matching Schedule.jsx. End is exclusive."""
+
+    # A Wednesday, so week boundaries are visible in both directions.
+    WED = date(2026, 8, 26)
+
+    def test_today_is_one_day(self):
+        self.assertEqual(tools.period_range("today", self.WED),
+                         (date(2026, 8, 26), date(2026, 8, 27)))
+
+    def test_yesterday_is_the_day_before(self):
+        self.assertEqual(tools.period_range("yesterday", self.WED),
+                         (date(2026, 8, 25), date(2026, 8, 26)))
+
+    def test_tomorrow_is_the_day_after(self):
+        self.assertEqual(tools.period_range("tomorrow", self.WED),
+                         (date(2026, 8, 27), date(2026, 8, 28)))
+
+    def test_this_week_starts_on_the_preceding_sunday(self):
+        # 26 Aug 2026 is a Wednesday; the Sunday before is the 23rd.
+        self.assertEqual(tools.period_range("this_week", self.WED),
+                         (date(2026, 8, 23), date(2026, 8, 30)))
+
+    def test_a_sunday_starts_its_own_week(self):
+        self.assertEqual(tools.period_range("this_week", date(2026, 8, 23)),
+                         (date(2026, 8, 23), date(2026, 8, 30)))
+
+    def test_last_week_and_next_week(self):
+        self.assertEqual(tools.period_range("last_week", self.WED),
+                         (date(2026, 8, 16), date(2026, 8, 23)))
+        self.assertEqual(tools.period_range("next_week", self.WED),
+                         (date(2026, 8, 30), date(2026, 9, 6)))
+
+    def test_this_month_and_last_month(self):
+        self.assertEqual(tools.period_range("this_month", self.WED),
+                         (date(2026, 8, 1), date(2026, 9, 1)))
+        self.assertEqual(tools.period_range("last_month", self.WED),
+                         (date(2026, 7, 1), date(2026, 8, 1)))
+
+    def test_month_arithmetic_crosses_the_year(self):
+        self.assertEqual(tools.period_range("this_month", date(2026, 12, 5)),
+                         (date(2026, 12, 1), date(2027, 1, 1)))
+        self.assertEqual(tools.period_range("last_month", date(2026, 1, 5)),
+                         (date(2025, 12, 1), date(2026, 1, 1)))
+
+    def test_this_year_and_last_year(self):
+        self.assertEqual(tools.period_range("this_year", self.WED),
+                         (date(2026, 1, 1), date(2027, 1, 1)))
+        self.assertEqual(tools.period_range("last_year", self.WED),
+                         (date(2025, 1, 1), date(2026, 1, 1)))
+
+    def test_an_unknown_period_raises(self):
+        with self.assertRaises(KeyError):
+            tools.period_range("last_fortnight", self.WED)
+
+
+class KahaponMeansYesterdayTest(SimpleTestCase):
+    """Regression. It was aliased to `today`, so "sino ang nakita ko kahapon?"
+    answered with today's appointments and said nothing about it."""
+
+    def test_kahapon_maps_to_yesterday(self):
+        call = tools.validate("list_my_appointments", {"when": "kahapon"})
+        self.assertTrue(call.ok, call.error)
+        self.assertEqual(call.args["when"], "yesterday")
+
+    def test_month_and_week_words_map(self):
+        for word, expected in [("ngayong buwan", "this_month"),
+                               ("nakaraang buwan", "last_month"),
+                               ("last week", "last_week")]:
+            call = tools.validate("list_my_appointments", {"when": word})
+            self.assertTrue(call.ok, f"{word}: {call.error}")
+            self.assertEqual(call.args["when"], expected, word)
+
+    def test_year_words_map_on_the_tool_that_takes_a_year(self):
+        # Appointments stop at the month, so the year words are exercised
+        # where a year is actually a question someone asks.
+        for word, expected in [("ngayong taon", "this_year"),
+                               ("nakaraang taon", "last_year")]:
+            call = tools.validate("list_self_report_flags", {"period": word})
+            self.assertTrue(call.ok, f"{word}: {call.error}")
+            self.assertEqual(call.args["period"], expected, word)
+
+    def test_every_appointment_period_is_accepted_by_the_validator(self):
+        for period in tools.APPOINTMENT_PERIODS:
+            call = tools.validate("list_my_appointments", {"when": period})
+            self.assertTrue(call.ok, f"{period}: {call.error}")
+
+    def test_appointments_stop_at_the_month(self):
+        # Offering the year sent "what have I got this year?" to list_care_gaps
+        # 3/3, and nobody asks to see a year of appointments. Flags still reach
+        # a year, because reviewing them over one is a real question.
+        self.assertNotIn("this_year", tools.APPOINTMENT_PERIODS)
+        self.assertIn("this_year", tools.PERIODS)
+        self.assertFalse(tools.validate(
+            "list_my_appointments", {"when": "this_year"}).ok)
+        self.assertTrue(tools.validate(
+            "list_self_report_flags", {"period": "this_year"}).ok)

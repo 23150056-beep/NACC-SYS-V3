@@ -156,3 +156,25 @@ class AskMisrouteTest(AskTestBase):
                         "count_my_children", {"status": "active"})
         self.assertEqual("count_my_children", res.data["tool"])
         self.assertEqual(1, res.data["result"]["count"])
+
+
+class CapabilitiesEndpointTest(APITestCase):
+    """The empty panel and the refusal text must not disagree about what this
+    user can ask, so both read the same server-side source."""
+
+    def setUp(self):
+        psy_role = Role.objects.create(role_name=Role.PSYCHOLOGIST)
+        self.psy = User.objects.create_user(
+            email="p@racco1.gov.ph", username="p", password="pass1234",
+            role=psy_role)
+
+    def test_it_names_what_this_role_can_ask(self):
+        self.client.force_authenticate(self.psy)
+        resp = self.client.get("/api/assistant/capabilities/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("caseload", resp.data["can_ask"].lower())
+        self.assertTrue(resp.data["examples"])
+
+    def test_it_requires_authentication(self):
+        resp = self.client.get("/api/assistant/capabilities/")
+        self.assertIn(resp.status_code, (401, 403))

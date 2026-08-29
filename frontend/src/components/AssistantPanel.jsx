@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { askAssistant } from '../api/assistant';
+import { askAssistant, getAssistantCapabilities } from '../api/assistant';
+import { useAssistant } from '../context/AssistantContext';
 import { Icon } from '../ui';
 
 /* The chatbot, docked on every protected screen.
@@ -16,6 +17,10 @@ import { Icon } from '../ui';
  * chrome around it changes.
  */
 
+/* Fallback only. The real list is served per role by
+ * /api/assistant/capabilities/, from the same source as the assistant's own
+ * refusal text; these are what shows if that request fails, and they are
+ * deliberately the psychologist's, who is the majority of users. */
 const SUGGESTIONS = [
   'Who am I seeing tomorrow?',
   'How many children am I handling?',
@@ -75,11 +80,24 @@ function Answer({ result }) {
   }
 
   if (kind === 'appointments') {
-    if (!result.items.length) return <Line muted>Nothing scheduled.</Line>;
+    if (!result.items.length) {
+      // "Nothing scheduled" is the wrong sentence for "who did I see
+      // yesterday?" — nothing was scheduled is not nothing happened.
+      const past = ['yesterday', 'last_week', 'last_month', 'last_year']
+        .includes(result.when);
+      return <Line muted>{past ? 'Nothing recorded.' : 'Nothing scheduled.'}</Line>;
+    }
     return result.items.map((a, i) => (
       <Line key={i}>
         <strong>{a.child}</strong>
         <span style={{ color: 'var(--text-muted)' }}> · {a.when} · {a.purpose}</span>
+        {a.status && a.status !== 'scheduled' && (
+          <span style={{
+            marginLeft: 6, padding: '1px 6px', borderRadius: 'var(--radius-pill)',
+            fontSize: 11, fontWeight: 700, textTransform: 'capitalize',
+            background: 'var(--ink-50)', color: 'var(--text-muted)',
+          }}>{a.status.replace('_', ' ')}</span>
+        )}
       </Line>
     ));
   }
@@ -146,17 +164,60 @@ function Answer({ result }) {
     );
   }
 
+  if (kind === 'self_report_flags') {
+    if (!result.items.length) return <Line muted>No flagged self-reports.</Line>;
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {result.items.map((f, i) => (
+          <div key={i} style={{
+            padding: '10px 12px', borderRadius: 'var(--radius-md)',
+            background: 'var(--amber-50)', border: '1px solid var(--border)',
+          }}>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>
+              {f.child}
+              {f.reviewed && (
+                <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>
+                  reviewed
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+              {f.question}
+            </div>
+            {/* The child's own words, quoted. A flag without them is not
+                something anyone can act on. */}
+            <div style={{ fontSize: 13, marginTop: 4, fontStyle: 'italic' }}>
+              “{f.answer}”
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>
+              {f.date}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   if (kind === 'message') return <Line muted>{result.text}</Line>;
   return null;
 }
 
 export default function AssistantPanel() {
-  const [open, setOpen] = useState(false);
+  // Open state lives in the context so a quick action can open this panel;
+  // nothing outside the component could reach a useState here.
+  const { open, openAssistant, closeAssistant } = useAssistant();
   const [question, setQuestion] = useState('');
   const [busy, setBusy] = useState(false);
   const [turns, setTurns] = useState([]);
+  const [caps, setCaps] = useState(null);
   const scroller = useRef(null);
   const input = useRef(null);
+
+  // Fetched once, on first open. Someone who arrived by clicking a button has
+  // typed nothing and needs a starting point.
+  useEffect(() => {
+    if (open && !caps) getAssistantCapabilities().then(setCaps).catch(() => {});
+  }, [open, caps]);
 
   const toBottom = useCallback(() => {
     requestAnimationFrame(() => {
@@ -202,7 +263,7 @@ export default function AssistantPanel() {
     return (
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={openAssistant}
         aria-label="Open the assistant"
         style={{
           position: 'fixed', right: 20, bottom: 20, zIndex: 60,
@@ -287,7 +348,7 @@ export default function AssistantPanel() {
         )}
         <button
           type="button"
-          onClick={() => setOpen(false)}
+          onClick={closeAssistant}
           aria-label="Close the assistant"
           style={{
             background: 'none', border: 'none', cursor: 'pointer',
@@ -316,13 +377,15 @@ export default function AssistantPanel() {
               borderRadius: '4px 14px 14px 14px', padding: '11px 13px',
             }}>
               <Line muted>
-                I answer from your own records — your schedule, your children,
-                and who needs follow-up. English or Tagalog, whichever you
-                prefer.
+                {/* Served, not hardcoded: this sentence and the assistant's own
+                    refusal text read one source, so they cannot drift apart —
+                    and it names what THIS role can reach. */}
+                {caps ? caps.can_ask : 'I answer from your own records.'}
+                {' '}English or Tagalog, whichever you prefer.
               </Line>
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 12 }}>
-              {SUGGESTIONS.map((s) => (
+              {(caps?.examples ?? SUGGESTIONS).map((s) => (
                 <button
                   key={s}
                   type="button"

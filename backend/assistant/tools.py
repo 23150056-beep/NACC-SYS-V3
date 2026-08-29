@@ -16,6 +16,7 @@ no tool declares a "which children" parameter, because the answer always comes
 from `request.user`.
 """
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 import re
 
 # Enum values the model reached for that were not in the enum. Deterministic,
@@ -23,15 +24,33 @@ import re
 # to 100% on the spike's case set.
 ALIASES = {
     "when": {
-        "bukas": "tomorrow", "ngayon": "today", "kahapon": "today",
-        "ngayong linggo": "this_week", "susunod na linggo": "next_week",
-        "this week": "this_week", "next week": "next_week",
+        "ngayon": "today", "ngayong araw": "today", "today": "today",
+        # Regression: this was mapped to "today". Kahapon is yesterday, and
+        # aliasing around a missing period produced a confidently wrong answer.
+        "kahapon": "yesterday", "yesterday": "yesterday",
+        "bukas": "tomorrow", "tomorrow": "tomorrow",
+        "ngayong linggo": "this_week", "this week": "this_week",
+        "nakaraang linggo": "last_week", "noong isang linggo": "last_week",
+        "last week": "last_week",
+        "susunod na linggo": "next_week", "next week": "next_week",
+        "ngayong buwan": "this_month", "this month": "this_month",
+        "nakaraang buwan": "last_month", "noong isang buwan": "last_month",
+        "last month": "last_month",
+        "ngayong taon": "this_year", "this year": "this_year",
+        "nakaraang taon": "last_year", "noong isang taon": "last_year",
+        "last year": "last_year",
     },
     "status": {
         "aktibo": "active", "buhay": "active", "tapos": "terminated",
         "lahat": "any", "all": "any",
     },
 }
+
+# The table is keyed by PARAMETER NAME, and two tools name their time argument
+# differently — appointments call it `when`, flags call it `period`. Without
+# this, "ngayong taon" would resolve on one and be rejected on the other for no
+# reason a user could see.
+ALIASES["period"] = ALIASES["when"]
 
 _PUNCT = re.compile(r"[^\w]+")
 
@@ -144,6 +163,81 @@ def correct_obvious_misroute(question, call):
     return call
 
 
+# Imperatives, not topics. "schedule" is absent on purpose — it appears in
+# "what is my schedule today?", which is a question this assistant answers.
+_ACTION_VERBS = (
+    "book", "cancel", "create", "add", "delete", "remove", "reset", "update",
+    "edit", "assign", "reassign", "upload", "send", "approve", "deactivate",
+    "magdagdag", "magbook", "burahin", "palitan", "tanggalin", "idagdag",
+)
+
+
+def correct_action_request(question, call):
+    """Answer "book Ana for Friday" with "I can't change anything".
+
+    Measured: the model routes that to list_my_appointments 3 times out of 3,
+    so a request to CREATE a booking was answered with a LIST of bookings.
+    Guarding only answer_directly never fired, because the model had already
+    picked a data tool.
+
+    So this downgrades whatever was chosen, exactly as
+    correct_obvious_misroute does for a staff question. The safety property is
+    unchanged and is the reason both are allowed to exist: they can only make
+    the assistant decline, never make it assert anything.
+
+    `action_request` is server-side only: this constructs its ToolCall
+    directly, so validate() never sees the value and the schema the model
+    reads does not grow by it.
+    """
+    if not call.ok:
+        return call
+    words = _PUNCT.sub(" ", str(question or "").lower()).split()
+    if not words:
+        return call
+    # Tagalog forms an imperative by prefixing the verb: "i-reset mo ang
+    # password". _PUNCT has already turned that hyphen into a space, so the
+    # verb is the second word and "i" is the first — checking the pair covers
+    # every i- verb without listing them.
+    leading = words[0]
+    if leading == "i" and len(words) > 1:
+        leading = words[1]
+    if leading in _ACTION_VERBS:
+        return ToolCall(tool="answer_directly",
+                        args={"reason": "action_request"}, echo="")
+    return call
+
+
+# Openings and sign-offs, English and Tagalog.
+_GREETING_WORDS = (
+    "hello", "hi", "hey", "good", "morning", "afternoon", "evening",
+    "thanks", "thank", "cheers", "bye", "goodbye",
+    "salamat", "magandang", "kumusta", "kamusta", "paalam", "sige",
+)
+
+
+def correct_greeting(question, call):
+    """Recover greeting_or_closing when the model left `reason` out.
+
+    Measured: on "Good morning!" the model omits `reason` 2 times in 3. The
+    argument is optional on purpose — requiring it turned a correct routing
+    decision into a failed turn — so the reason has to be recoverable without
+    the model, or the greeting reply is dead code most of the time and
+    "salamat po" still gets a list of features.
+
+    Short questions only: "Good morning, how many children do I have?" is a
+    question with a greeting attached, not a greeting.
+    """
+    if not call.ok or call.tool != "answer_directly":
+        return call
+    if call.args.get("reason") == "action_request":
+        return call                       # already classified, and not a greeting
+    words = _PUNCT.sub(" ", str(question or "").lower()).split()
+    if words and len(words) <= 4 and words[0] in _GREETING_WORDS:
+        return ToolCall(tool="answer_directly",
+                        args={"reason": "greeting_or_closing"}, echo="")
+    return call
+
+
 # --- resolvers ------------------------------------------------------------
 # Each takes (request, validated args) and returns a plain dict the frontend
 # renders. The model never sees any of this — which is precisely why a
@@ -152,11 +246,141 @@ def correct_obvious_misroute(question, call):
 # Scope is taken from request.user through the same helper the rest of the app
 # uses. No resolver reads scope from the model's arguments.
 
-_WINDOWS = {"today": (0, 1), "tomorrow": (1, 2),
-            "this_week": (0, 7), "next_week": (7, 14)}
+# Periods. Weeks, months and years are calendar-aligned; days are offsets.
+# Rolling windows ("today through +7") do not survive `last_month`, and mixing
+# the two would have "this week" and "this month" answering on different logic.
+PERIODS = ("today", "yesterday", "tomorrow",
+           "this_week", "last_week", "next_week",
+           "this_month", "last_month",
+           "this_year", "last_year")
 
-DIRECT_REPLY = ("I can answer questions about your schedule, your children, "
-                "and who needs follow-up. I can't answer anything else.")
+# Appointments stop at the month. Measured: offering the year sent "what have
+# I got this year?" to list_care_gaps 3 times out of 3, and no psychologist
+# asks to see a year of appointments anyway — the value bought nothing and
+# cost a misroute. Review questions about flags do reach a year, so the full
+# vocabulary stays available there.
+APPOINTMENT_PERIODS = tuple(p for p in PERIODS if not p.endswith("_year"))
+
+# Periods that contain no past day. Everything else contains one — `today`
+# included, because a session completed this morning belongs in the answer.
+FUTURE_ONLY = {"tomorrow", "next_week"}
+
+
+def _week_start(day):
+    """The Sunday on or before `day`.
+
+    Sunday because Schedule.jsx builds its calendar with date-fns startOfWeek
+    under the en-US locale, and the chatbot must agree with the screen the user
+    is looking at. Python's weekday() is Monday=0..Sunday=6, so the number of
+    days since Sunday is (weekday() + 1) % 7.
+    """
+    return day - timedelta(days=(day.weekday() + 1) % 7)
+
+
+def _month_start(day):
+    return day.replace(day=1)
+
+
+def _next_month(first):
+    return date(first.year + (first.month == 12),
+                1 if first.month == 12 else first.month + 1, 1)
+
+
+def _previous_month(first):
+    return date(first.year - (first.month == 1),
+                12 if first.month == 1 else first.month - 1, 1)
+
+
+def period_range(period, today=None):
+    """(start, end) for a period name. End is EXCLUSIVE.
+
+    `today` is injectable so tests can pin a weekday instead of depending on
+    the day the suite happens to run.
+    """
+    if today is None:
+        from django.utils import timezone
+        today = timezone.localdate()
+
+    if period == "today":
+        return today, today + timedelta(days=1)
+    if period == "yesterday":
+        return today - timedelta(days=1), today
+    if period == "tomorrow":
+        return today + timedelta(days=1), today + timedelta(days=2)
+
+    week = _week_start(today)
+    if period == "this_week":
+        return week, week + timedelta(days=7)
+    if period == "last_week":
+        return week - timedelta(days=7), week
+    if period == "next_week":
+        return week + timedelta(days=7), week + timedelta(days=14)
+
+    month = _month_start(today)
+    if period == "this_month":
+        return month, _next_month(month)
+    if period == "last_month":
+        return _previous_month(month), month
+
+    if period == "this_year":
+        return date(today.year, 1, 1), date(today.year + 1, 1, 1)
+    if period == "last_year":
+        return date(today.year - 1, 1, 1), date(today.year, 1, 1)
+
+    raise KeyError(period)
+
+# What each role can actually ask, in its own words. Built here rather than in
+# the prompt because the model never sees it: role-awareness therefore costs
+# nothing, and CHAT_SYSTEM stays byte-identical so the prefix cache stays warm.
+_CAN_ASK = {
+    "Psychologist": (
+        "your schedule, how many children are in your caseload, children with "
+        "a particular concern, a summary of one child, who needs follow-up, "
+        "and which children have flagged something in their own words"),
+    "Administrator": (
+        "the agency's schedule, how many children the agency is handling, "
+        "children with a particular concern, a summary of one child, who needs "
+        "follow-up, and which children have flagged something in their own "
+        "words"),
+    "Staff": (
+        "the schedule, how many children the agency is handling, children with "
+        "a particular concern, a summary of one child, and who needs "
+        "follow-up"),
+}
+_CAN_ASK_DEFAULT = _CAN_ASK["Psychologist"]
+
+# Shown in the empty panel. Questions, not features — someone who arrives by
+# clicking a button has typed nothing and needs a starting point, not a menu.
+_EXAMPLES = {
+    "Psychologist": ["Who am I seeing today?",
+                     "How many children do I have?",
+                     "Who flagged something worrying?",
+                     "Who needs follow-up?"],
+    "Administrator": ["Who needs follow-up?",
+                      "Who flagged something worrying?",
+                      "Any children with anxiety?",
+                      "What was scheduled last week?"],
+    "Staff": ["Who needs follow-up?",
+              "Any children with anxiety?",
+              "What's on this week?",
+              "Tell me about a child by name"],
+}
+
+GREETING_REPLY = "Hello — what would you like to look up?"
+
+ACTION_REPLY = (
+    "I can look things up, but I can't change anything. Bookings, records and "
+    "accounts are edited on their own screens.")
+
+
+def capability_text(role):
+    """One sentence naming what this role can ask. Public because the panel
+    serves it too — there must not be a server answer and a frontend one."""
+    return f"You can ask me about {_CAN_ASK.get(role, _CAN_ASK_DEFAULT)}."
+
+
+def capability_examples(role):
+    return list(_EXAMPLES.get(role, _EXAMPLES["Psychologist"]))
 
 
 def _scope(request):
@@ -166,20 +390,28 @@ def _scope(request):
 
 def _resolve_appointments(request, args):
     from django.utils import timezone
-    from datetime import timedelta
     from scheduling.models import Appointment
 
-    offset, span = _WINDOWS[args["when"]]
-    today = timezone.localdate()
-    start, end = today + timedelta(days=offset), today + timedelta(days=offset + span - offset if span else 1)
-    end = today + timedelta(days=span)
+    period = args["when"]
+    start, end = period_range(period)
+
+    # A period with no past day is a plan, so only what is still going to
+    # happen belongs in it. Any other period has finished work in it, and
+    # hiding that answers "what did I do this week" with silence. CANCELLED is
+    # excluded either way: a cancelled appointment is not a session.
+    statuses = ([Appointment.SCHEDULED] if period in FUTURE_ONLY
+                else [Appointment.SCHEDULED, Appointment.COMPLETED,
+                      Appointment.NO_SHOW])
+
     appts = (Appointment.objects
-             .filter(psychologist=request.user, status=Appointment.SCHEDULED,
+             .filter(psychologist=request.user, status__in=statuses,
                      start__date__gte=start, start__date__lt=end)
              .select_related("child").order_by("start"))
-    return {"kind": "appointments", "when": args["when"], "items": [
-        {"child": a.child.fullname, "when": timezone.localtime(a.start).strftime("%a %d %b, %H:%M"),
-         "purpose": a.get_purpose_display()} for a in appts]}
+    return {"kind": "appointments", "when": period, "items": [
+        {"child": a.child.fullname,
+         "when": timezone.localtime(a.start).strftime("%a %d %b, %H:%M"),
+         "purpose": a.get_purpose_display(),
+         "status": a.status} for a in appts]}
 
 
 def _resolve_count(request, args):
@@ -206,14 +438,46 @@ def _singular(word):
     return word
 
 
+def _stem_ing(word):
+    """"sleeping" -> "sleep".
+
+    icontains only matches a shorter needle in a longer record, so the record
+    "Sleep disturbance" does not contain "sleeping". Measured: "Who has trouble
+    sleeping?" returned nothing 3 times out of 3 for exactly that reason, which
+    is the confident-empty answer this search already exists to prevent.
+    """
+    if word.endswith("ing") and len(word) > 5:
+        return word[:-3]
+    return word
+
+
 def _search_words(term):
-    """Words worth matching on, singular forms included.
+    """Words worth matching on, singular and un-inflected forms included.
 
     Short words are dropped: "of" and "the" appear inside so many records that
     matching them would return the whole caseload as a false hit.
     """
     words = {w for w in re.findall(r"[\w']+", term.lower()) if len(w) >= 4}
-    return sorted(words | {_singular(w) for w in words})
+    return sorted(words | {_singular(w) for w in words}
+                  | {_stem_ing(w) for w in words})
+
+
+# Articles and honorifics that arrive attached to a name: "si Maria",
+# "kay Ana po". They are not part of anybody's name.
+_NAME_NOISE = {"si", "ni", "kay", "kina", "sina", "po", "ho", "ang", "yung",
+               "iyong", "mr", "ms", "mrs", "sir", "maam", "ma"}
+
+
+def _name_words(term):
+    """Words from a name worth matching on.
+
+    _search_words is not reusable here: it drops anything under four
+    characters, which discards "Ana", "Jun" and "Lito" — exactly the names
+    people are most likely to type on their own.
+    """
+    words = {w for w in re.findall(r"[\w']+", str(term or "").lower())
+             if len(w) >= 2}
+    return sorted(words - _NAME_NOISE)
 
 
 def _resolve_concern(request, args):
@@ -265,7 +529,19 @@ def _resolve_summary(request, args):
     from clinical.care_gaps import compute_alerts
     from children.models import Child
 
+    from django.db.models import Q
+
+    # The exact phrase first, so a full name keeps matching exactly as before
+    # and nothing gets looser. Only when that finds nothing does the search
+    # widen to any single word — which is what rescues "Maria Reyes" for a
+    # record reading "Maria Santos", and "si Maria" for "Maria".
     matches = list(_scope(request).filter(fullname__icontains=args["name"])[:6])
+    if not matches:
+        query = Q()
+        for word in _name_words(args["name"]):
+            query |= Q(fullname__icontains=word)
+        if query:
+            matches = list(_scope(request).filter(query)[:6])
     if not matches:
         return {"kind": "summary", "match": "none", "name": args["name"]}
     if len(matches) > 1:
@@ -302,9 +578,52 @@ def _resolve_care_gaps(request, args):
         for a in alerts]}
 
 
+def _resolve_self_report_flags(request, args):
+    """Children who said something worth reading, in their own words.
+
+    Self-reports are exempt from the carry-history control: a child's own
+    words are not a previous psychologist's opinions, so no author filter
+    applies here. Scope still does, through the same helper as every other
+    tool.
+
+    The answer text is included because the child report screen already shows
+    these expanded above the case notes, and a flag without the words is not
+    something anyone can act on.
+    """
+    from django.utils import timezone
+    from clinical.models import SelfReportFlag
+
+    state = args.get("state", "unreviewed")
+    qs = (SelfReportFlag.objects
+          .filter(child__in=_scope(request))
+          .select_related("child"))
+    if state != "all":
+        qs = qs.filter(reviewed_at__isnull=True)
+
+    period = args.get("period")
+    if period:
+        start, end = period_range(period)
+        qs = qs.filter(created_at__date__gte=start, created_at__date__lt=end)
+
+    return {"kind": "self_report_flags", "state": state, "items": [
+        {"child_id": f.child_id, "child": f.child.fullname,
+         "question": f.question, "answer": f.answer,
+         "date": str(timezone.localtime(f.created_at).date()),
+         "reviewed": f.reviewed_at is not None}
+        for f in qs[:20]]}
+
+
 def _resolve_direct(request, args):
-    return {"kind": "message", "reason": args.get("reason", "unsupported"),
-            "text": DIRECT_REPLY}
+    from assistant.views import _role          # local: avoids a cycle
+
+    reason = args.get("reason", "unsupported")
+    if reason == "greeting_or_closing":
+        text = GREETING_REPLY
+    elif reason == "action_request":
+        text = ACTION_REPLY
+    else:
+        text = capability_text(_role(request))
+    return {"kind": "message", "reason": reason, "text": text}
 
 
 REGISTRY = {
@@ -313,8 +632,7 @@ REGISTRY = {
             "The signed-in user's own schedule: appointments, sessions, visits, "
             "and WHO THEY ARE SEEING on a given day. Use for any question about "
             "the calendar or schedule. Do NOT use this to search for children."),
-        "schema": {"when": {"enum": ["today", "tomorrow", "this_week", "next_week"],
-                            "required": True}},
+        "schema": {"when": {"enum": list(APPOINTMENT_PERIODS), "required": True}},
         "echo": lambda a: f"Looking up: your appointments {a['when'].replace('_', ' ')}",
         "resolve": _resolve_appointments,
     },
@@ -332,8 +650,15 @@ REGISTRY = {
     },
     "search_children_by_concern": {
         "description": (
+            # An example here becomes an argument: adding 'trouble sleeping'
+            # made the model pass it verbatim, and "sleeping" does not match
+            # the recorded "Sleep disturbance" — 3 empty answers out of 3. Any
+            # example added here has to exist in the agency's own vocabulary.
             "Find children whose presenting concern or problem matches a "
-            "description, for example 'school refusal', 'anxiety', 'withdrawn'. "
+            "description, for example 'school refusal', 'anxiety', "
+            "'withdrawn', 'struggling with emotions'. "
+            "This is the tool for ANY question about what children are "
+            "struggling with, however it is worded. "
             "Always pass the concern the user named."),
         "schema": {"concern": {"required": True}},
         "echo": lambda a: f"Looking up: children with '{a['concern']}'",
@@ -354,6 +679,24 @@ REGISTRY = {
         "schema": {},
         "echo": lambda a: "Looking up: children needing follow-up",
         "resolve": _resolve_care_gaps,
+    },
+    "list_self_report_flags": {
+        "description": (
+            # Purely positive, and it names no clinical vocabulary at all.
+            # A "Do NOT use for anxiety, emotions, sleep" clause was measured
+            # WORSE: the router reads the keywords and drops the negation, so
+            # listing what this tool is not for is how it got picked for
+            # "struggling with emotions" 3 times in 3.
+            "Children flagged from a survey THE CHILD FILLED IN THEMSELVES. "
+            "Use only when the question asks what has been 'flagged', or what "
+            "children have said or written about themselves in their own "
+            "words."),
+        "schema": {
+            "state": {"enum": ["unreviewed", "all"], "required": False},
+            "period": {"enum": list(PERIODS), "required": False},
+        },
+        "echo": lambda a: "Looking up: flagged self-reports",
+        "resolve": _resolve_self_report_flags,
     },
     "answer_directly": {
         "description": (

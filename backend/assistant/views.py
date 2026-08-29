@@ -465,6 +465,22 @@ MAX_QUESTION = 150          # AssistantJob.input_ref is max_length=150, so a
                             # valid question always fits the audit row whole.
 
 
+class AssistantCapabilitiesView(AssistantBaseView):
+    """What this user can ask. Read by the panel's empty state so a person who
+    opened it from a button has somewhere to start.
+
+    Deliberately not gated on the assistant being switched on: the answer is a
+    fixed sentence, needs no model, and an empty panel with no hint is worse
+    than one that explains itself. It reads the same source as the refusal
+    text, so the two cannot drift apart.
+    """
+
+    def get(self, request):
+        role = _role(request)
+        return Response({"can_ask": tools.capability_text(role),
+                         "examples": tools.capability_examples(role)})
+
+
 class AssistantAskView(AssistantBaseView):
     """The chatbot. A question in; a validated tool call and its result out.
 
@@ -515,6 +531,12 @@ class AssistantAskView(AssistantBaseView):
         # many psychologists are in the system?" answered "40 active children".
         # It can only make the assistant decline, never assert.
         call = tools.correct_obvious_misroute(question, call)
+        # Same shape, different sentence: "book Ana for Friday" is a request to
+        # change something, and "I can't answer that" is the wrong refusal.
+        call = tools.correct_action_request(question, call)
+        # And a greeting is a greeting even when the model forgets to say
+        # so, which it does two times in three.
+        call = tools.correct_greeting(question, call)
         AssistantJob.objects.create(
             job_type="chat", input_ref=question[:150],
             output_text=f"{call.tool}({call.args})"[:2000],
