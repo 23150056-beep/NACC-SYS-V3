@@ -15,7 +15,10 @@ from rest_framework.test import APIRequestFactory
 from accounts.models import Role
 from assistant import tools
 from children.models import Child
-from clinical.models import ProblemEntry, RemarkNote
+from clinical.models import (
+    AgencyFormTemplate, OpinionnaireInvite, ProblemEntry, RemarkNote,
+    SelfReportFlag,
+)
 from scheduling.models import Appointment
 
 User = get_user_model()
@@ -398,3 +401,79 @@ class ChildNameMatchingTest(ResolverTestBase):
     def test_an_unknown_name_is_still_not_found(self):
         out = self._resolve(self.psy, "get_child_summary", {"name": "Zenaida"})
         self.assertEqual(out["match"], "none")
+
+
+class SelfReportFlagsResolverTest(ResolverTestBase):
+    """The child's own words. Exempt from the carry-history control — a
+    child's words are not a colleague's prior opinions — so no author
+    filtering applies, but scope still does."""
+
+    def setUp(self):
+        super().setUp()
+        self.template = AgencyFormTemplate.objects.create(
+            form_type="opinionnaire", title="Child self-report")
+
+    def _flag(self, child, answer="Lagi akong umiiyak sa gabi", reviewed=False):
+        invite = OpinionnaireInvite.objects.create(
+            child=child, template=self.template,
+            expires_at=timezone.now() + timedelta(days=7))
+        flag = SelfReportFlag.objects.create(
+            invite=invite, child=child,
+            question="How have you been feeling?", answer=answer,
+            source=SelfReportFlag.LEXICON, matched="umiiyak")
+        if reviewed:
+            flag.reviewed_by = self.psy
+            flag.reviewed_at = timezone.now()
+            flag.save(update_fields=["reviewed_by", "reviewed_at"])
+        return flag
+
+    def test_it_returns_the_childs_own_words(self):
+        self._flag(self.mine)
+        out = self._resolve(self.psy, "list_self_report_flags", {})
+        self.assertEqual(out["kind"], "self_report_flags")
+        self.assertEqual(len(out["items"]), 1)
+        self.assertEqual(out["items"][0]["child"], "Maria Santos")
+        self.assertEqual(out["items"][0]["answer"], "Lagi akong umiiyak sa gabi")
+
+    def test_another_psychologists_child_is_not_visible(self):
+        self._flag(self.theirs)
+        out = self._resolve(self.psy, "list_self_report_flags", {})
+        self.assertEqual(out["items"], [])
+
+    def test_unreviewed_is_the_default(self):
+        self._flag(self.mine, reviewed=True)
+        out = self._resolve(self.psy, "list_self_report_flags", {})
+        self.assertEqual(out["items"], [])
+
+    def test_state_all_includes_reviewed_flags(self):
+        self._flag(self.mine, reviewed=True)
+        out = self._resolve(self.psy, "list_self_report_flags", {"state": "all"})
+        self.assertEqual(len(out["items"]), 1)
+        self.assertTrue(out["items"][0]["reviewed"])
+
+    def test_a_period_narrows_the_list(self):
+        self._flag(self.mine)
+        today = self._resolve(self.psy, "list_self_report_flags",
+                              {"period": "today"})
+        self.assertEqual(len(today["items"]), 1)
+        last_year = self._resolve(self.psy, "list_self_report_flags",
+                                  {"period": "last_year"})
+        self.assertEqual(last_year["items"], [])
+
+    def test_an_administrator_sees_every_child(self):
+        self._flag(self.mine)
+        self._flag(self.theirs)
+        out = self._resolve(self.admin, "list_self_report_flags", {})
+        self.assertEqual(len(out["items"]), 2)
+
+
+class SelfReportFlagsSchemaTest(SimpleTestCase):
+    def test_both_arguments_are_optional(self):
+        call = tools.validate("list_self_report_flags", {})
+        self.assertTrue(call.ok, call.error)
+
+    def test_an_invented_argument_is_discarded(self):
+        call = tools.validate("list_self_report_flags",
+                              {"child": "Maria", "state": "all"})
+        self.assertTrue(call.ok, call.error)
+        self.assertEqual(call.args, {"state": "all"})

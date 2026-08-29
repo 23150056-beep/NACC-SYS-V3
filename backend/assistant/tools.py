@@ -514,6 +514,41 @@ def _resolve_care_gaps(request, args):
         for a in alerts]}
 
 
+def _resolve_self_report_flags(request, args):
+    """Children who said something worth reading, in their own words.
+
+    Self-reports are exempt from the carry-history control: a child's own
+    words are not a previous psychologist's opinions, so no author filter
+    applies here. Scope still does, through the same helper as every other
+    tool.
+
+    The answer text is included because the child report screen already shows
+    these expanded above the case notes, and a flag without the words is not
+    something anyone can act on.
+    """
+    from django.utils import timezone
+    from clinical.models import SelfReportFlag
+
+    state = args.get("state", "unreviewed")
+    qs = (SelfReportFlag.objects
+          .filter(child__in=_scope(request))
+          .select_related("child"))
+    if state != "all":
+        qs = qs.filter(reviewed_at__isnull=True)
+
+    period = args.get("period")
+    if period:
+        start, end = period_range(period)
+        qs = qs.filter(created_at__date__gte=start, created_at__date__lt=end)
+
+    return {"kind": "self_report_flags", "state": state, "items": [
+        {"child_id": f.child_id, "child": f.child.fullname,
+         "question": f.question, "answer": f.answer,
+         "date": str(timezone.localtime(f.created_at).date()),
+         "reviewed": f.reviewed_at is not None}
+        for f in qs[:20]]}
+
+
 def _resolve_direct(request, args):
     from assistant.views import _role          # local: avoids a cycle
 
@@ -573,6 +608,19 @@ REGISTRY = {
         "schema": {},
         "echo": lambda a: "Looking up: children needing follow-up",
         "resolve": _resolve_care_gaps,
+    },
+    "list_self_report_flags": {
+        "description": (
+            "Children who wrote something worth reading in their own "
+            "self-report — distress, fear, sadness, being alone. Use for "
+            "'who flagged something', 'anyone worrying', 'self-report "
+            "concerns'. Do NOT use for case notes written by staff."),
+        "schema": {
+            "state": {"enum": ["unreviewed", "all"], "required": False},
+            "period": {"enum": list(PERIODS), "required": False},
+        },
+        "echo": lambda a: "Looking up: flagged self-reports",
+        "resolve": _resolve_self_report_flags,
     },
     "answer_directly": {
         "description": (

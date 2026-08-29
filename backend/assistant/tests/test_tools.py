@@ -103,10 +103,12 @@ class SchemaShapeTest(SimpleTestCase):
     """Constraints the spike established, asserted so a later edit cannot
     quietly undo them."""
 
-    def test_there_are_exactly_six_tools(self):
+    def test_there_are_exactly_seven_tools(self):
         # Four naive tools produced a misroute; six hardened ones scored 100%
-        # on selection. A seventh needs its own evaluation run, not a hunch.
-        self.assertEqual(6, len(tools.REGISTRY))
+        # on selection. A seventh needs its own evaluation run, not a hunch —
+        # list_self_report_flags was added with one (ai_eval --feature chat),
+        # and an eighth needs the same before this number moves again.
+        self.assertEqual(7, len(tools.REGISTRY))
 
     def test_no_tool_declares_an_optional_free_text_parameter(self):
         # Measured: enum and required parameters survived every call; optional

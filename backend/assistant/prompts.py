@@ -149,6 +149,9 @@ Examples:
   "Sino si Ana Reyes?"                -> get_child_summary(name="Ana Reyes")
   "Who still needs a report?"         -> list_care_gaps()
   "Sino ang kailangan ng follow-up?"  -> list_care_gaps()
+  "Who flagged something worrying?"   -> list_self_report_flags()
+  "Sino ang may nakakabahala?"        -> list_self_report_flags()
+  "Who did I see kahapon?"            -> list_my_appointments(when="yesterday")
   "Good morning!"                     -> answer_directly(reason="greeting_or_closing")
 """
 
