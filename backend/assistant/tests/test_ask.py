@@ -11,7 +11,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from accounts.models import Role
-from assistant import services
+from assistant import services, tools
 from assistant.models import AssistantJob, AssistantSetting
 from children.models import Child
 
@@ -78,6 +78,15 @@ class AskRejectionTest(AskTestBase):
         self.assertEqual(res.status_code, 200)
         self.assertFalse(res.data["ok"])
         self.assertIn("didn't follow", res.data["message"])
+
+    def test_the_refusal_names_capabilities_from_one_source(self):
+        # This sentence used to be its own hardcoded list. It was written
+        # before the self-report tool existed and never learned about it —
+        # which is what a second copy of the capabilities always does.
+        res = self._ask("drop the database", "delete_everything", {})
+        self.assertIn("their own words", res.data["message"])
+        self.assertIn(tools.capability_text(Role.PSYCHOLOGIST),
+                      res.data["message"])
 
     def test_a_missing_required_argument_is_explained(self):
         res = self._ask("find children", "search_children_by_concern", {})
@@ -178,3 +187,32 @@ class CapabilitiesEndpointTest(APITestCase):
     def test_it_requires_authentication(self):
         resp = self.client.get("/api/assistant/capabilities/")
         self.assertIn(resp.status_code, (401, 403))
+
+
+class AskResolverFailureTest(AskTestBase):
+    """The audit row is written before the queryset runs. A resolver that
+    raises must not leave a row claiming the turn succeeded."""
+
+    def test_a_resolver_crash_does_not_500(self):
+        with patch.dict(tools.REGISTRY["count_my_children"],
+                        {"resolve": lambda *a, **k: 1 / 0}):
+            res = self._ask("how many children do I have?",
+                            "count_my_children", {"status": "active"})
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(res.data["ok"])
+
+    def test_a_resolver_crash_is_audited_as_a_failure(self):
+        with patch.dict(tools.REGISTRY["count_my_children"],
+                        {"resolve": lambda *a, **k: 1 / 0}):
+            self._ask("how many children do I have?",
+                      "count_my_children", {"status": "active"})
+        job = AssistantJob.objects.get()
+        self.assertFalse(job.ok)
+        self.assertIn("resolver failed", job.error)
+
+    def test_it_never_claims_a_result_it_does_not_have(self):
+        with patch.dict(tools.REGISTRY["count_my_children"],
+                        {"resolve": lambda *a, **k: 1 / 0}):
+            res = self._ask("how many children do I have?",
+                            "count_my_children", {"status": "active"})
+        self.assertNotIn("result", res.data)

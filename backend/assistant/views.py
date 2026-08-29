@@ -537,7 +537,7 @@ class AssistantAskView(AssistantBaseView):
         # And a greeting is a greeting even when the model forgets to say
         # so, which it does two times in three.
         call = tools.correct_greeting(question, call)
-        AssistantJob.objects.create(
+        job = AssistantJob.objects.create(
             job_type="chat", input_ref=question[:150],
             output_text=f"{call.tool}({call.args})"[:2000],
             model_used=client.model, ok=call.ok, error=call.error[:255],
@@ -545,14 +545,34 @@ class AssistantAskView(AssistantBaseView):
             created_by=creator)
 
         if not call.ok:
-            # Never guess. Say what happened and what it can do instead.
+            # Never guess. Say what happened and what it can do instead — from
+            # capability_text, not a copy. This sentence was written before the
+            # flags tool existed and never learned about it, which is what a
+            # second hardcoded list of capabilities always does.
             return Response({
                 "ok": False, "tool": call.tool,
-                "message": "I didn't follow that. I can look up your schedule, "
-                           "your children, or who needs follow-up.",
+                "message": f"I didn't follow that. {tools.capability_text(_role(request))}",
                 "detail": call.error})
 
-        result = tools.REGISTRY[call.tool]["resolve"](request, call.args)
+        # The audit row is written above, before the queryset runs, so a
+        # resolver that raises would leave a row saying the turn succeeded —
+        # the log would agree the question was answered while the user saw a
+        # 500. Nothing is swallowed: the traceback goes to the logger and the
+        # failure goes to the row. The panel already renders ok:false, so the
+        # assistant declines instead of breaking the screen it is docked on.
+        try:
+            result = tools.REGISTRY[call.tool]["resolve"](request, call.args)
+        except Exception:                                        # noqa: BLE001
+            logger.exception("Chat resolver failed: %s(%s)", call.tool, call.args)
+            job.ok = False
+            job.error = f"resolver failed: {call.tool}"[:255]
+            job.save(update_fields=["ok", "error"])
+            return Response({
+                "ok": False, "tool": call.tool,
+                "message": "I couldn't finish looking that up. Nothing was "
+                           "changed — try again, or open the screen directly.",
+                "detail": "resolver failed"})
+
         return Response({"ok": True, "tool": call.tool, "echo": call.echo,
                          "result": result})
 

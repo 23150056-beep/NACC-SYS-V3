@@ -165,9 +165,12 @@ def correct_obvious_misroute(question, call):
 
 # Imperatives, not topics. "schedule" is absent on purpose — it appears in
 # "what is my schedule today?", which is a question this assistant answers.
+# "send" is deliberately absent. "Send me the list of children needing
+# follow-up" is a request for information, and refusing it with "I can't
+# change anything" is worse than the rare "send the report" this would catch.
 _ACTION_VERBS = (
     "book", "cancel", "create", "add", "delete", "remove", "reset", "update",
-    "edit", "assign", "reassign", "upload", "send", "approve", "deactivate",
+    "edit", "assign", "reassign", "upload", "approve", "deactivate",
     "magdagdag", "magbook", "burahin", "palitan", "tanggalin", "idagdag",
 )
 
@@ -210,8 +213,8 @@ def correct_action_request(question, call):
 # Openings and sign-offs, English and Tagalog.
 _GREETING_WORDS = (
     "hello", "hi", "hey", "good", "morning", "afternoon", "evening",
-    "thanks", "thank", "cheers", "bye", "goodbye",
-    "salamat", "magandang", "kumusta", "kamusta", "paalam", "sige",
+    "thanks", "thank", "cheers", "bye", "goodbye", "ok", "okay", "noted",
+    "salamat", "magandang", "kumusta", "kamusta", "paalam", "sige", "opo",
 )
 
 
@@ -225,14 +228,15 @@ def correct_greeting(question, call):
     "salamat po" still gets a list of features.
 
     Short questions only: "Good morning, how many children do I have?" is a
-    question with a greeting attached, not a greeting.
+    question with a greeting attached, not a greeting. Five words, because
+    "Magandang umaga po sa inyo" is a greeting and nothing else.
     """
     if not call.ok or call.tool != "answer_directly":
         return call
     if call.args.get("reason") == "action_request":
         return call                       # already classified, and not a greeting
     words = _PUNCT.sub(" ", str(question or "").lower()).split()
-    if words and len(words) <= 4 and words[0] in _GREETING_WORDS:
+    if words and len(words) <= 5 and words[0] in _GREETING_WORDS:
         return ToolCall(tool="answer_directly",
                         args={"reason": "greeting_or_closing"}, echo="")
     return call
@@ -451,13 +455,31 @@ def _stem_ing(word):
     return word
 
 
+# Function words long enough to survive the length filter and carry no
+# clinical meaning. "with" is the one that was measured doing damage: it is a
+# substring of "Withdrawal from peers", so "struggling with emotions" listed 10
+# of 34 children whose actual concern was withdrawal — a confident, specific,
+# wrong answer. Anything added here must be a word no concern is ever recorded
+# as; "sleep" and "school" are not stopwords however common they look.
+_CONCERN_STOPWORDS = {
+    "with", "that", "this", "these", "those", "they", "them", "their",
+    "there", "here", "have", "having", "been", "being", "from", "about",
+    "what", "when", "which", "whom", "does", "doing", "will", "would",
+    "could", "should", "than", "then", "also", "very", "much", "more",
+    "most", "just", "like", "into", "onto", "upon", "your", "yours",
+    "kung", "para", "yung", "iyong", "nila", "siya", "ang", "mga", "nang",
+}
+
+
 def _search_words(term):
     """Words worth matching on, singular and un-inflected forms included.
 
     Short words are dropped: "of" and "the" appear inside so many records that
-    matching them would return the whole caseload as a false hit.
+    matching them would return the whole caseload as a false hit. Length alone
+    is not enough — see _CONCERN_STOPWORDS.
     """
-    words = {w for w in re.findall(r"[\w']+", term.lower()) if len(w) >= 4}
+    words = {w for w in re.findall(r"[\w']+", term.lower())
+             if len(w) >= 4 and w not in _CONCERN_STOPWORDS}
     return sorted(words | {_singular(w) for w in words}
                   | {_stem_ing(w) for w in words})
 
@@ -578,6 +600,11 @@ def _resolve_care_gaps(request, args):
         for a in alerts]}
 
 
+# How many flags a single answer shows. The rest are counted, never silently
+# dropped.
+FLAG_PAGE = 20
+
+
 def _resolve_self_report_flags(request, args):
     """Children who said something worth reading, in their own words.
 
@@ -605,12 +632,18 @@ def _resolve_self_report_flags(request, args):
         start, end = period_range(period)
         qs = qs.filter(created_at__date__gte=start, created_at__date__lt=end)
 
-    return {"kind": "self_report_flags", "state": state, "items": [
+    # The count comes back with the rows. Twenty of a hundred and sixty, shown
+    # without saying so, reads as "twenty children flagged something" — and
+    # these are children reporting distress, so a reader who believes they
+    # have seen the whole list has been misled about the thing that matters
+    # most here. The panel says how many were not shown.
+    total = qs.count()
+    return {"kind": "self_report_flags", "state": state, "total": total, "items": [
         {"child_id": f.child_id, "child": f.child.fullname,
          "question": f.question, "answer": f.answer,
          "date": str(timezone.localtime(f.created_at).date()),
          "reviewed": f.reviewed_at is not None}
-        for f in qs[:20]]}
+        for f in qs[:FLAG_PAGE]]}
 
 
 def _resolve_direct(request, args):
@@ -656,7 +689,7 @@ REGISTRY = {
             # example added here has to exist in the agency's own vocabulary.
             "Find children whose presenting concern or problem matches a "
             "description, for example 'school refusal', 'anxiety', "
-            "'withdrawn', 'struggling with emotions'. "
+            "'withdrawal', 'struggling with emotions'. "
             "This is the tool for ANY question about what children are "
             "struggling with, however it is worded. "
             "Always pass the concern the user named."),

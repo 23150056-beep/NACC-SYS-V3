@@ -5,6 +5,7 @@ request, runs a real queryset under the caller's own scope, and returns a plain
 dict the frontend renders. That is what makes a hallucinated child name
 impossible: the names come out of the database, not out of a prompt.
 """
+import re
 from datetime import datetime, time, timedelta
 
 from django.contrib.auth import get_user_model
@@ -535,3 +536,141 @@ class GreetingGuardTest(SimpleTestCase):
         call = tools.correct_greeting(
             "hello", tools.ToolCall(tool="count_my_children", args={"status": "active"}))
         self.assertEqual(call.tool, "count_my_children")
+
+
+class ConcernStopwordTest(ResolverTestBase):
+    """Length alone does not make a word worth matching.
+
+    Measured against live data: "with" is a substring of "Withdrawal from
+    peers", so "struggling with emotions" returned 10 of 34 children whose
+    concern was withdrawal — specific, confident and wrong.
+    """
+
+    def setUp(self):
+        super().setUp()
+        ProblemEntry.objects.create(child=self.mine,
+                                    description="Difficulty expressing emotion",
+                                    category="Emotional")
+        ProblemEntry.objects.create(child=self.theirs,
+                                    description="Withdrawal from peers",
+                                    category="Social")
+
+    def test_a_stopword_does_not_drag_in_an_unrelated_concern(self):
+        self.assertNotIn("with", tools._search_words("struggling with emotions"))
+
+    def test_withdrawal_is_not_returned_for_an_emotions_question(self):
+        out = self._resolve(self.admin, "search_children_by_concern",
+                            {"concern": "struggling with emotions"})
+        names = [i["name"] for i in out["items"]]
+        self.assertIn("Maria Santos", names)
+        self.assertNotIn("Juan Dela Cruz", names)
+
+    def test_a_real_concern_word_is_never_treated_as_a_stopword(self):
+        for word in ("sleep", "school", "anxiety", "emotion"):
+            self.assertIn(word, tools._search_words(word), word)
+
+
+class FlagTruncationTest(ResolverTestBase):
+    """A truncated list of distress disclosures must not read as the whole
+    list. Twenty of a hundred and sixty, shown silently, tells the reader
+    twenty children are struggling."""
+
+    def setUp(self):
+        super().setUp()
+        template = AgencyFormTemplate.objects.create(
+            form_type="opinionnaire", title="Child self-report")
+        for i in range(tools.FLAG_PAGE + 5):
+            invite = OpinionnaireInvite.objects.create(
+                child=self.mine, template=template,
+                expires_at=timezone.now() + timedelta(days=7))
+            SelfReportFlag.objects.create(
+                invite=invite, child=self.mine, question=f"Q{i}",
+                answer="Nobody", source=SelfReportFlag.LEXICON)
+
+    def test_the_page_is_capped(self):
+        out = self._resolve(self.psy, "list_self_report_flags", {})
+        self.assertEqual(len(out["items"]), tools.FLAG_PAGE)
+
+    def test_the_total_is_reported_so_the_rest_are_not_hidden(self):
+        out = self._resolve(self.psy, "list_self_report_flags", {})
+        self.assertEqual(out["total"], tools.FLAG_PAGE + 5)
+        self.assertGreater(out["total"], len(out["items"]))
+
+
+class ActionGuardFalsePositiveTest(SimpleTestCase):
+    """The guard turns a question into a refusal, so a false positive costs a
+    real answer. "Send me the list" is a request for information."""
+
+    def _reason(self, question):
+        call = tools.ToolCall(tool="answer_directly", args={})
+        return tools.correct_action_request(question, call).args.get("reason")
+
+    def test_asking_to_be_sent_a_list_is_not_a_change_request(self):
+        self.assertNotEqual(
+            self._reason("Send me the list of children needing follow-up"),
+            "action_request")
+
+    def test_a_real_change_request_is_still_caught(self):
+        self.assertEqual(self._reason("Book Ana for Friday"), "action_request")
+
+
+class GreetingCoverageTest(SimpleTestCase):
+    def _is_greeting(self, question):
+        call = tools.ToolCall(tool="answer_directly", args={})
+        return tools.correct_greeting(question, call).args.get("reason") == \
+            "greeting_or_closing"
+
+    def test_a_five_word_tagalog_greeting_is_recognised(self):
+        self.assertTrue(self._is_greeting("Magandang umaga po sa inyo"))
+
+    def test_a_bare_acknowledgement_is_recognised(self):
+        self.assertTrue(self._is_greeting("ok"))
+        self.assertTrue(self._is_greeting("opo salamat"))
+
+    def test_a_question_is_still_not_a_greeting(self):
+        self.assertFalse(self._is_greeting("how many children do I have?"))
+
+
+class DescriptionExamplesMatchTheDataTest(ResolverTestBase):
+    """Every quoted example in the concern tool's description must find
+    something.
+
+    A description is not documentation — it is where the model gets its
+    arguments from, and it copies these strings verbatim. Two shipped that
+    matched nothing: 'trouble sleeping' (the record says "Sleep disturbance",
+    and icontains cannot match a longer needle) and 'withdrawn' (the record
+    says "Withdrawal"). Both produced a confident empty answer to a perfectly
+    ordinary question.
+
+    The fixture is the agency's real vocabulary, read from the live database
+    on 30 Aug 2026 — inventing text here is how the last search shipped green
+    while returning nothing.
+    """
+
+    AGENCY_VOCABULARY = [
+        ("Adjustment to placement", "Social"),
+        ("Difficulty expressing emotion", "Emotional"),
+        ("School attendance difficulty", "Educational"),
+        ("Separation anxiety", "Emotional"),
+        ("Sleep disturbance", "Physical"),
+        ("Withdrawal from peers", "Social"),
+    ]
+
+    def setUp(self):
+        super().setUp()
+        for description, category in self.AGENCY_VOCABULARY:
+            ProblemEntry.objects.create(child=self.mine, description=description,
+                                        category=category)
+
+    def test_every_example_in_the_description_finds_a_child(self):
+        description = tools.REGISTRY["search_children_by_concern"]["description"]
+        examples = re.findall(r"'([^']+)'", description)
+        self.assertTrue(examples, "no quoted examples found to check")
+        for example in examples:
+            with self.subTest(example=example):
+                out = self._resolve(self.psy, "search_children_by_concern",
+                                    {"concern": example})
+                self.assertTrue(
+                    out["items"],
+                    f"{example!r} is offered to the model as an example and "
+                    f"matches nothing in the agency's vocabulary")

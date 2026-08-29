@@ -194,6 +194,14 @@ function Answer({ result }) {
             </div>
           </div>
         ))}
+        {/* Never let a truncated list read as the whole list — these are
+            children reporting distress. */}
+        {result.total > result.items.length && (
+          <Line muted>
+            Showing {result.items.length} of {result.total}. Open Progress
+            Monitoring to read the rest.
+          </Line>
+        )}
       </div>
     );
   }
