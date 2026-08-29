@@ -75,11 +75,24 @@ function Answer({ result }) {
   }
 
   if (kind === 'appointments') {
-    if (!result.items.length) return <Line muted>Nothing scheduled.</Line>;
+    if (!result.items.length) {
+      // "Nothing scheduled" is the wrong sentence for "who did I see
+      // yesterday?" — nothing was scheduled is not nothing happened.
+      const past = ['yesterday', 'last_week', 'last_month', 'last_year']
+        .includes(result.when);
+      return <Line muted>{past ? 'Nothing recorded.' : 'Nothing scheduled.'}</Line>;
+    }
     return result.items.map((a, i) => (
       <Line key={i}>
         <strong>{a.child}</strong>
         <span style={{ color: 'var(--text-muted)' }}> · {a.when} · {a.purpose}</span>
+        {a.status && a.status !== 'scheduled' && (
+          <span style={{
+            marginLeft: 6, padding: '1px 6px', borderRadius: 'var(--radius-pill)',
+            fontSize: 11, fontWeight: 700, textTransform: 'capitalize',
+            background: 'var(--ink-50)', color: 'var(--text-muted)',
+          }}>{a.status.replace('_', ' ')}</span>
+        )}
       </Line>
     ));
   }
@@ -143,6 +156,40 @@ function Answer({ result }) {
           </div>
         )}
       </>
+    );
+  }
+
+  if (kind === 'self_report_flags') {
+    if (!result.items.length) return <Line muted>No flagged self-reports.</Line>;
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {result.items.map((f, i) => (
+          <div key={i} style={{
+            padding: '10px 12px', borderRadius: 'var(--radius-md)',
+            background: 'var(--amber-50)', border: '1px solid var(--border)',
+          }}>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>
+              {f.child}
+              {f.reviewed && (
+                <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>
+                  reviewed
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+              {f.question}
+            </div>
+            {/* The child's own words, quoted. A flag without them is not
+                something anyone can act on. */}
+            <div style={{ fontSize: 13, marginTop: 4, fontStyle: 'italic' }}>
+              “{f.answer}”
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>
+              {f.date}
+            </div>
+          </div>
+        ))}
+      </div>
     );
   }
 
