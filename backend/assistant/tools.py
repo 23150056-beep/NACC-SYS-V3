@@ -16,6 +16,7 @@ no tool declares a "which children" parameter, because the answer always comes
 from `request.user`.
 """
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 import re
 
 # Enum values the model reached for that were not in the enum. Deterministic,
@@ -23,9 +24,21 @@ import re
 # to 100% on the spike's case set.
 ALIASES = {
     "when": {
-        "bukas": "tomorrow", "ngayon": "today", "kahapon": "today",
-        "ngayong linggo": "this_week", "susunod na linggo": "next_week",
-        "this week": "this_week", "next week": "next_week",
+        "ngayon": "today", "ngayong araw": "today", "today": "today",
+        # Regression: this was mapped to "today". Kahapon is yesterday, and
+        # aliasing around a missing period produced a confidently wrong answer.
+        "kahapon": "yesterday", "yesterday": "yesterday",
+        "bukas": "tomorrow", "tomorrow": "tomorrow",
+        "ngayong linggo": "this_week", "this week": "this_week",
+        "nakaraang linggo": "last_week", "noong isang linggo": "last_week",
+        "last week": "last_week",
+        "susunod na linggo": "next_week", "next week": "next_week",
+        "ngayong buwan": "this_month", "this month": "this_month",
+        "nakaraang buwan": "last_month", "noong isang buwan": "last_month",
+        "last month": "last_month",
+        "ngayong taon": "this_year", "this year": "this_year",
+        "nakaraang taon": "last_year", "noong isang taon": "last_year",
+        "last year": "last_year",
     },
     "status": {
         "aktibo": "active", "buhay": "active", "tapos": "terminated",
@@ -152,8 +165,81 @@ def correct_obvious_misroute(question, call):
 # Scope is taken from request.user through the same helper the rest of the app
 # uses. No resolver reads scope from the model's arguments.
 
-_WINDOWS = {"today": (0, 1), "tomorrow": (1, 2),
-            "this_week": (0, 7), "next_week": (7, 14)}
+# Periods. Weeks, months and years are calendar-aligned; days are offsets.
+# Rolling windows ("today through +7") do not survive `last_month`, and mixing
+# the two would have "this week" and "this month" answering on different logic.
+PERIODS = ("today", "yesterday", "tomorrow",
+           "this_week", "last_week", "next_week",
+           "this_month", "last_month",
+           "this_year", "last_year")
+
+# Periods that contain no past day. Everything else contains one — `today`
+# included, because a session completed this morning belongs in the answer.
+FUTURE_ONLY = {"tomorrow", "next_week"}
+
+
+def _week_start(day):
+    """The Sunday on or before `day`.
+
+    Sunday because Schedule.jsx builds its calendar with date-fns startOfWeek
+    under the en-US locale, and the chatbot must agree with the screen the user
+    is looking at. Python's weekday() is Monday=0..Sunday=6, so the number of
+    days since Sunday is (weekday() + 1) % 7.
+    """
+    return day - timedelta(days=(day.weekday() + 1) % 7)
+
+
+def _month_start(day):
+    return day.replace(day=1)
+
+
+def _next_month(first):
+    return date(first.year + (first.month == 12),
+                1 if first.month == 12 else first.month + 1, 1)
+
+
+def _previous_month(first):
+    return date(first.year - (first.month == 1),
+                12 if first.month == 1 else first.month - 1, 1)
+
+
+def period_range(period, today=None):
+    """(start, end) for a period name. End is EXCLUSIVE.
+
+    `today` is injectable so tests can pin a weekday instead of depending on
+    the day the suite happens to run.
+    """
+    if today is None:
+        from django.utils import timezone
+        today = timezone.localdate()
+
+    if period == "today":
+        return today, today + timedelta(days=1)
+    if period == "yesterday":
+        return today - timedelta(days=1), today
+    if period == "tomorrow":
+        return today + timedelta(days=1), today + timedelta(days=2)
+
+    week = _week_start(today)
+    if period == "this_week":
+        return week, week + timedelta(days=7)
+    if period == "last_week":
+        return week - timedelta(days=7), week
+    if period == "next_week":
+        return week + timedelta(days=7), week + timedelta(days=14)
+
+    month = _month_start(today)
+    if period == "this_month":
+        return month, _next_month(month)
+    if period == "last_month":
+        return _previous_month(month), month
+
+    if period == "this_year":
+        return date(today.year, 1, 1), date(today.year + 1, 1, 1)
+    if period == "last_year":
+        return date(today.year - 1, 1, 1), date(today.year, 1, 1)
+
+    raise KeyError(period)
 
 DIRECT_REPLY = ("I can answer questions about your schedule, your children, "
                 "and who needs follow-up. I can't answer anything else.")
@@ -166,20 +252,28 @@ def _scope(request):
 
 def _resolve_appointments(request, args):
     from django.utils import timezone
-    from datetime import timedelta
     from scheduling.models import Appointment
 
-    offset, span = _WINDOWS[args["when"]]
-    today = timezone.localdate()
-    start, end = today + timedelta(days=offset), today + timedelta(days=offset + span - offset if span else 1)
-    end = today + timedelta(days=span)
+    period = args["when"]
+    start, end = period_range(period)
+
+    # A period with no past day is a plan, so only what is still going to
+    # happen belongs in it. Any other period has finished work in it, and
+    # hiding that answers "what did I do this week" with silence. CANCELLED is
+    # excluded either way: a cancelled appointment is not a session.
+    statuses = ([Appointment.SCHEDULED] if period in FUTURE_ONLY
+                else [Appointment.SCHEDULED, Appointment.COMPLETED,
+                      Appointment.NO_SHOW])
+
     appts = (Appointment.objects
-             .filter(psychologist=request.user, status=Appointment.SCHEDULED,
+             .filter(psychologist=request.user, status__in=statuses,
                      start__date__gte=start, start__date__lt=end)
              .select_related("child").order_by("start"))
-    return {"kind": "appointments", "when": args["when"], "items": [
-        {"child": a.child.fullname, "when": timezone.localtime(a.start).strftime("%a %d %b, %H:%M"),
-         "purpose": a.get_purpose_display()} for a in appts]}
+    return {"kind": "appointments", "when": period, "items": [
+        {"child": a.child.fullname,
+         "when": timezone.localtime(a.start).strftime("%a %d %b, %H:%M"),
+         "purpose": a.get_purpose_display(),
+         "status": a.status} for a in appts]}
 
 
 def _resolve_count(request, args):
@@ -313,8 +407,7 @@ REGISTRY = {
             "The signed-in user's own schedule: appointments, sessions, visits, "
             "and WHO THEY ARE SEEING on a given day. Use for any question about "
             "the calendar or schedule. Do NOT use this to search for children."),
-        "schema": {"when": {"enum": ["today", "tomorrow", "this_week", "next_week"],
-                            "required": True}},
+        "schema": {"when": {"enum": list(PERIODS), "required": True}},
         "echo": lambda a: f"Looking up: your appointments {a['when'].replace('_', ' ')}",
         "resolve": _resolve_appointments,
     },

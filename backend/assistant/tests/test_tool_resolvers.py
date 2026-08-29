@@ -83,6 +83,57 @@ class AppointmentsResolverTest(ResolverTestBase):
         out = self._resolve(self.admin, "list_my_appointments", {"when": "today"})
         self.assertEqual([], out["items"])
 
+    # --- periods, and the status that belongs to each ---------------------
+
+    def _appt_with(self, child, psychologist, days, status):
+        appt = self._appt(child, psychologist, days=days)
+        appt.status = status
+        appt.save(update_fields=["status"])
+        return appt
+
+    def test_yesterday_returns_completed_sessions(self):
+        # The confident-empty failure: filtering to SCHEDULED means a past
+        # period always answers "nothing", because yesterday's work is done.
+        self._appt_with(self.mine, self.psy, -1, Appointment.COMPLETED)
+        out = self._resolve(self.psy, "list_my_appointments", {"when": "yesterday"})
+        self.assertEqual(len(out["items"]), 1)
+        self.assertEqual(out["items"][0]["status"], Appointment.COMPLETED)
+
+    def test_a_no_show_is_returned_for_a_past_period(self):
+        self._appt_with(self.mine, self.psy, -1, Appointment.NO_SHOW)
+        out = self._resolve(self.psy, "list_my_appointments", {"when": "yesterday"})
+        self.assertEqual(len(out["items"]), 1)
+
+    def test_a_cancelled_appointment_is_never_returned(self):
+        self._appt_with(self.mine, self.psy, -1, Appointment.CANCELLED)
+        out = self._resolve(self.psy, "list_my_appointments", {"when": "yesterday"})
+        self.assertEqual(out["items"], [])
+
+    def test_a_future_period_returns_only_scheduled(self):
+        self._appt_with(self.mine, self.psy, 1, Appointment.COMPLETED)
+        self._appt_with(self.theirs, self.psy, 1, Appointment.SCHEDULED)
+        out = self._resolve(self.psy, "list_my_appointments", {"when": "tomorrow"})
+        self.assertEqual([i["status"] for i in out["items"]],
+                         [Appointment.SCHEDULED])
+
+    def test_this_week_spans_both_directions(self):
+        # A week containing today holds finished work and upcoming work. Asked
+        # on a Wednesday, "what have I got this week" must show Monday's
+        # completed session as well as Friday's booking.
+        start, _ = tools.period_range("this_week")
+        today = timezone.localdate()
+        if start < today:                      # a past day exists in this week
+            self._appt_with(self.mine, self.psy,
+                            (start - today).days, Appointment.COMPLETED)
+        self._appt_with(self.theirs, self.psy, 0, Appointment.SCHEDULED)
+        out = self._resolve(self.psy, "list_my_appointments", {"when": "this_week"})
+        self.assertGreaterEqual(len(out["items"]), 1)
+
+    def test_a_month_period_resolves(self):
+        self._appt_with(self.mine, self.psy, 0, Appointment.COMPLETED)
+        out = self._resolve(self.psy, "list_my_appointments", {"when": "this_month"})
+        self.assertEqual(len(out["items"]), 1)
+
 
 class CountResolverTest(ResolverTestBase):
     def test_counts_only_children_the_caller_can_see(self):
