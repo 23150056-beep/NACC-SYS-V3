@@ -356,3 +356,45 @@ class ActionRequestGuardTest(SimpleTestCase):
                       if t["function"]["name"] == "answer_directly")
         enum = direct["function"]["parameters"]["properties"]["reason"]["enum"]
         self.assertNotIn("action_request", enum)
+
+
+class ChildNameMatchingTest(ResolverTestBase):
+    """`fullname__icontains` is one exact substring. Real users type a first
+    name, a misremembered surname, or "si Ana"."""
+
+    def test_a_first_name_alone_finds_the_child(self):
+        out = self._resolve(self.psy, "get_child_summary", {"name": "Maria"})
+        self.assertEqual(out["match"], "one")
+        self.assertEqual(out["child"]["name"], "Maria Santos")
+
+    def test_a_wrong_surname_still_finds_them_by_first_name(self):
+        # Observed shape: the record says "Maria Santos", the user types a
+        # surname from memory. One exact substring finds nothing at all.
+        out = self._resolve(self.psy, "get_child_summary", {"name": "Maria Reyes"})
+        self.assertEqual(out["match"], "one")
+        self.assertEqual(out["child"]["name"], "Maria Santos")
+
+    def test_a_short_name_is_not_discarded(self):
+        # _search_words drops anything under 4 characters, which would throw
+        # away "Ana", "Jun" and "Lito" entirely. Names need their own splitter.
+        Child.objects.create(fullname="Ana Cruz", assigned_psychologist=self.psy)
+        out = self._resolve(self.psy, "get_child_summary", {"name": "Ana"})
+        self.assertEqual(out["match"], "one")
+
+    def test_a_tagalog_article_is_ignored(self):
+        out = self._resolve(self.psy, "get_child_summary", {"name": "si Maria"})
+        self.assertEqual(out["match"], "one")
+
+    def test_several_matches_still_disambiguate(self):
+        Child.objects.create(fullname="Maria Lopez", assigned_psychologist=self.psy)
+        out = self._resolve(self.psy, "get_child_summary", {"name": "Maria"})
+        self.assertEqual(out["match"], "several")
+        self.assertEqual(len(out["items"]), 2)
+
+    def test_a_name_outside_scope_is_not_found(self):
+        out = self._resolve(self.psy, "get_child_summary", {"name": "Juan"})
+        self.assertEqual(out["match"], "none")
+
+    def test_an_unknown_name_is_still_not_found(self):
+        out = self._resolve(self.psy, "get_child_summary", {"name": "Zenaida"})
+        self.assertEqual(out["match"], "none")

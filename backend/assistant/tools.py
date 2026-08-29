@@ -398,6 +398,24 @@ def _search_words(term):
     return sorted(words | {_singular(w) for w in words})
 
 
+# Articles and honorifics that arrive attached to a name: "si Maria",
+# "kay Ana po". They are not part of anybody's name.
+_NAME_NOISE = {"si", "ni", "kay", "kina", "sina", "po", "ho", "ang", "yung",
+               "iyong", "mr", "ms", "mrs", "sir", "maam", "ma"}
+
+
+def _name_words(term):
+    """Words from a name worth matching on.
+
+    _search_words is not reusable here: it drops anything under four
+    characters, which discards "Ana", "Jun" and "Lito" — exactly the names
+    people are most likely to type on their own.
+    """
+    words = {w for w in re.findall(r"[\w']+", str(term or "").lower())
+             if len(w) >= 2}
+    return sorted(words - _NAME_NOISE)
+
+
 def _resolve_concern(request, args):
     """Match on shared words, not on the whole phrase.
 
@@ -447,7 +465,19 @@ def _resolve_summary(request, args):
     from clinical.care_gaps import compute_alerts
     from children.models import Child
 
+    from django.db.models import Q
+
+    # The exact phrase first, so a full name keeps matching exactly as before
+    # and nothing gets looser. Only when that finds nothing does the search
+    # widen to any single word — which is what rescues "Maria Reyes" for a
+    # record reading "Maria Santos", and "si Maria" for "Maria".
     matches = list(_scope(request).filter(fullname__icontains=args["name"])[:6])
+    if not matches:
+        query = Q()
+        for word in _name_words(args["name"]):
+            query |= Q(fullname__icontains=word)
+        if query:
+            matches = list(_scope(request).filter(query)[:6])
     if not matches:
         return {"kind": "summary", "match": "none", "name": args["name"]}
     if len(matches) > 1:
