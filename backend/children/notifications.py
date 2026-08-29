@@ -31,7 +31,11 @@ BREVO_ENDPOINT = "https://api.brevo.com/v3/smtp/email"
 _TIMEOUT = 20
 
 
-def _post(payload):
+def _post(payload, description):
+    """POST one message to Brevo. `description` names which mail this is, and
+    exists only for the log: more than one kind of message goes through here,
+    and a failure that does not say which one leaves whoever is reading the
+    logs looking at the wrong feature."""
     request = urllib.request.Request(
         BREVO_ENDPOINT,
         data=json.dumps(payload).encode("utf-8"),
@@ -46,10 +50,10 @@ def _post(payload):
         with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:
             return response.status in (200, 201, 202)
     except urllib.error.URLError:
-        logger.exception("Brevo assignment email failed")
+        logger.exception("Brevo %s failed", description)
         return False
     except Exception:
-        logger.exception("Unexpected error sending Brevo assignment email")
+        logger.exception("Unexpected error sending Brevo %s", description)
         return False
 
 
@@ -99,7 +103,8 @@ def send_assignment_notification(child):
     # on_commit so a rolled-back save cannot send mail about a case that does
     # not exist; the thread so a slow Brevo cannot hold the response open.
     transaction.on_commit(
-        lambda: threading.Thread(target=_post, args=(payload,), daemon=True).start())
+        lambda: threading.Thread(
+            target=_post, args=(payload, "assignment email"), daemon=True).start())
     return True
 
 
@@ -129,7 +134,14 @@ def build_temporary_password_payload(user, temporary_password):
 
 
 def send_temporary_password_notification(user, temporary_password):
-    """Queue a temporary password email without blocking the account change."""
+    """Queue a temporary password email without blocking the account change.
+
+    True means the message was handed to a background thread, NOT that it
+    arrived: the Brevo call happens after this returns and its result is not
+    read back. A caller that reports this to a person must say "queued", never
+    "sent" — an administrator who believes an email went out is an
+    administrator who does not hand the password over.
+    """
     if not getattr(user, "email", ""):
         return False
     if not settings.BREVO_API_KEY:
@@ -140,5 +152,7 @@ def send_temporary_password_notification(user, temporary_password):
 
     payload = build_temporary_password_payload(user, temporary_password)
     transaction.on_commit(
-        lambda: threading.Thread(target=_post, args=(payload,), daemon=True).start())
+        lambda: threading.Thread(
+            target=_post, args=(payload, "temporary password email"),
+            daemon=True).start())
     return True
