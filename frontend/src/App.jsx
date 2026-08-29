@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { ActivityProvider } from './context/ActivityContext';
+import { AssistantProvider } from './context/AssistantContext';
 import { ToastProvider } from './context/ToastContext';
 import { INSTRUMENT_MANAGER_ROLES } from './config/roles';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -44,6 +45,7 @@ export default function App() {
     <AuthProvider>
       <ToastProvider>
       <ActivityProvider>
+      <AssistantProvider>
         <BrowserRouter>
           <Routes>
           <Route path="/login" element={<Login />} />
@@ -69,6 +71,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/login" replace />} />
           </Routes>
         </BrowserRouter>
+      </AssistantProvider>
       </ActivityProvider>
       </ToastProvider>
     </AuthProvider>
