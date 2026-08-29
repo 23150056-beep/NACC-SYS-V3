@@ -15,6 +15,7 @@ outside:
 The failures share a shape: the service reports healthy, and the application is
 broken. These guards make each one say so.
 """
+from django.conf import settings
 from django.test import SimpleTestCase, TestCase
 
 from config.guards import cors_is_unconfigured, sqlite_fallback_is_a_mistake
@@ -75,9 +76,19 @@ class HealthzTest(TestCase):
         self.assertEqual("ok", res.json()["status"])
 
     def test_names_the_database_engine(self):
+        """It must name the engine it ACTUALLY reached, whichever that is.
+
+        Asserting "sqlite" here passed on a developer's machine and failed on
+        every CI run from 27 Aug 2026, because CI runs PostgreSQL on purpose —
+        the whole point being that queries which pass on SQLite can still fail
+        on the engine production uses. A test that only holds on one engine
+        cannot check a field whose job is to tell the two apart.
+        """
         body = self.client.get("/healthz/").json()
         self.assertIn("engine", body)
-        self.assertIn("sqlite", body["engine"])
+        expected = settings.DATABASES["default"]["ENGINE"].rsplit(".", 1)[-1]
+        self.assertEqual(expected, body["engine"])
+        self.assertNotEqual("unknown", body["engine"])
 
     def test_names_the_host_so_the_wrong_database_is_visible(self):
         body = self.client.get("/healthz/").json()
