@@ -8,7 +8,7 @@ impossible: the names come out of the database, not out of a prompt.
 from datetime import datetime, time, timedelta
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory
 
@@ -291,3 +291,68 @@ class DirectResolverTest(ResolverTestBase):
     def test_works_without_a_reason(self):
         out = self._resolve(self.psy, "answer_directly", {})
         self.assertTrue(out["text"])
+
+
+class DirectReplyTest(ResolverTestBase):
+    """A greeting is not an unanswerable question, and a psychologist is not
+    an administrator. Both distinctions are made server-side, so the model
+    never has to be told about roles and the cached prefix never forks."""
+
+    def test_a_greeting_is_not_answered_with_a_capability_list(self):
+        out = self._resolve(self.psy, "answer_directly",
+                            {"reason": "greeting_or_closing"})
+        self.assertEqual(out["kind"], "message")
+        self.assertNotIn("can't answer", out["text"].lower())
+        self.assertNotIn("cannot answer", out["text"].lower())
+
+    def test_an_unsupported_question_lists_what_this_role_can_ask(self):
+        out = self._resolve(self.psy, "answer_directly", {"reason": "unsupported"})
+        self.assertIn("caseload", out["text"].lower())
+
+    def test_a_psychologist_is_never_offered_user_management(self):
+        out = self._resolve(self.psy, "answer_directly", {"reason": "unsupported"})
+        self.assertNotIn("user account", out["text"].lower())
+
+    def test_an_administrator_gets_a_different_list(self):
+        mine = self._resolve(self.psy, "answer_directly", {"reason": "unsupported"})
+        theirs = self._resolve(self.admin, "answer_directly", {"reason": "unsupported"})
+        self.assertNotEqual(mine["text"], theirs["text"])
+
+    def test_a_missing_reason_still_answers(self):
+        # `reason` is optional; the model dropped it once in 28 turns.
+        out = self._resolve(self.psy, "answer_directly", {})
+        self.assertTrue(out["text"])
+
+
+class ActionRequestGuardTest(SimpleTestCase):
+    """The guard only ever changes refusal wording. It cannot make the
+    assistant assert anything, so it cannot introduce a wrong answer."""
+
+    def _guarded(self, question, tool="answer_directly", args=None):
+        call = tools.ToolCall(tool=tool, args=args or {})
+        return tools.correct_action_request(question, call)
+
+    def test_a_booking_request_is_recognised(self):
+        call = self._guarded("book Ana for Friday")
+        self.assertEqual(call.args["reason"], "action_request")
+
+    def test_a_tagalog_action_request_is_recognised(self):
+        call = self._guarded("i-reset mo ang password ni Paul")
+        self.assertEqual(call.args["reason"], "action_request")
+
+    def test_a_question_about_the_schedule_is_left_alone(self):
+        call = self._guarded("what is my schedule today?")
+        self.assertNotEqual(call.args.get("reason"), "action_request")
+
+    def test_it_never_touches_a_data_tool(self):
+        call = self._guarded("book Ana for Friday", tool="list_my_appointments",
+                             args={"when": "today"})
+        self.assertEqual(call.tool, "list_my_appointments")
+        self.assertEqual(call.args, {"when": "today"})
+
+    def test_action_request_is_not_in_the_model_facing_schema(self):
+        payload = tools.ollama_payload()
+        direct = next(t for t in payload
+                      if t["function"]["name"] == "answer_directly")
+        enum = direct["function"]["parameters"]["properties"]["reason"]["enum"]
+        self.assertNotIn("action_request", enum)

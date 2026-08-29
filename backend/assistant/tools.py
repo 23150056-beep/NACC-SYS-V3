@@ -157,6 +157,44 @@ def correct_obvious_misroute(question, call):
     return call
 
 
+# Imperatives, not topics. "schedule" is absent on purpose — it appears in
+# "what is my schedule today?", which is a question this assistant answers.
+_ACTION_VERBS = (
+    "book", "cancel", "create", "add", "delete", "remove", "reset", "update",
+    "edit", "assign", "reassign", "upload", "send", "approve", "deactivate",
+    "magdagdag", "magbook", "burahin", "palitan", "tanggalin", "idagdag",
+)
+
+
+def correct_action_request(question, call):
+    """Say "I can't change anything" instead of "I can't answer that".
+
+    Only ever rewrites the reason on a call the model already routed to
+    answer_directly, so — like correct_obvious_misroute — it can make the
+    assistant decline differently and can never make it assert anything.
+
+    `action_request` is server-side only: this constructs its ToolCall
+    directly, so validate() never sees the value and the schema the model
+    reads does not grow by it.
+    """
+    if not call.ok or call.tool != "answer_directly":
+        return call
+    words = _PUNCT.sub(" ", str(question or "").lower()).split()
+    if not words:
+        return call
+    # Tagalog forms an imperative by prefixing the verb: "i-reset mo ang
+    # password". _PUNCT has already turned that hyphen into a space, so the
+    # verb is the second word and "i" is the first — checking the pair covers
+    # every i- verb without listing them.
+    leading = words[0]
+    if leading == "i" and len(words) > 1:
+        leading = words[1]
+    if leading in _ACTION_VERBS:
+        return ToolCall(tool="answer_directly",
+                        args={"reason": "action_request"}, echo="")
+    return call
+
+
 # --- resolvers ------------------------------------------------------------
 # Each takes (request, validated args) and returns a plain dict the frontend
 # renders. The model never sees any of this — which is precisely why a
@@ -241,8 +279,58 @@ def period_range(period, today=None):
 
     raise KeyError(period)
 
-DIRECT_REPLY = ("I can answer questions about your schedule, your children, "
-                "and who needs follow-up. I can't answer anything else.")
+# What each role can actually ask, in its own words. Built here rather than in
+# the prompt because the model never sees it: role-awareness therefore costs
+# nothing, and CHAT_SYSTEM stays byte-identical so the prefix cache stays warm.
+_CAN_ASK = {
+    "Psychologist": (
+        "your schedule, how many children are in your caseload, children with "
+        "a particular concern, a summary of one child, who needs follow-up, "
+        "and which children have flagged something in their own words"),
+    "Administrator": (
+        "the agency's schedule, how many children the agency is handling, "
+        "children with a particular concern, a summary of one child, who needs "
+        "follow-up, and which children have flagged something in their own "
+        "words"),
+    "Staff": (
+        "the schedule, how many children the agency is handling, children with "
+        "a particular concern, a summary of one child, and who needs "
+        "follow-up"),
+}
+_CAN_ASK_DEFAULT = _CAN_ASK["Psychologist"]
+
+# Shown in the empty panel. Questions, not features — someone who arrives by
+# clicking a button has typed nothing and needs a starting point, not a menu.
+_EXAMPLES = {
+    "Psychologist": ["Who am I seeing today?",
+                     "How many children do I have?",
+                     "Who flagged something worrying?",
+                     "Who needs follow-up?"],
+    "Administrator": ["Who needs follow-up?",
+                      "Who flagged something worrying?",
+                      "Any children with anxiety?",
+                      "What was scheduled last week?"],
+    "Staff": ["Who needs follow-up?",
+              "Any children with anxiety?",
+              "What's on this week?",
+              "Tell me about a child by name"],
+}
+
+GREETING_REPLY = "Hello — what would you like to look up?"
+
+ACTION_REPLY = (
+    "I can look things up, but I can't change anything. Bookings, records and "
+    "accounts are edited on their own screens.")
+
+
+def capability_text(role):
+    """One sentence naming what this role can ask. Public because the panel
+    serves it too — there must not be a server answer and a frontend one."""
+    return f"You can ask me about {_CAN_ASK.get(role, _CAN_ASK_DEFAULT)}."
+
+
+def capability_examples(role):
+    return list(_EXAMPLES.get(role, _EXAMPLES["Psychologist"]))
 
 
 def _scope(request):
@@ -397,8 +485,16 @@ def _resolve_care_gaps(request, args):
 
 
 def _resolve_direct(request, args):
-    return {"kind": "message", "reason": args.get("reason", "unsupported"),
-            "text": DIRECT_REPLY}
+    from assistant.views import _role          # local: avoids a cycle
+
+    reason = args.get("reason", "unsupported")
+    if reason == "greeting_or_closing":
+        text = GREETING_REPLY
+    elif reason == "action_request":
+        text = ACTION_REPLY
+    else:
+        text = capability_text(_role(request))
+    return {"kind": "message", "reason": reason, "text": text}
 
 
 REGISTRY = {

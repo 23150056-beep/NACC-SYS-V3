@@ -515,6 +515,9 @@ class AssistantAskView(AssistantBaseView):
         # many psychologists are in the system?" answered "40 active children".
         # It can only make the assistant decline, never assert.
         call = tools.correct_obvious_misroute(question, call)
+        # Same shape, different sentence: "book Ana for Friday" is a request to
+        # change something, and "I can't answer that" is the wrong refusal.
+        call = tools.correct_action_request(question, call)
         AssistantJob.objects.create(
             job_type="chat", input_ref=question[:150],
             output_text=f"{call.tool}({call.args})"[:2000],
