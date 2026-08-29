@@ -60,11 +60,17 @@ CHAT_CASES = [
     ("gaps tl", "Sino ang kailangan ng follow-up?", "list_care_gaps", False, None),
     ("chitchat", "Good morning!", "answer_directly", False,
      {"reason": "greeting_or_closing"}),
-    # Regression: seen in the browser answering "40 active children".
+    # Regression: seen in the browser answering "40 active children". The
+    # answer was a refusal until count_people existed; it is a number now, and
+    # correct_obvious_misroute stays behind it as the backstop.
     ("staff count en", "how many psychologist are in the system?",
-     "answer_directly", False, None),
-    ("staff count tl", "Ilan ang mga psychologist dito?", "answer_directly", False,
-     None),
+     "count_people", True, {"role": "psychologist"}),
+    ("staff count tl", "Ilan ang mga psychologist dito?", "count_people", True,
+     {"role": "psychologist"}),
+    ("staff count any", "How many users are in the system?", "count_people",
+     True, None),
+    ("unassigned en", "Which children have no psychologist?",
+     "list_unassigned_children", False, None),
     # Regression: kahapon was aliased to today, so this answered with today's
     # appointments. Routing alone cannot catch it — the argument has to be
     # checked.

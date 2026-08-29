@@ -44,6 +44,18 @@ ALIASES = {
         "aktibo": "active", "buhay": "active", "tapos": "terminated",
         "lahat": "any", "all": "any",
     },
+    # Measured: asked "how many users are in the system?", the model answered
+    # role="any" against an enum offering "anyone". The near-miss is what this
+    # table is for — rejecting a correctly-routed call over one synonym turns a
+    # right answer into an apology.
+    "role": {
+        "any": "anyone", "all": "anyone", "everyone": "anyone",
+        "everybody": "anyone", "user": "anyone", "users": "anyone",
+        "lahat": "anyone",
+        "psychologists": "psychologist", "psikologo": "psychologist",
+        "administrators": "administrator", "admin": "administrator",
+        "admins": "administrator", "staffs": "staff", "kawani": "staff",
+    },
 }
 
 # The table is keyed by PARAMETER NAME, and two tools name their time argument
@@ -145,6 +157,13 @@ _ABOUT_CHILDREN = (
 
 def correct_obvious_misroute(question, call):
     """Stop a child count being served as the answer to a staff question.
+
+    Now a backstop rather than the answer. count_people exists, so the model
+    should route these itself; this catches the times it does not. It is
+    deliberately NOT changed to re-route to count_people, because choosing
+    that tool means also choosing a role, and a guard that picks a role from
+    keywords is doing the model's job with worse equipment — it would turn a
+    safe refusal into a confident number.
 
     Only downgrades to `answer_directly`, never upgrades or re-routes: the
     guard can make the assistant decline, and cannot make it assert anything.
@@ -604,6 +623,48 @@ def _resolve_care_gaps(request, args):
 # dropped.
 FLAG_PAGE = 20
 
+# Role names as the model may say them, mapped to what the database stores.
+_COUNTABLE_ROLES = {"psychologist": "Psychologist", "staff": "Staff",
+                    "administrator": "Administrator"}
+
+
+def _resolve_count_people(request, args):
+    """How many colleagues, by role.
+
+    This is the question the assistant used to refuse. "How many psychologists
+    are in the system?" came back "40 active children" in the browser, and the
+    fix was a guard forcing it into a refusal — the right call for a missing
+    tool, and the wrong one once the tool exists.
+
+    Not scoped by caller: headcount is not case data, and refusing a
+    psychologist the number of psychologists would be privacy theatre. Active
+    accounts only, which is how the Users screen counts.
+    """
+    from django.contrib.auth import get_user_model
+
+    role = args.get("role", "anyone")
+    qs = get_user_model().objects.filter(status="active")
+    if role != "anyone":
+        qs = qs.filter(role__role_name=_COUNTABLE_ROLES[role])
+    return {"kind": "people_count", "role": role, "count": qs.count()}
+
+
+def _resolve_unassigned_children(request, args):
+    """Children with no psychologist — a gap somebody has to close.
+
+    Runs through _scope like everything else, which means a psychologist gets
+    an empty list: their scope is children assigned to them, so an unassigned
+    child cannot be in it. Empty is the honest answer, and the alternative
+    would hand them the agency's whole caseload.
+    """
+    from children.models import Child
+
+    qs = (_scope(request)
+          .filter(assigned_psychologist__isnull=True, status=Child.ACTIVE)
+          .order_by("fullname"))
+    return {"kind": "children", "concern": "no assigned psychologist",
+            "items": [{"id": c.id, "name": c.fullname} for c in qs[:40]]}
+
 
 def _resolve_self_report_flags(request, args):
     """Children who said something worth reading, in their own words.
@@ -662,9 +723,16 @@ def _resolve_direct(request, args):
 REGISTRY = {
     "list_my_appointments": {
         "description": (
-            "The signed-in user's own schedule: appointments, sessions, visits, "
-            "and WHO THEY ARE SEEING on a given day. Use for any question about "
-            "the calendar or schedule. Do NOT use this to search for children."),
+            # The past half of this was missing. The enum grew to cover
+            # yesterday and last week while the description still described
+            # only what was coming, so "What did I do last week?" went to
+            # list_care_gaps 3 times out of 3 — the tool could answer it and
+            # never said so.
+            "The signed-in user's own schedule AND their session history: "
+            "appointments, sessions and visits — who they ARE SEEING on a "
+            "coming day, and what they ALREADY DID on a past one. Use for any "
+            "question about the calendar, the schedule, or work already done "
+            "in a period. Do NOT use this to search for children."),
         "schema": {"when": {"enum": list(APPOINTMENT_PERIODS), "required": True}},
         "echo": lambda a: f"Looking up: your appointments {a['when'].replace('_', ' ')}",
         "resolve": _resolve_appointments,
@@ -678,7 +746,9 @@ REGISTRY = {
             "child count is wrong. Do NOT use for schedule questions."),
         "schema": {"status": {"enum": ["active", "terminated", "any"],
                               "required": True}},
-        "echo": lambda a: f"Looking up: how many {a['status']} children you have",
+        # No "you have": the echo is built from arguments alone and cannot see
+        # the caller, and an administrator has no caseload of their own.
+        "echo": lambda a: f"Looking up: how many {a['status']} children",
         "resolve": _resolve_count,
     },
     "search_children_by_concern": {
@@ -712,6 +782,36 @@ REGISTRY = {
         "schema": {},
         "echo": lambda a: "Looking up: children needing follow-up",
         "resolve": _resolve_care_gaps,
+    },
+    "count_people": {
+        "description": (
+            "How many PEOPLE WHO WORK HERE — psychologists, staff, "
+            "administrators, user accounts. Use for 'how many psychologists', "
+            "'ilan ang staff', 'how many users are in the system'. This "
+            "counts colleagues, never children."),
+        "schema": {"role": {"enum": ["psychologist", "staff", "administrator",
+                                     "anyone"], "required": True}},
+        "echo": lambda a: (f"Looking up: how many {a['role']}s"
+                           if a["role"] != "anyone"
+                           else "Looking up: how many people work here"),
+        "resolve": _resolve_count_people,
+    },
+    "list_unassigned_children": {
+        "description": (
+            # No Tagalog example here, deliberately. 'sino ang walang
+            # psychologist' pulled "sino ang mga bata na ayaw pumasok sa
+            # eskwela" — a concern question — into this tool 3 times out of 3,
+            # because the model matched the shape of the phrase rather than its
+            # subject. CHAT_SYSTEM carries the Tagalog framing for every tool;
+            # a niche tool does not need its own.
+            "Children who have NO PSYCHOLOGIST ASSIGNED to them — an "
+            "assignment gap, not a clinical concern. Use only for 'who is "
+            "unassigned' or 'which children have no psychologist yet'. For "
+            "what a child is struggling with, use "
+            "search_children_by_concern."),
+        "schema": {},
+        "echo": lambda a: "Looking up: children with no psychologist",
+        "resolve": _resolve_unassigned_children,
     },
     "list_self_report_flags": {
         "description": (

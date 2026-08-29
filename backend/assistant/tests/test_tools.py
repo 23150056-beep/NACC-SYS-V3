@@ -103,12 +103,13 @@ class SchemaShapeTest(SimpleTestCase):
     """Constraints the spike established, asserted so a later edit cannot
     quietly undo them."""
 
-    def test_there_are_exactly_seven_tools(self):
+    def test_there_are_exactly_nine_tools(self):
         # Four naive tools produced a misroute; six hardened ones scored 100%
-        # on selection. A seventh needs its own evaluation run, not a hunch —
-        # list_self_report_flags was added with one (ai_eval --feature chat),
-        # and an eighth needs the same before this number moves again.
-        self.assertEqual(7, len(tools.REGISTRY))
+        # on selection. Every addition since has come with its own evaluation
+        # run rather than a hunch: list_self_report_flags, then count_people
+        # and list_unassigned_children together. A tenth needs the same before
+        # this number moves again.
+        self.assertEqual(9, len(tools.REGISTRY))
 
     def test_no_tool_declares_an_optional_free_text_parameter(self):
         # Measured: enum and required parameters survived every call; optional
@@ -298,3 +299,64 @@ class KahaponMeansYesterdayTest(SimpleTestCase):
             "list_my_appointments", {"when": "this_year"}).ok)
         self.assertTrue(tools.validate(
             "list_self_report_flags", {"period": "this_year"}).ok)
+
+
+class RoleAliasTest(SimpleTestCase):
+    """Measured: asked "how many users are in the system?", the model answered
+    role="any" against an enum offering "anyone", and the call was rejected —
+    a correctly routed question turned into an apology over one synonym."""
+
+    def test_any_means_anyone(self):
+        call = tools.validate("count_people", {"role": "any"})
+        self.assertTrue(call.ok, call.error)
+        self.assertEqual(call.args["role"], "anyone")
+
+    def test_users_means_anyone(self):
+        self.assertEqual(
+            tools.validate("count_people", {"role": "users"}).args["role"], "anyone")
+
+    def test_a_plural_role_is_singularised(self):
+        self.assertEqual(
+            tools.validate("count_people", {"role": "psychologists"}).args["role"],
+            "psychologist")
+
+    def test_a_tagalog_role_word_maps(self):
+        self.assertEqual(
+            tools.validate("count_people", {"role": "kawani"}).args["role"], "staff")
+
+    def test_a_role_that_is_not_a_role_is_still_rejected(self):
+        self.assertFalse(tools.validate("count_people", {"role": "children"}).ok)
+
+
+class UnassignedDescriptionTest(SimpleTestCase):
+    """The Tagalog example in this description pulled "sino ang mga bata na
+    ayaw pumasok sa eskwela" — a concern question — into the assignment tool
+    3 times out of 3. The model matched the shape of the phrase, not its
+    subject. CHAT_SYSTEM carries the Tagalog framing for every tool."""
+
+    def test_it_carries_no_tagalog_example_of_its_own(self):
+        description = tools.REGISTRY["list_unassigned_children"]["description"]
+        for word in ("sino", "walang", "mga bata"):
+            self.assertNotIn(word, description.lower())
+
+    def test_it_points_concern_questions_at_the_right_tool(self):
+        description = tools.REGISTRY["list_unassigned_children"]["description"]
+        self.assertIn("search_children_by_concern", description)
+
+
+class AppointmentDescriptionCoversThePastTest(SimpleTestCase):
+    """The enum grew to cover yesterday and last week; the description did
+    not. "What did I do last week?" went to list_care_gaps 3 times out of 3
+    because the only tool that could answer it never claimed it could."""
+
+    def test_the_description_claims_past_work(self):
+        description = tools.REGISTRY["list_my_appointments"]["description"].lower()
+        self.assertTrue(
+            any(w in description for w in ("already did", "history", "past")),
+            "a tool offering yesterday and last_week must say it answers about "
+            "work already done, or the model will route those questions away")
+
+    def test_every_past_period_the_enum_offers_is_resolvable(self):
+        for period in tools.APPOINTMENT_PERIODS:
+            self.assertTrue(
+                tools.validate("list_my_appointments", {"when": period}).ok, period)

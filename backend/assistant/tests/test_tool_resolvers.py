@@ -674,3 +674,79 @@ class DescriptionExamplesMatchTheDataTest(ResolverTestBase):
                     out["items"],
                     f"{example!r} is offered to the model as an example and "
                     f"matches nothing in the agency's vocabulary")
+
+
+class CountPeopleResolverTest(ResolverTestBase):
+    """The question the assistant was engineered to refuse.
+
+    "How many psychologists are in the system?" was answered "40 active
+    children" in the browser, and the fix was a guard that forced it into a
+    refusal — correct, because a confidently wrong number is worse than "I
+    can't". The guard was standing in for a missing tool, and this is it.
+    """
+
+    def test_counts_psychologists(self):
+        # ResolverTestBase makes two psychologists and one administrator.
+        out = self._resolve(self.admin, "count_people", {"role": "psychologist"})
+        self.assertEqual(out["kind"], "people_count")
+        self.assertEqual(out["count"], 2)
+        self.assertEqual(out["role"], "psychologist")
+
+    def test_counts_administrators(self):
+        out = self._resolve(self.admin, "count_people", {"role": "administrator"})
+        self.assertEqual(out["count"], 1)
+
+    def test_counts_everyone(self):
+        out = self._resolve(self.admin, "count_people", {"role": "anyone"})
+        self.assertEqual(out["count"], 3)
+
+    def test_counts_staff_when_there_are_none(self):
+        out = self._resolve(self.admin, "count_people", {"role": "staff"})
+        self.assertEqual(out["count"], 0)
+
+    def test_only_active_accounts_are_counted(self):
+        # A deactivated colleague is not "in the system" for the purpose of
+        # this question — the Users screen counts the same way.
+        self.other.status = User.ARCHIVED
+        self.other.save()
+        out = self._resolve(self.admin, "count_people", {"role": "psychologist"})
+        self.assertEqual(out["count"], 1)
+
+    def test_a_psychologist_may_also_ask(self):
+        # Staff numbers are not case data. Refusing this for a psychologist
+        # would be privacy theatre.
+        out = self._resolve(self.psy, "count_people", {"role": "psychologist"})
+        self.assertEqual(out["count"], 2)
+
+    def test_it_never_counts_children(self):
+        out = self._resolve(self.admin, "count_people", {"role": "anyone"})
+        self.assertNotEqual(out["count"], Child.objects.count())
+
+
+class UnassignedChildrenResolverTest(ResolverTestBase):
+    def setUp(self):
+        super().setUp()
+        self.orphaned = Child.objects.create(fullname="Nena Bautista")
+
+    def test_lists_children_with_no_psychologist(self):
+        out = self._resolve(self.admin, "list_unassigned_children", {})
+        self.assertEqual(out["kind"], "children")
+        self.assertEqual([i["name"] for i in out["items"]], ["Nena Bautista"])
+
+    def test_an_assigned_child_is_not_listed(self):
+        out = self._resolve(self.admin, "list_unassigned_children", {})
+        names = [i["name"] for i in out["items"]]
+        self.assertNotIn("Maria Santos", names)
+
+    def test_a_psychologist_sees_none_because_they_cannot_have_one(self):
+        # _visible_children filters to children assigned to them, so an
+        # unassigned child is outside their scope by definition. Answering
+        # "none" is honest; answering with the agency's list would leak.
+        out = self._resolve(self.psy, "list_unassigned_children", {})
+        self.assertEqual(out["items"], [])
+
+    def test_a_terminated_child_is_not_chased(self):
+        self.orphaned.status = "terminated"
+        self.orphaned.save()
+        out = self._resolve(self.admin, "list_unassigned_children", {})
+        self.assertEqual(out["items"], [])

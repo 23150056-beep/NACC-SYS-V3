@@ -79,6 +79,23 @@ function Answer({ result }) {
     );
   }
 
+  if (kind === 'people_count') {
+    // Colleagues, not children. Rendered like the child count so the two read
+    // as the same kind of answer — the bug this tool fixes was one being
+    // served as the other.
+    return (
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span style={{
+          fontFamily: 'var(--font-display)', fontSize: 26,
+          fontWeight: 700, color: 'var(--text-strong)', lineHeight: 1.1,
+        }}>{result.count}</span>
+        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+          {result.role === 'anyone' ? 'active accounts' : `active ${result.role}s`}
+        </span>
+      </div>
+    );
+  }
+
   if (kind === 'appointments') {
     if (!result.items.length) {
       // "Nothing scheduled" is the wrong sentence for "who did I see
