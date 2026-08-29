@@ -266,17 +266,35 @@ class KahaponMeansYesterdayTest(SimpleTestCase):
         self.assertTrue(call.ok, call.error)
         self.assertEqual(call.args["when"], "yesterday")
 
-    def test_month_and_year_words_map(self):
+    def test_month_and_week_words_map(self):
         for word, expected in [("ngayong buwan", "this_month"),
                                ("nakaraang buwan", "last_month"),
-                               ("ngayong taon", "this_year"),
-                               ("nakaraang taon", "last_year"),
                                ("last week", "last_week")]:
             call = tools.validate("list_my_appointments", {"when": word})
             self.assertTrue(call.ok, f"{word}: {call.error}")
             self.assertEqual(call.args["when"], expected, word)
 
-    def test_every_period_is_accepted_by_the_validator(self):
-        for period in tools.PERIODS:
+    def test_year_words_map_on_the_tool_that_takes_a_year(self):
+        # Appointments stop at the month, so the year words are exercised
+        # where a year is actually a question someone asks.
+        for word, expected in [("ngayong taon", "this_year"),
+                               ("nakaraang taon", "last_year")]:
+            call = tools.validate("list_self_report_flags", {"period": word})
+            self.assertTrue(call.ok, f"{word}: {call.error}")
+            self.assertEqual(call.args["period"], expected, word)
+
+    def test_every_appointment_period_is_accepted_by_the_validator(self):
+        for period in tools.APPOINTMENT_PERIODS:
             call = tools.validate("list_my_appointments", {"when": period})
             self.assertTrue(call.ok, f"{period}: {call.error}")
+
+    def test_appointments_stop_at_the_month(self):
+        # Offering the year sent "what have I got this year?" to list_care_gaps
+        # 3/3, and nobody asks to see a year of appointments. Flags still reach
+        # a year, because reviewing them over one is a real question.
+        self.assertNotIn("this_year", tools.APPOINTMENT_PERIODS)
+        self.assertIn("this_year", tools.PERIODS)
+        self.assertFalse(tools.validate(
+            "list_my_appointments", {"when": "this_year"}).ok)
+        self.assertTrue(tools.validate(
+            "list_self_report_flags", {"period": "this_year"}).ok)

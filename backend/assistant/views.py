@@ -534,6 +534,9 @@ class AssistantAskView(AssistantBaseView):
         # Same shape, different sentence: "book Ana for Friday" is a request to
         # change something, and "I can't answer that" is the wrong refusal.
         call = tools.correct_action_request(question, call)
+        # And a greeting is a greeting even when the model forgets to say
+        # so, which it does two times in three.
+        call = tools.correct_greeting(question, call)
         AssistantJob.objects.create(
             job_type="chat", input_ref=question[:150],
             output_text=f"{call.tool}({call.args})"[:2000],

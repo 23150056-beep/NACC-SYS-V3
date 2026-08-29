@@ -198,6 +198,14 @@ class ConcernResolverTest(ResolverTestBase):
         out = self._search("difficulties")
         self.assertEqual(["Maria Santos"], [i["name"] for i in out["items"]])
 
+    def test_matches_an_ing_form_against_the_recorded_noun(self):
+        # "Sleep disturbance" does not contain "sleeping" — icontains only
+        # matches a shorter needle in a longer record. Measured empty 3/3 on
+        # "Who has trouble sleeping?".
+        out = self._resolve(self.psy, "search_children_by_concern",
+                            {"concern": "trouble sleeping"})
+        self.assertEqual([i["name"] for i in out["items"]], ["Maria Santos"])
+
     def test_ignores_short_words_so_everything_does_not_match(self):
         out = self._search("of the")
         self.assertEqual([], out["items"])
@@ -347,11 +355,22 @@ class ActionRequestGuardTest(SimpleTestCase):
         call = self._guarded("what is my schedule today?")
         self.assertNotEqual(call.args.get("reason"), "action_request")
 
-    def test_it_never_touches_a_data_tool(self):
+    def test_it_downgrades_a_data_tool_the_model_wrongly_picked(self):
+        # Measured 3/3: "Book Ana for Friday" routes to list_my_appointments,
+        # answering a request to create a booking with a list of bookings.
+        # Guarding only answer_directly never fired.
         call = self._guarded("book Ana for Friday", tool="list_my_appointments",
-                             args={"when": "today"})
+                             args={"when": "this_week"})
+        self.assertEqual(call.tool, "answer_directly")
+        self.assertEqual(call.args["reason"], "action_request")
+
+    def test_a_data_question_keeps_its_tool(self):
+        # The downgrade is keyed on the leading imperative, so an ordinary
+        # question about the same subject is untouched.
+        call = self._guarded("what appointments do I have on Friday?",
+                             tool="list_my_appointments", args={"when": "this_week"})
         self.assertEqual(call.tool, "list_my_appointments")
-        self.assertEqual(call.args, {"when": "today"})
+        self.assertEqual(call.args, {"when": "this_week"})
 
     def test_action_request_is_not_in_the_model_facing_schema(self):
         payload = tools.ollama_payload()
@@ -477,3 +496,42 @@ class SelfReportFlagsSchemaTest(SimpleTestCase):
                               {"child": "Maria", "state": "all"})
         self.assertTrue(call.ok, call.error)
         self.assertEqual(call.args, {"state": "all"})
+
+
+class GreetingGuardTest(SimpleTestCase):
+    """Measured: on "Good morning!" the model omits `reason` 2 times in 3.
+    The argument is optional on purpose, so the reason has to be recoverable
+    without it — otherwise the greeting reply is dead code and "salamat po"
+    gets a list of features."""
+
+    def _guarded(self, question, args=None):
+        call = tools.ToolCall(tool="answer_directly", args=args or {})
+        return tools.correct_greeting(question, call)
+
+    def test_a_greeting_without_a_reason_is_recovered(self):
+        self.assertEqual(self._guarded("Good morning!").args["reason"],
+                         "greeting_or_closing")
+
+    def test_a_tagalog_thanks_is_recovered(self):
+        self.assertEqual(self._guarded("Salamat po!").args["reason"],
+                         "greeting_or_closing")
+
+    def test_a_real_question_is_left_alone(self):
+        self.assertNotEqual(
+            self._guarded("how many psychologists are there?").args.get("reason"),
+            "greeting_or_closing")
+
+    def test_a_greeting_with_a_question_attached_is_not_just_a_greeting(self):
+        # "Good morning, how many children do I have?" is a question.
+        self.assertNotEqual(
+            self._guarded("Good morning, how many children do I have?").args.get("reason"),
+            "greeting_or_closing")
+
+    def test_an_action_request_is_not_reclassified(self):
+        call = self._guarded("send the report", {"reason": "action_request"})
+        self.assertEqual(call.args["reason"], "action_request")
+
+    def test_it_never_touches_a_data_tool(self):
+        call = tools.correct_greeting(
+            "hello", tools.ToolCall(tool="count_my_children", args={"status": "active"}))
+        self.assertEqual(call.tool, "count_my_children")

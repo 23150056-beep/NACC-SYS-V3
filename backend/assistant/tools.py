@@ -46,6 +46,12 @@ ALIASES = {
     },
 }
 
+# The table is keyed by PARAMETER NAME, and two tools name their time argument
+# differently — appointments call it `when`, flags call it `period`. Without
+# this, "ngayong taon" would resolve on one and be rejected on the other for no
+# reason a user could see.
+ALIASES["period"] = ALIASES["when"]
+
 _PUNCT = re.compile(r"[^\w]+")
 
 
@@ -167,17 +173,23 @@ _ACTION_VERBS = (
 
 
 def correct_action_request(question, call):
-    """Say "I can't change anything" instead of "I can't answer that".
+    """Answer "book Ana for Friday" with "I can't change anything".
 
-    Only ever rewrites the reason on a call the model already routed to
-    answer_directly, so — like correct_obvious_misroute — it can make the
-    assistant decline differently and can never make it assert anything.
+    Measured: the model routes that to list_my_appointments 3 times out of 3,
+    so a request to CREATE a booking was answered with a LIST of bookings.
+    Guarding only answer_directly never fired, because the model had already
+    picked a data tool.
+
+    So this downgrades whatever was chosen, exactly as
+    correct_obvious_misroute does for a staff question. The safety property is
+    unchanged and is the reason both are allowed to exist: they can only make
+    the assistant decline, never make it assert anything.
 
     `action_request` is server-side only: this constructs its ToolCall
     directly, so validate() never sees the value and the schema the model
     reads does not grow by it.
     """
-    if not call.ok or call.tool != "answer_directly":
+    if not call.ok:
         return call
     words = _PUNCT.sub(" ", str(question or "").lower()).split()
     if not words:
@@ -192,6 +204,37 @@ def correct_action_request(question, call):
     if leading in _ACTION_VERBS:
         return ToolCall(tool="answer_directly",
                         args={"reason": "action_request"}, echo="")
+    return call
+
+
+# Openings and sign-offs, English and Tagalog.
+_GREETING_WORDS = (
+    "hello", "hi", "hey", "good", "morning", "afternoon", "evening",
+    "thanks", "thank", "cheers", "bye", "goodbye",
+    "salamat", "magandang", "kumusta", "kamusta", "paalam", "sige",
+)
+
+
+def correct_greeting(question, call):
+    """Recover greeting_or_closing when the model left `reason` out.
+
+    Measured: on "Good morning!" the model omits `reason` 2 times in 3. The
+    argument is optional on purpose — requiring it turned a correct routing
+    decision into a failed turn — so the reason has to be recoverable without
+    the model, or the greeting reply is dead code most of the time and
+    "salamat po" still gets a list of features.
+
+    Short questions only: "Good morning, how many children do I have?" is a
+    question with a greeting attached, not a greeting.
+    """
+    if not call.ok or call.tool != "answer_directly":
+        return call
+    if call.args.get("reason") == "action_request":
+        return call                       # already classified, and not a greeting
+    words = _PUNCT.sub(" ", str(question or "").lower()).split()
+    if words and len(words) <= 4 and words[0] in _GREETING_WORDS:
+        return ToolCall(tool="answer_directly",
+                        args={"reason": "greeting_or_closing"}, echo="")
     return call
 
 
@@ -210,6 +253,13 @@ PERIODS = ("today", "yesterday", "tomorrow",
            "this_week", "last_week", "next_week",
            "this_month", "last_month",
            "this_year", "last_year")
+
+# Appointments stop at the month. Measured: offering the year sent "what have
+# I got this year?" to list_care_gaps 3 times out of 3, and no psychologist
+# asks to see a year of appointments anyway — the value bought nothing and
+# cost a misroute. Review questions about flags do reach a year, so the full
+# vocabulary stays available there.
+APPOINTMENT_PERIODS = tuple(p for p in PERIODS if not p.endswith("_year"))
 
 # Periods that contain no past day. Everything else contains one — `today`
 # included, because a session completed this morning belongs in the answer.
@@ -388,14 +438,28 @@ def _singular(word):
     return word
 
 
+def _stem_ing(word):
+    """"sleeping" -> "sleep".
+
+    icontains only matches a shorter needle in a longer record, so the record
+    "Sleep disturbance" does not contain "sleeping". Measured: "Who has trouble
+    sleeping?" returned nothing 3 times out of 3 for exactly that reason, which
+    is the confident-empty answer this search already exists to prevent.
+    """
+    if word.endswith("ing") and len(word) > 5:
+        return word[:-3]
+    return word
+
+
 def _search_words(term):
-    """Words worth matching on, singular forms included.
+    """Words worth matching on, singular and un-inflected forms included.
 
     Short words are dropped: "of" and "the" appear inside so many records that
     matching them would return the whole caseload as a false hit.
     """
     words = {w for w in re.findall(r"[\w']+", term.lower()) if len(w) >= 4}
-    return sorted(words | {_singular(w) for w in words})
+    return sorted(words | {_singular(w) for w in words}
+                  | {_stem_ing(w) for w in words})
 
 
 # Articles and honorifics that arrive attached to a name: "si Maria",
@@ -568,7 +632,7 @@ REGISTRY = {
             "The signed-in user's own schedule: appointments, sessions, visits, "
             "and WHO THEY ARE SEEING on a given day. Use for any question about "
             "the calendar or schedule. Do NOT use this to search for children."),
-        "schema": {"when": {"enum": list(PERIODS), "required": True}},
+        "schema": {"when": {"enum": list(APPOINTMENT_PERIODS), "required": True}},
         "echo": lambda a: f"Looking up: your appointments {a['when'].replace('_', ' ')}",
         "resolve": _resolve_appointments,
     },
@@ -586,8 +650,15 @@ REGISTRY = {
     },
     "search_children_by_concern": {
         "description": (
+            # An example here becomes an argument: adding 'trouble sleeping'
+            # made the model pass it verbatim, and "sleeping" does not match
+            # the recorded "Sleep disturbance" — 3 empty answers out of 3. Any
+            # example added here has to exist in the agency's own vocabulary.
             "Find children whose presenting concern or problem matches a "
-            "description, for example 'school refusal', 'anxiety', 'withdrawn'. "
+            "description, for example 'school refusal', 'anxiety', "
+            "'withdrawn', 'struggling with emotions'. "
+            "This is the tool for ANY question about what children are "
+            "struggling with, however it is worded. "
             "Always pass the concern the user named."),
         "schema": {"concern": {"required": True}},
         "echo": lambda a: f"Looking up: children with '{a['concern']}'",
@@ -611,10 +682,15 @@ REGISTRY = {
     },
     "list_self_report_flags": {
         "description": (
-            "Children who wrote something worth reading in their own "
-            "self-report — distress, fear, sadness, being alone. Use for "
-            "'who flagged something', 'anyone worrying', 'self-report "
-            "concerns'. Do NOT use for case notes written by staff."),
+            # Purely positive, and it names no clinical vocabulary at all.
+            # A "Do NOT use for anxiety, emotions, sleep" clause was measured
+            # WORSE: the router reads the keywords and drops the negation, so
+            # listing what this tool is not for is how it got picked for
+            # "struggling with emotions" 3 times in 3.
+            "Children flagged from a survey THE CHILD FILLED IN THEMSELVES. "
+            "Use only when the question asks what has been 'flagged', or what "
+            "children have said or written about themselves in their own "
+            "words."),
         "schema": {
             "state": {"enum": ["unreviewed", "all"], "required": False},
             "period": {"enum": list(PERIODS), "required": False},
