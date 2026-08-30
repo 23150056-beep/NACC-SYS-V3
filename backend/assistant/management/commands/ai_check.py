@@ -8,7 +8,7 @@ import time
 from django.core.management.base import BaseCommand
 
 from assistant.models import AssistantSetting
-from assistant.services import AIUnavailable, get_ai_client
+from assistant.services import AIUnavailable, OllamaClient, get_ai_client
 
 
 class Command(BaseCommand):
@@ -16,14 +16,23 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         cfg = AssistantSetting.load()
-        self.stdout.write(f"URL:   {cfg.ollama_url}")
-        self.stdout.write(f"Model: {cfg.model_name}")
-
         if not cfg.enabled:
+            self.stdout.write(f"URL:   {cfg.ollama_url}")
+            self.stdout.write(f"Model: {cfg.model_name}")
             self.stdout.write("Result: the assistant is switched off.")
             raise SystemExit(1)
 
+        # Report the client actually built, not the settings row. Those two
+        # disagree the moment a hosted model is configured: this printed
+        # "qwen2.5:3b-instruct / localhost:11434" while timing a Cloudflare
+        # model, which is the wrong answer from the one command whose whole
+        # job is saying what the assistant is talking to.
         client = get_ai_client()
+        hosted = not isinstance(client, OllamaClient)
+        self.stdout.write(f"URL:   {client.base_url}")
+        self.stdout.write(f"Model: {client.model}")
+        self.stdout.write(f"Where: {'HOSTED' if hosted else 'local runtime'}")
+
         started = time.monotonic()
         try:
             client.generate("Reply with the single word: OK.")
