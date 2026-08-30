@@ -628,6 +628,45 @@ _COUNTABLE_ROLES = {"psychologist": "Psychologist", "staff": "Staff",
                     "administrator": "Administrator"}
 
 
+# Booking looks forward. "Who was free last week" is not a question anyone
+# asks, and a past window cannot be booked — the serializer refuses a start in
+# the past — so offering one produces a slot that can only be declined.
+BOOKING_PERIODS = ("today", "tomorrow", "this_week", "next_week")
+
+
+def _resolve_availability(request, args):
+    """Which psychologists can take a child, and when.
+
+    Staff and administrators see everyone, because staff are the ones who
+    book. A psychologist sees their own, matching the calendar they manage.
+
+    The windows come from scheduling.availability — the same function behind
+    the booking screen's slot hints — so the assistant can never offer a slot
+    the booking endpoint would then refuse.
+    """
+    from accounts.models import Role
+    from assistant.views import _role
+    from django.contrib.auth import get_user_model
+    from scheduling import availability     # the module, so a test can patch it
+
+    start, end = period_range(args["when"])
+    people = get_user_model().objects.filter(
+        role__role_name=Role.PSYCHOLOGIST, status="active")
+    if _role(request) == Role.PSYCHOLOGIST:
+        people = people.filter(pk=request.user.pk)
+
+    items = []
+    for person in people.order_by("last_name", "first_name"):
+        for window in availability.free_windows(person, start, end):
+            items.append({
+                "psychologist": getattr(person, "fullname", "")
+                or person.get_username(),
+                "email": person.email,
+                **window,
+            })
+    return {"kind": "availability", "when": args["when"], "items": items[:25]}
+
+
 def _resolve_count_people(request, args):
     """How many colleagues, by role.
 
@@ -782,6 +821,19 @@ REGISTRY = {
         "schema": {},
         "echo": lambda a: "Looking up: children needing follow-up",
         "resolve": _resolve_care_gaps,
+    },
+    "find_availability": {
+        "description": (
+            # The distinction that matters is booked versus bookable.
+            # list_my_appointments answers what is already ON the calendar;
+            # this answers what is still OPEN on it.
+            "FREE slots that can still be BOOKED — which psychologists have "
+            "room to take a child, and when. Use for 'who is free', 'who is "
+            "available', 'when can we book'. Do NOT use for what is already "
+            "scheduled; list_my_appointments answers that."),
+        "schema": {"when": {"enum": list(BOOKING_PERIODS), "required": True}},
+        "echo": lambda a: f"Looking up: free slots {a['when'].replace('_', ' ')}",
+        "resolve": _resolve_availability,
     },
     "count_people": {
         "description": (

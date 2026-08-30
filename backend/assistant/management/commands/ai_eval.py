@@ -71,6 +71,14 @@ CHAT_CASES = [
      True, None),
     ("unassigned en", "Which children have no psychologist?",
      "list_unassigned_children", False, None),
+    # Booked vs bookable: the pair most likely to be confused for each other,
+    # so both directions are scored.
+    ("availability en", "Who is free tomorrow?", "find_availability", False,
+     {"when": "tomorrow"}),
+    ("availability tl", "Sino ang bakante bukas?", "find_availability", False,
+     {"when": "tomorrow"}),
+    ("booked not bookable", "What appointments do I have tomorrow?",
+     "list_my_appointments", False, {"when": "tomorrow"}),
     # Regression: kahapon was aliased to today, so this answered with today's
     # appointments. Routing alone cannot catch it — the argument has to be
     # checked.

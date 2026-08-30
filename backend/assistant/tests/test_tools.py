@@ -103,13 +103,13 @@ class SchemaShapeTest(SimpleTestCase):
     """Constraints the spike established, asserted so a later edit cannot
     quietly undo them."""
 
-    def test_there_are_exactly_nine_tools(self):
+    def test_there_are_exactly_ten_tools(self):
         # Four naive tools produced a misroute; six hardened ones scored 100%
         # on selection. Every addition since has come with its own evaluation
         # run rather than a hunch: list_self_report_flags, then count_people
-        # and list_unassigned_children together. A tenth needs the same before
-        # this number moves again.
-        self.assertEqual(9, len(tools.REGISTRY))
+        # and list_unassigned_children together, then find_availability. An
+        # eleventh needs the same before this number moves again.
+        self.assertEqual(10, len(tools.REGISTRY))
 
     def test_no_tool_declares_an_optional_free_text_parameter(self):
         # Measured: enum and required parameters survived every call; optional

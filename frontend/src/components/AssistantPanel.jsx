@@ -79,6 +79,25 @@ function Answer({ result }) {
     );
   }
 
+  if (kind === 'availability') {
+    if (!result.items.length) return <Line muted>No free slots in that period.</Line>;
+    return result.items.map((s, i) => (
+      <Line key={i}>
+        <strong>{s.psychologist}</strong>
+        <span style={{ color: 'var(--text-muted)' }}>
+          {' '}· {s.weekday} {s.date} · {s.start}–{s.end}
+        </span>
+        {/* Places left, not just "free": a window with one place is a
+            different answer from a window with four. */}
+        <span style={{
+          marginLeft: 6, padding: '1px 6px', borderRadius: 'var(--radius-pill)',
+          fontSize: 11, fontWeight: 700,
+          background: 'var(--ink-50)', color: 'var(--text-muted)',
+        }}>{s.remaining} left</span>
+      </Line>
+    ));
+  }
+
   if (kind === 'people_count') {
     // Colleagues, not children. Rendered like the child count so the two read
     // as the same kind of answer — the bug this tool fixes was one being

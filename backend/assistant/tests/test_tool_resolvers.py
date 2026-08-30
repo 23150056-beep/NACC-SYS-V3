@@ -8,6 +8,8 @@ impossible: the names come out of the database, not out of a prompt.
 import re
 from datetime import datetime, time, timedelta
 
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
@@ -750,3 +752,68 @@ class UnassignedChildrenResolverTest(ResolverTestBase):
         self.orphaned.save()
         out = self._resolve(self.admin, "list_unassigned_children", {})
         self.assertEqual(out["items"], [])
+
+
+class AvailabilityResolverTest(ResolverTestBase):
+    """Who can take a child, and when. Staff do the booking, so this is a
+    staff question first — but it must never offer a slot the booking
+    endpoint would then refuse, which is why the arithmetic is shared."""
+
+    def setUp(self):
+        super().setUp()
+        from scheduling.models import AvailabilityBlock
+        # Every weekday, so the window exists whichever day the suite runs.
+        for weekday in range(7):
+            AvailabilityBlock.objects.create(
+                psychologist=self.psy, weekday=weekday,
+                start_time=time(23, 0), end_time=time(23, 59), capacity=2)
+
+    def test_lists_who_is_free(self):
+        out = self._resolve(self.admin, "find_availability", {"when": "this_week"})
+        self.assertEqual(out["kind"], "availability")
+        self.assertTrue(out["items"])
+        self.assertIn("p@racco1.gov.ph", [i["email"] for i in out["items"]])
+
+    def test_a_psychologist_sees_only_their_own(self):
+        from scheduling.models import AvailabilityBlock
+        for weekday in range(7):
+            AvailabilityBlock.objects.create(
+                psychologist=self.other, weekday=weekday,
+                start_time=time(23, 0), end_time=time(23, 59), capacity=1)
+        out = self._resolve(self.psy, "find_availability", {"when": "this_week"})
+        self.assertEqual({i["email"] for i in out["items"]}, {"p@racco1.gov.ph"})
+
+    def test_a_fully_booked_window_is_not_offered(self):
+        from scheduling.models import Appointment
+        day = timezone.localdate() + timedelta(days=1)
+        for _ in range(2):                       # capacity is 2
+            Appointment.objects.create(
+                child=self.mine, psychologist=self.psy,
+                start=timezone.make_aware(datetime.combine(day, time(23, 30))),
+                status=Appointment.SCHEDULED)
+        out = self._resolve(self.admin, "find_availability", {"when": "tomorrow"})
+        self.assertEqual(out["items"], [])
+
+    def test_a_cancelled_appointment_frees_the_place_again(self):
+        from scheduling.models import Appointment
+        day = timezone.localdate() + timedelta(days=1)
+        for _ in range(2):
+            Appointment.objects.create(
+                child=self.mine, psychologist=self.psy,
+                start=timezone.make_aware(datetime.combine(day, time(23, 30))),
+                status=Appointment.CANCELLED)
+        out = self._resolve(self.admin, "find_availability", {"when": "tomorrow"})
+        self.assertTrue(out["items"])
+
+    def test_a_psychologist_with_no_blocks_is_not_listed(self):
+        out = self._resolve(self.admin, "find_availability", {"when": "this_week"})
+        self.assertNotIn("q@racco1.gov.ph", [i["email"] for i in out["items"]])
+
+    def test_it_shares_the_booking_arithmetic(self):
+        # Not a third copy of the capacity rule: the resolver calls the same
+        # function behind the booking screen's slot hints, so the assistant
+        # cannot offer a slot the booking endpoint would refuse.
+        with patch("scheduling.availability.free_windows",
+                   return_value=[]) as shared:
+            self._resolve(self.admin, "find_availability", {"when": "today"})
+        shared.assert_called()

@@ -151,6 +151,8 @@ Examples:
   "Sino si Ana Reyes?"                -> get_child_summary(name="Ana Reyes")
   "Who still needs a report?"         -> list_care_gaps()
   "Sino ang kailangan ng follow-up?"  -> list_care_gaps()
+  "Who is free tomorrow?"             -> find_availability(when="tomorrow")
+  "Sino ang bakante sa Friday?"       -> find_availability(when="this_week")
   "How many psychologists are there?" -> count_people(role="psychologist")
   "Ilan ang staff dito?"              -> count_people(role="staff")
   "Which children have no psychologist?" -> list_unassigned_children()
