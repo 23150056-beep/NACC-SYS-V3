@@ -11,6 +11,7 @@ from accounts.models import Role
 from activity.models import ActivityLog
 from activity.services import log_activity
 from children.models import Child
+from scheduling.availability import free_windows
 from scheduling.models import AvailabilityBlock, Appointment
 from scheduling.serializers import AvailabilityBlockSerializer, AppointmentSerializer
 
@@ -85,41 +86,11 @@ class AvailabilityBlockViewSet(viewsets.ModelViewSet):
         psych = child.assigned_psychologist
         if psych is None:
             return Response({"detail": "This child has no assigned psychologist yet."}, status=400)
-        blocks = AvailabilityBlock.objects.filter(psychologist=psych, active=True)
-        now = timezone.localtime()
-        today = now.date()
-        slots = []
-        for offset in range(0, 14):
-            day = today + timedelta(days=offset)
-            day_start = timezone.make_aware(datetime.combine(day, time.min))
-            for b in blocks:
-                if b.date is not None and b.date != day:
-                    continue
-                if b.date is None and (b.weekday is None or b.weekday != day.weekday()):
-                    continue
-                # Both screens book at the slot's own start_time, and
-                # AppointmentSerializer.validate_start refuses a start in the
-                # past — so a window that has already begun today is a dead
-                # end, not an opening. Offering it produces a chip that can
-                # only ever answer "Cannot book an appointment in the past."
-                if day == today and b.start_time <= now.time():
-                    continue
-                taken = (Appointment.objects
-                         .filter(psychologist=psych,
-                                 start__gte=day_start, start__lt=day_start + timedelta(days=1))
-                         .exclude(status=Appointment.CANCELLED)
-                         .filter(start__time__gte=b.start_time, start__time__lt=b.end_time)
-                         .count())
-                remaining = b.capacity - taken
-                if remaining > 0:
-                    slots.append({
-                        "date": day.isoformat(),
-                        "weekday": day.strftime("%A"),
-                        "start": str(b.start_time)[:5], "end": str(b.end_time)[:5],
-                        "remaining": remaining,
-                    })
-            if len(slots) >= 6:
-                break
+        # The capacity arithmetic lives in scheduling.availability, so this
+        # endpoint, the booking validator and the chatbot cannot drift apart
+        # about whether a slot exists.
+        today = timezone.localdate()
+        slots = free_windows(psych, today, today + timedelta(days=14))
         return Response({
             "psychologist": getattr(psych, "fullname", "") or psych.get_username(),
             "slots": slots[:6],

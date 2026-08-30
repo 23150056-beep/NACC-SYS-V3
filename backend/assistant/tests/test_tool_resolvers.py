@@ -5,17 +5,23 @@ request, runs a real queryset under the caller's own scope, and returns a plain
 dict the frontend renders. That is what makes a hallucinated child name
 impossible: the names come out of the database, not out of a prompt.
 """
+import re
 from datetime import datetime, time, timedelta
 
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory
 
 from accounts.models import Role
 from assistant import tools
 from children.models import Child
-from clinical.models import ProblemEntry, RemarkNote
+from clinical.models import (
+    AgencyFormTemplate, OpinionnaireInvite, ProblemEntry, RemarkNote,
+    SelfReportFlag,
+)
 from scheduling.models import Appointment
 
 User = get_user_model()
@@ -83,6 +89,57 @@ class AppointmentsResolverTest(ResolverTestBase):
         out = self._resolve(self.admin, "list_my_appointments", {"when": "today"})
         self.assertEqual([], out["items"])
 
+    # --- periods, and the status that belongs to each ---------------------
+
+    def _appt_with(self, child, psychologist, days, status):
+        appt = self._appt(child, psychologist, days=days)
+        appt.status = status
+        appt.save(update_fields=["status"])
+        return appt
+
+    def test_yesterday_returns_completed_sessions(self):
+        # The confident-empty failure: filtering to SCHEDULED means a past
+        # period always answers "nothing", because yesterday's work is done.
+        self._appt_with(self.mine, self.psy, -1, Appointment.COMPLETED)
+        out = self._resolve(self.psy, "list_my_appointments", {"when": "yesterday"})
+        self.assertEqual(len(out["items"]), 1)
+        self.assertEqual(out["items"][0]["status"], Appointment.COMPLETED)
+
+    def test_a_no_show_is_returned_for_a_past_period(self):
+        self._appt_with(self.mine, self.psy, -1, Appointment.NO_SHOW)
+        out = self._resolve(self.psy, "list_my_appointments", {"when": "yesterday"})
+        self.assertEqual(len(out["items"]), 1)
+
+    def test_a_cancelled_appointment_is_never_returned(self):
+        self._appt_with(self.mine, self.psy, -1, Appointment.CANCELLED)
+        out = self._resolve(self.psy, "list_my_appointments", {"when": "yesterday"})
+        self.assertEqual(out["items"], [])
+
+    def test_a_future_period_returns_only_scheduled(self):
+        self._appt_with(self.mine, self.psy, 1, Appointment.COMPLETED)
+        self._appt_with(self.theirs, self.psy, 1, Appointment.SCHEDULED)
+        out = self._resolve(self.psy, "list_my_appointments", {"when": "tomorrow"})
+        self.assertEqual([i["status"] for i in out["items"]],
+                         [Appointment.SCHEDULED])
+
+    def test_this_week_spans_both_directions(self):
+        # A week containing today holds finished work and upcoming work. Asked
+        # on a Wednesday, "what have I got this week" must show Monday's
+        # completed session as well as Friday's booking.
+        start, _ = tools.period_range("this_week")
+        today = timezone.localdate()
+        if start < today:                      # a past day exists in this week
+            self._appt_with(self.mine, self.psy,
+                            (start - today).days, Appointment.COMPLETED)
+        self._appt_with(self.theirs, self.psy, 0, Appointment.SCHEDULED)
+        out = self._resolve(self.psy, "list_my_appointments", {"when": "this_week"})
+        self.assertGreaterEqual(len(out["items"]), 1)
+
+    def test_a_month_period_resolves(self):
+        self._appt_with(self.mine, self.psy, 0, Appointment.COMPLETED)
+        out = self._resolve(self.psy, "list_my_appointments", {"when": "this_month"})
+        self.assertEqual(len(out["items"]), 1)
+
 
 class CountResolverTest(ResolverTestBase):
     def test_counts_only_children_the_caller_can_see(self):
@@ -143,6 +200,14 @@ class ConcernResolverTest(ResolverTestBase):
         ProblemEntry.objects.create(child=self.mine, description="Learning difficulty")
         out = self._search("difficulties")
         self.assertEqual(["Maria Santos"], [i["name"] for i in out["items"]])
+
+    def test_matches_an_ing_form_against_the_recorded_noun(self):
+        # "Sleep disturbance" does not contain "sleeping" — icontains only
+        # matches a shorter needle in a longer record. Measured empty 3/3 on
+        # "Who has trouble sleeping?".
+        out = self._resolve(self.psy, "search_children_by_concern",
+                            {"concern": "trouble sleeping"})
+        self.assertEqual([i["name"] for i in out["items"]], ["Maria Santos"])
 
     def test_ignores_short_words_so_everything_does_not_match(self):
         out = self._search("of the")
@@ -240,3 +305,515 @@ class DirectResolverTest(ResolverTestBase):
     def test_works_without_a_reason(self):
         out = self._resolve(self.psy, "answer_directly", {})
         self.assertTrue(out["text"])
+
+
+class DirectReplyTest(ResolverTestBase):
+    """A greeting is not an unanswerable question, and a psychologist is not
+    an administrator. Both distinctions are made server-side, so the model
+    never has to be told about roles and the cached prefix never forks."""
+
+    def test_a_greeting_is_not_answered_with_a_capability_list(self):
+        out = self._resolve(self.psy, "answer_directly",
+                            {"reason": "greeting_or_closing"})
+        self.assertEqual(out["kind"], "message")
+        self.assertNotIn("can't answer", out["text"].lower())
+        self.assertNotIn("cannot answer", out["text"].lower())
+
+    def test_an_unsupported_question_lists_what_this_role_can_ask(self):
+        out = self._resolve(self.psy, "answer_directly", {"reason": "unsupported"})
+        self.assertIn("caseload", out["text"].lower())
+
+    def test_a_psychologist_is_never_offered_user_management(self):
+        out = self._resolve(self.psy, "answer_directly", {"reason": "unsupported"})
+        self.assertNotIn("user account", out["text"].lower())
+
+    def test_an_administrator_gets_a_different_list(self):
+        mine = self._resolve(self.psy, "answer_directly", {"reason": "unsupported"})
+        theirs = self._resolve(self.admin, "answer_directly", {"reason": "unsupported"})
+        self.assertNotEqual(mine["text"], theirs["text"])
+
+    def test_a_missing_reason_still_answers(self):
+        # `reason` is optional; the model dropped it once in 28 turns.
+        out = self._resolve(self.psy, "answer_directly", {})
+        self.assertTrue(out["text"])
+
+
+class ActionRequestGuardTest(SimpleTestCase):
+    """The guard only ever changes refusal wording. It cannot make the
+    assistant assert anything, so it cannot introduce a wrong answer."""
+
+    def _guarded(self, question, tool="answer_directly", args=None):
+        call = tools.ToolCall(tool=tool, args=args or {})
+        return tools.correct_action_request(question, call)
+
+    def test_a_booking_request_is_recognised(self):
+        call = self._guarded("book Ana for Friday")
+        self.assertEqual(call.args["reason"], "action_request")
+
+    def test_a_tagalog_action_request_is_recognised(self):
+        call = self._guarded("i-reset mo ang password ni Paul")
+        self.assertEqual(call.args["reason"], "action_request")
+
+    def test_a_question_about_the_schedule_is_left_alone(self):
+        call = self._guarded("what is my schedule today?")
+        self.assertNotEqual(call.args.get("reason"), "action_request")
+
+    def test_it_downgrades_a_data_tool_the_model_wrongly_picked(self):
+        # Measured 3/3: "Book Ana for Friday" routes to list_my_appointments,
+        # answering a request to create a booking with a list of bookings.
+        # Guarding only answer_directly never fired.
+        call = self._guarded("book Ana for Friday", tool="list_my_appointments",
+                             args={"when": "this_week"})
+        self.assertEqual(call.tool, "answer_directly")
+        self.assertEqual(call.args["reason"], "action_request")
+
+    def test_a_data_question_keeps_its_tool(self):
+        # The downgrade is keyed on the leading imperative, so an ordinary
+        # question about the same subject is untouched.
+        call = self._guarded("what appointments do I have on Friday?",
+                             tool="list_my_appointments", args={"when": "this_week"})
+        self.assertEqual(call.tool, "list_my_appointments")
+        self.assertEqual(call.args, {"when": "this_week"})
+
+    def test_action_request_is_not_in_the_model_facing_schema(self):
+        payload = tools.ollama_payload()
+        direct = next(t for t in payload
+                      if t["function"]["name"] == "answer_directly")
+        enum = direct["function"]["parameters"]["properties"]["reason"]["enum"]
+        self.assertNotIn("action_request", enum)
+
+
+class ChildNameMatchingTest(ResolverTestBase):
+    """`fullname__icontains` is one exact substring. Real users type a first
+    name, a misremembered surname, or "si Ana"."""
+
+    def test_a_first_name_alone_finds_the_child(self):
+        out = self._resolve(self.psy, "get_child_summary", {"name": "Maria"})
+        self.assertEqual(out["match"], "one")
+        self.assertEqual(out["child"]["name"], "Maria Santos")
+
+    def test_a_wrong_surname_still_finds_them_by_first_name(self):
+        # Observed shape: the record says "Maria Santos", the user types a
+        # surname from memory. One exact substring finds nothing at all.
+        out = self._resolve(self.psy, "get_child_summary", {"name": "Maria Reyes"})
+        self.assertEqual(out["match"], "one")
+        self.assertEqual(out["child"]["name"], "Maria Santos")
+
+    def test_a_short_name_is_not_discarded(self):
+        # _search_words drops anything under 4 characters, which would throw
+        # away "Ana", "Jun" and "Lito" entirely. Names need their own splitter.
+        Child.objects.create(fullname="Ana Cruz", assigned_psychologist=self.psy)
+        out = self._resolve(self.psy, "get_child_summary", {"name": "Ana"})
+        self.assertEqual(out["match"], "one")
+
+    def test_a_tagalog_article_is_ignored(self):
+        out = self._resolve(self.psy, "get_child_summary", {"name": "si Maria"})
+        self.assertEqual(out["match"], "one")
+
+    def test_several_matches_still_disambiguate(self):
+        Child.objects.create(fullname="Maria Lopez", assigned_psychologist=self.psy)
+        out = self._resolve(self.psy, "get_child_summary", {"name": "Maria"})
+        self.assertEqual(out["match"], "several")
+        self.assertEqual(len(out["items"]), 2)
+
+    def test_a_name_outside_scope_is_not_found(self):
+        out = self._resolve(self.psy, "get_child_summary", {"name": "Juan"})
+        self.assertEqual(out["match"], "none")
+
+    def test_an_unknown_name_is_still_not_found(self):
+        out = self._resolve(self.psy, "get_child_summary", {"name": "Zenaida"})
+        self.assertEqual(out["match"], "none")
+
+
+class SelfReportFlagsResolverTest(ResolverTestBase):
+    """The child's own words. Exempt from the carry-history control — a
+    child's words are not a colleague's prior opinions — so no author
+    filtering applies, but scope still does."""
+
+    def setUp(self):
+        super().setUp()
+        self.template = AgencyFormTemplate.objects.create(
+            form_type="opinionnaire", title="Child self-report")
+
+    def _flag(self, child, answer="Lagi akong umiiyak sa gabi", reviewed=False):
+        invite = OpinionnaireInvite.objects.create(
+            child=child, template=self.template,
+            expires_at=timezone.now() + timedelta(days=7))
+        flag = SelfReportFlag.objects.create(
+            invite=invite, child=child,
+            question="How have you been feeling?", answer=answer,
+            source=SelfReportFlag.LEXICON, matched="umiiyak")
+        if reviewed:
+            flag.reviewed_by = self.psy
+            flag.reviewed_at = timezone.now()
+            flag.save(update_fields=["reviewed_by", "reviewed_at"])
+        return flag
+
+    def test_it_returns_the_childs_own_words(self):
+        self._flag(self.mine)
+        out = self._resolve(self.psy, "list_self_report_flags", {})
+        self.assertEqual(out["kind"], "self_report_flags")
+        self.assertEqual(len(out["items"]), 1)
+        self.assertEqual(out["items"][0]["child"], "Maria Santos")
+        self.assertEqual(out["items"][0]["answer"], "Lagi akong umiiyak sa gabi")
+
+    def test_another_psychologists_child_is_not_visible(self):
+        self._flag(self.theirs)
+        out = self._resolve(self.psy, "list_self_report_flags", {})
+        self.assertEqual(out["items"], [])
+
+    def test_unreviewed_is_the_default(self):
+        self._flag(self.mine, reviewed=True)
+        out = self._resolve(self.psy, "list_self_report_flags", {})
+        self.assertEqual(out["items"], [])
+
+    def test_state_all_includes_reviewed_flags(self):
+        self._flag(self.mine, reviewed=True)
+        out = self._resolve(self.psy, "list_self_report_flags", {"state": "all"})
+        self.assertEqual(len(out["items"]), 1)
+        self.assertTrue(out["items"][0]["reviewed"])
+
+    def test_a_period_narrows_the_list(self):
+        self._flag(self.mine)
+        today = self._resolve(self.psy, "list_self_report_flags",
+                              {"period": "today"})
+        self.assertEqual(len(today["items"]), 1)
+        last_year = self._resolve(self.psy, "list_self_report_flags",
+                                  {"period": "last_year"})
+        self.assertEqual(last_year["items"], [])
+
+    def test_an_administrator_sees_every_child(self):
+        self._flag(self.mine)
+        self._flag(self.theirs)
+        out = self._resolve(self.admin, "list_self_report_flags", {})
+        self.assertEqual(len(out["items"]), 2)
+
+
+class SelfReportFlagsSchemaTest(SimpleTestCase):
+    def test_both_arguments_are_optional(self):
+        call = tools.validate("list_self_report_flags", {})
+        self.assertTrue(call.ok, call.error)
+
+    def test_an_invented_argument_is_discarded(self):
+        call = tools.validate("list_self_report_flags",
+                              {"child": "Maria", "state": "all"})
+        self.assertTrue(call.ok, call.error)
+        self.assertEqual(call.args, {"state": "all"})
+
+
+class GreetingGuardTest(SimpleTestCase):
+    """Measured: on "Good morning!" the model omits `reason` 2 times in 3.
+    The argument is optional on purpose, so the reason has to be recoverable
+    without it — otherwise the greeting reply is dead code and "salamat po"
+    gets a list of features."""
+
+    def _guarded(self, question, args=None):
+        call = tools.ToolCall(tool="answer_directly", args=args or {})
+        return tools.correct_greeting(question, call)
+
+    def test_a_greeting_without_a_reason_is_recovered(self):
+        self.assertEqual(self._guarded("Good morning!").args["reason"],
+                         "greeting_or_closing")
+
+    def test_a_tagalog_thanks_is_recovered(self):
+        self.assertEqual(self._guarded("Salamat po!").args["reason"],
+                         "greeting_or_closing")
+
+    def test_a_real_question_is_left_alone(self):
+        self.assertNotEqual(
+            self._guarded("how many psychologists are there?").args.get("reason"),
+            "greeting_or_closing")
+
+    def test_a_greeting_with_a_question_attached_is_not_just_a_greeting(self):
+        # "Good morning, how many children do I have?" is a question.
+        self.assertNotEqual(
+            self._guarded("Good morning, how many children do I have?").args.get("reason"),
+            "greeting_or_closing")
+
+    def test_an_action_request_is_not_reclassified(self):
+        call = self._guarded("send the report", {"reason": "action_request"})
+        self.assertEqual(call.args["reason"], "action_request")
+
+    def test_it_never_touches_a_data_tool(self):
+        call = tools.correct_greeting(
+            "hello", tools.ToolCall(tool="count_my_children", args={"status": "active"}))
+        self.assertEqual(call.tool, "count_my_children")
+
+
+class ConcernStopwordTest(ResolverTestBase):
+    """Length alone does not make a word worth matching.
+
+    Measured against live data: "with" is a substring of "Withdrawal from
+    peers", so "struggling with emotions" returned 10 of 34 children whose
+    concern was withdrawal — specific, confident and wrong.
+    """
+
+    def setUp(self):
+        super().setUp()
+        ProblemEntry.objects.create(child=self.mine,
+                                    description="Difficulty expressing emotion",
+                                    category="Emotional")
+        ProblemEntry.objects.create(child=self.theirs,
+                                    description="Withdrawal from peers",
+                                    category="Social")
+
+    def test_a_stopword_does_not_drag_in_an_unrelated_concern(self):
+        self.assertNotIn("with", tools._search_words("struggling with emotions"))
+
+    def test_withdrawal_is_not_returned_for_an_emotions_question(self):
+        out = self._resolve(self.admin, "search_children_by_concern",
+                            {"concern": "struggling with emotions"})
+        names = [i["name"] for i in out["items"]]
+        self.assertIn("Maria Santos", names)
+        self.assertNotIn("Juan Dela Cruz", names)
+
+    def test_a_real_concern_word_is_never_treated_as_a_stopword(self):
+        for word in ("sleep", "school", "anxiety", "emotion"):
+            self.assertIn(word, tools._search_words(word), word)
+
+
+class FlagTruncationTest(ResolverTestBase):
+    """A truncated list of distress disclosures must not read as the whole
+    list. Twenty of a hundred and sixty, shown silently, tells the reader
+    twenty children are struggling."""
+
+    def setUp(self):
+        super().setUp()
+        template = AgencyFormTemplate.objects.create(
+            form_type="opinionnaire", title="Child self-report")
+        for i in range(tools.FLAG_PAGE + 5):
+            invite = OpinionnaireInvite.objects.create(
+                child=self.mine, template=template,
+                expires_at=timezone.now() + timedelta(days=7))
+            SelfReportFlag.objects.create(
+                invite=invite, child=self.mine, question=f"Q{i}",
+                answer="Nobody", source=SelfReportFlag.LEXICON)
+
+    def test_the_page_is_capped(self):
+        out = self._resolve(self.psy, "list_self_report_flags", {})
+        self.assertEqual(len(out["items"]), tools.FLAG_PAGE)
+
+    def test_the_total_is_reported_so_the_rest_are_not_hidden(self):
+        out = self._resolve(self.psy, "list_self_report_flags", {})
+        self.assertEqual(out["total"], tools.FLAG_PAGE + 5)
+        self.assertGreater(out["total"], len(out["items"]))
+
+
+class ActionGuardFalsePositiveTest(SimpleTestCase):
+    """The guard turns a question into a refusal, so a false positive costs a
+    real answer. "Send me the list" is a request for information."""
+
+    def _reason(self, question):
+        call = tools.ToolCall(tool="answer_directly", args={})
+        return tools.correct_action_request(question, call).args.get("reason")
+
+    def test_asking_to_be_sent_a_list_is_not_a_change_request(self):
+        self.assertNotEqual(
+            self._reason("Send me the list of children needing follow-up"),
+            "action_request")
+
+    def test_a_real_change_request_is_still_caught(self):
+        self.assertEqual(self._reason("Book Ana for Friday"), "action_request")
+
+
+class GreetingCoverageTest(SimpleTestCase):
+    def _is_greeting(self, question):
+        call = tools.ToolCall(tool="answer_directly", args={})
+        return tools.correct_greeting(question, call).args.get("reason") == \
+            "greeting_or_closing"
+
+    def test_a_five_word_tagalog_greeting_is_recognised(self):
+        self.assertTrue(self._is_greeting("Magandang umaga po sa inyo"))
+
+    def test_a_bare_acknowledgement_is_recognised(self):
+        self.assertTrue(self._is_greeting("ok"))
+        self.assertTrue(self._is_greeting("opo salamat"))
+
+    def test_a_question_is_still_not_a_greeting(self):
+        self.assertFalse(self._is_greeting("how many children do I have?"))
+
+
+class DescriptionExamplesMatchTheDataTest(ResolverTestBase):
+    """Every quoted example in the concern tool's description must find
+    something.
+
+    A description is not documentation — it is where the model gets its
+    arguments from, and it copies these strings verbatim. Two shipped that
+    matched nothing: 'trouble sleeping' (the record says "Sleep disturbance",
+    and icontains cannot match a longer needle) and 'withdrawn' (the record
+    says "Withdrawal"). Both produced a confident empty answer to a perfectly
+    ordinary question.
+
+    The fixture is the agency's real vocabulary, read from the live database
+    on 30 Aug 2026 — inventing text here is how the last search shipped green
+    while returning nothing.
+    """
+
+    AGENCY_VOCABULARY = [
+        ("Adjustment to placement", "Social"),
+        ("Difficulty expressing emotion", "Emotional"),
+        ("School attendance difficulty", "Educational"),
+        ("Separation anxiety", "Emotional"),
+        ("Sleep disturbance", "Physical"),
+        ("Withdrawal from peers", "Social"),
+    ]
+
+    def setUp(self):
+        super().setUp()
+        for description, category in self.AGENCY_VOCABULARY:
+            ProblemEntry.objects.create(child=self.mine, description=description,
+                                        category=category)
+
+    def test_every_example_in_the_description_finds_a_child(self):
+        description = tools.REGISTRY["search_children_by_concern"]["description"]
+        examples = re.findall(r"'([^']+)'", description)
+        self.assertTrue(examples, "no quoted examples found to check")
+        for example in examples:
+            with self.subTest(example=example):
+                out = self._resolve(self.psy, "search_children_by_concern",
+                                    {"concern": example})
+                self.assertTrue(
+                    out["items"],
+                    f"{example!r} is offered to the model as an example and "
+                    f"matches nothing in the agency's vocabulary")
+
+
+class CountPeopleResolverTest(ResolverTestBase):
+    """The question the assistant was engineered to refuse.
+
+    "How many psychologists are in the system?" was answered "40 active
+    children" in the browser, and the fix was a guard that forced it into a
+    refusal — correct, because a confidently wrong number is worse than "I
+    can't". The guard was standing in for a missing tool, and this is it.
+    """
+
+    def test_counts_psychologists(self):
+        # ResolverTestBase makes two psychologists and one administrator.
+        out = self._resolve(self.admin, "count_people", {"role": "psychologist"})
+        self.assertEqual(out["kind"], "people_count")
+        self.assertEqual(out["count"], 2)
+        self.assertEqual(out["role"], "psychologist")
+
+    def test_counts_administrators(self):
+        out = self._resolve(self.admin, "count_people", {"role": "administrator"})
+        self.assertEqual(out["count"], 1)
+
+    def test_counts_everyone(self):
+        out = self._resolve(self.admin, "count_people", {"role": "anyone"})
+        self.assertEqual(out["count"], 3)
+
+    def test_counts_staff_when_there_are_none(self):
+        out = self._resolve(self.admin, "count_people", {"role": "staff"})
+        self.assertEqual(out["count"], 0)
+
+    def test_only_active_accounts_are_counted(self):
+        # A deactivated colleague is not "in the system" for the purpose of
+        # this question — the Users screen counts the same way.
+        self.other.status = User.ARCHIVED
+        self.other.save()
+        out = self._resolve(self.admin, "count_people", {"role": "psychologist"})
+        self.assertEqual(out["count"], 1)
+
+    def test_a_psychologist_may_also_ask(self):
+        # Staff numbers are not case data. Refusing this for a psychologist
+        # would be privacy theatre.
+        out = self._resolve(self.psy, "count_people", {"role": "psychologist"})
+        self.assertEqual(out["count"], 2)
+
+    def test_it_never_counts_children(self):
+        out = self._resolve(self.admin, "count_people", {"role": "anyone"})
+        self.assertNotEqual(out["count"], Child.objects.count())
+
+
+class UnassignedChildrenResolverTest(ResolverTestBase):
+    def setUp(self):
+        super().setUp()
+        self.orphaned = Child.objects.create(fullname="Nena Bautista")
+
+    def test_lists_children_with_no_psychologist(self):
+        out = self._resolve(self.admin, "list_unassigned_children", {})
+        self.assertEqual(out["kind"], "children")
+        self.assertEqual([i["name"] for i in out["items"]], ["Nena Bautista"])
+
+    def test_an_assigned_child_is_not_listed(self):
+        out = self._resolve(self.admin, "list_unassigned_children", {})
+        names = [i["name"] for i in out["items"]]
+        self.assertNotIn("Maria Santos", names)
+
+    def test_a_psychologist_sees_none_because_they_cannot_have_one(self):
+        # _visible_children filters to children assigned to them, so an
+        # unassigned child is outside their scope by definition. Answering
+        # "none" is honest; answering with the agency's list would leak.
+        out = self._resolve(self.psy, "list_unassigned_children", {})
+        self.assertEqual(out["items"], [])
+
+    def test_a_terminated_child_is_not_chased(self):
+        self.orphaned.status = "terminated"
+        self.orphaned.save()
+        out = self._resolve(self.admin, "list_unassigned_children", {})
+        self.assertEqual(out["items"], [])
+
+
+class AvailabilityResolverTest(ResolverTestBase):
+    """Who can take a child, and when. Staff do the booking, so this is a
+    staff question first — but it must never offer a slot the booking
+    endpoint would then refuse, which is why the arithmetic is shared."""
+
+    def setUp(self):
+        super().setUp()
+        from scheduling.models import AvailabilityBlock
+        # Every weekday, so the window exists whichever day the suite runs.
+        for weekday in range(7):
+            AvailabilityBlock.objects.create(
+                psychologist=self.psy, weekday=weekday,
+                start_time=time(23, 0), end_time=time(23, 59), capacity=2)
+
+    def test_lists_who_is_free(self):
+        out = self._resolve(self.admin, "find_availability", {"when": "this_week"})
+        self.assertEqual(out["kind"], "availability")
+        self.assertTrue(out["items"])
+        self.assertIn("p@racco1.gov.ph", [i["email"] for i in out["items"]])
+
+    def test_a_psychologist_sees_only_their_own(self):
+        from scheduling.models import AvailabilityBlock
+        for weekday in range(7):
+            AvailabilityBlock.objects.create(
+                psychologist=self.other, weekday=weekday,
+                start_time=time(23, 0), end_time=time(23, 59), capacity=1)
+        out = self._resolve(self.psy, "find_availability", {"when": "this_week"})
+        self.assertEqual({i["email"] for i in out["items"]}, {"p@racco1.gov.ph"})
+
+    def test_a_fully_booked_window_is_not_offered(self):
+        from scheduling.models import Appointment
+        day = timezone.localdate() + timedelta(days=1)
+        for _ in range(2):                       # capacity is 2
+            Appointment.objects.create(
+                child=self.mine, psychologist=self.psy,
+                start=timezone.make_aware(datetime.combine(day, time(23, 30))),
+                status=Appointment.SCHEDULED)
+        out = self._resolve(self.admin, "find_availability", {"when": "tomorrow"})
+        self.assertEqual(out["items"], [])
+
+    def test_a_cancelled_appointment_frees_the_place_again(self):
+        from scheduling.models import Appointment
+        day = timezone.localdate() + timedelta(days=1)
+        for _ in range(2):
+            Appointment.objects.create(
+                child=self.mine, psychologist=self.psy,
+                start=timezone.make_aware(datetime.combine(day, time(23, 30))),
+                status=Appointment.CANCELLED)
+        out = self._resolve(self.admin, "find_availability", {"when": "tomorrow"})
+        self.assertTrue(out["items"])
+
+    def test_a_psychologist_with_no_blocks_is_not_listed(self):
+        out = self._resolve(self.admin, "find_availability", {"when": "this_week"})
+        self.assertNotIn("q@racco1.gov.ph", [i["email"] for i in out["items"]])
+
+    def test_it_shares_the_booking_arithmetic(self):
+        # Not a third copy of the capacity rule: the resolver calls the same
+        # function behind the booking screen's slot hints, so the assistant
+        # cannot offer a slot the booking endpoint would refuse.
+        with patch("scheduling.availability.free_windows",
+                   return_value=[]) as shared:
+            self._resolve(self.admin, "find_availability", {"when": "today"})
+        shared.assert_called()

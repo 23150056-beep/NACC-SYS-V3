@@ -1,12 +1,13 @@
+import urllib.error
 from unittest.mock import patch
 
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.test import APITestCase
 
 from accounts.models import Role, User
 from children.models import Child
 from children.notifications import (
-    build_payload, build_temporary_password_payload,
+    _post, build_payload, build_temporary_password_payload,
     send_assignment_notification, send_temporary_password_notification,
 )
 
@@ -64,6 +65,28 @@ class AssignmentEmailContentTest(TestCase):
         self.psych.email = ""
         self.psych.save(update_fields=["email"])
         self.assertFalse(send_temporary_password_notification(self.psych, "TempPass9"))
+
+
+@override_settings(BREVO_API_KEY="test-key")
+class BrevoFailureLoggingTest(SimpleTestCase):
+    """More than one kind of message goes through _post. A failure that does
+    not name which one sends whoever is reading the logs to the wrong
+    feature — this pins the name to the message."""
+
+    def _failing_post(self, description):
+        with patch("children.notifications.urllib.request.urlopen",
+                   side_effect=urllib.error.URLError("no route")):
+            with self.assertLogs("children.notifications", level="ERROR") as captured:
+                self.assertFalse(_post({}, description))
+        return "\n".join(captured.output)
+
+    def test_a_failed_temporary_password_email_says_so(self):
+        logged = self._failing_post("temporary password email")
+        self.assertIn("temporary password email", logged)
+        self.assertNotIn("assignment email", logged)
+
+    def test_a_failed_assignment_email_still_says_so(self):
+        self.assertIn("assignment email", self._failing_post("assignment email"))
 
 
 @override_settings(BREVO_API_KEY="test-key")

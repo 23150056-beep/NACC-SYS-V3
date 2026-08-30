@@ -38,25 +38,73 @@ POLISH_CASES = [
 # scored 100% on routing and 0% on answers for a full day, because nothing
 # measured the second half.
 CHAT_CASES = [
-    ("appointments en", "Who am I seeing tomorrow?", "list_my_appointments", False),
-    ("appointments tl", "Sino ang makikita ko bukas?", "list_my_appointments", False),
-    ("count en", "How many children am I handling?", "count_my_children", True),
-    ("count tl", "Ilan ang mga bata ko?", "count_my_children", True),
+    # (label, question, expected tool, expect a non-empty result, expected args)
+    # The last element is checked as a SUBSET of the validated call's args, or
+    # None to check none. Routing alone is not enough: kahapon routed to the
+    # right tool and then asked for the wrong day, and that scored as a pass.
+    ("appointments en", "Who am I seeing tomorrow?", "list_my_appointments", False,
+     {"when": "tomorrow"}),
+    ("appointments tl", "Sino ang makikita ko bukas?", "list_my_appointments", False,
+     {"when": "tomorrow"}),
+    ("count en", "How many children am I handling?", "count_my_children", True, None),
+    ("count tl", "Ilan ang mga bata ko?", "count_my_children", True, None),
     ("concern en", "Any children with school refusal?",
-     "search_children_by_concern", True),
+     "search_children_by_concern", True, None),
     ("concern tl", "Sino ang mga bata na ayaw pumasok sa eskwela?",
-     "search_children_by_concern", True),
+     "search_children_by_concern", True, None),
     ("concern sleep", "Who has trouble sleeping?",
-     "search_children_by_concern", True),
+     "search_children_by_concern", True, None),
     ("concern plural", "Any kids struggling with emotions?",
-     "search_children_by_concern", True),
-    ("gaps en", "Who still needs a follow-up?", "list_care_gaps", False),
-    ("gaps tl", "Sino ang kailangan ng follow-up?", "list_care_gaps", False),
-    ("chitchat", "Good morning!", "answer_directly", False),
-    # Regression: seen in the browser answering "40 active children".
+     "search_children_by_concern", True, None),
+    ("gaps en", "Who still needs a follow-up?", "list_care_gaps", False, None),
+    ("gaps tl", "Sino ang kailangan ng follow-up?", "list_care_gaps", False, None),
+    ("chitchat", "Good morning!", "answer_directly", False,
+     {"reason": "greeting_or_closing"}),
+    # Regression: seen in the browser answering "40 active children". The
+    # answer was a refusal until count_people existed; it is a number now, and
+    # correct_obvious_misroute stays behind it as the backstop.
     ("staff count en", "how many psychologist are in the system?",
-     "answer_directly", False),
-    ("staff count tl", "Ilan ang mga psychologist dito?", "answer_directly", False),
+     "count_people", True, {"role": "psychologist"}),
+    ("staff count tl", "Ilan ang mga psychologist dito?", "count_people", True,
+     {"role": "psychologist"}),
+    ("staff count any", "How many users are in the system?", "count_people",
+     True, None),
+    ("unassigned en", "Which children have no psychologist?",
+     "list_unassigned_children", False, None),
+    # Booked vs bookable: the pair most likely to be confused for each other,
+    # so both directions are scored.
+    ("availability en", "Who is free tomorrow?", "find_availability", False,
+     {"when": "tomorrow"}),
+    ("availability tl", "Sino ang bakante bukas?", "find_availability", False,
+     {"when": "tomorrow"}),
+    ("booked not bookable", "What appointments do I have tomorrow?",
+     "list_my_appointments", False, {"when": "tomorrow"}),
+    # Regression: kahapon was aliased to today, so this answered with today's
+    # appointments. Routing alone cannot catch it — the argument has to be
+    # checked.
+    ("past tl", "Sino ang nakita ko kahapon?", "list_my_appointments", False,
+     {"when": "yesterday"}),
+    ("past en", "Who did I see yesterday?", "list_my_appointments", False,
+     {"when": "yesterday"}),
+    ("last week en", "What did I do last week?", "list_my_appointments", False,
+     {"when": "last_week"}),
+    ("month tl", "Ilan ang appointments ko ngayong buwan?",
+     "list_my_appointments", False, {"when": "this_month"}),
+    # Appointments stop at the month: "what have I got this year?" went to
+    # list_care_gaps 3/3, and a year of appointments is not a question anyone
+    # asks. The year lives on the flags tool, where reviewing over one is real.
+    ("month en", "What appointments do I have this month?",
+     "list_my_appointments", False, {"when": "this_month"}),
+    ("flags year en", "Has anything been flagged this year?",
+     "list_self_report_flags", False, {"period": "this_year"}),
+    ("flags en", "Who flagged something worrying?",
+     "list_self_report_flags", False, None),
+    ("flags tl", "Sino ang may nakakabahala sa sinulat nila?",
+     "list_self_report_flags", False, None),
+    ("greeting tl", "Salamat po!", "answer_directly", False,
+     {"reason": "greeting_or_closing"}),
+    ("name partial", "Tell me about Maria", "get_child_summary", False, None),
+    ("action en", "Book Ana for Friday", "answer_directly", False, None),
 ]
 
 
@@ -244,7 +292,7 @@ class Command(BaseCommand):
 
         runs, flags, latencies = 0, {}, []
         payload = tools.ollama_payload()
-        for label, question, expected, expect_hits in CHAT_CASES:
+        for label, question, expected, expect_hits, expected_args in CHAT_CASES:
             self.stdout.write(f"\n  {label}: {question}")
             for rep in range(1, reps + 1):
                 started = time.monotonic()
@@ -259,10 +307,20 @@ class Command(BaseCommand):
                 runs += 1
 
                 found = {}
-                if tool != expected:
-                    found["wrong tool"] = [f"{tool or 'prose'} != {expected}"]
                 call = tools.validate(tool or "answer_directly", raw)
                 call = tools.correct_obvious_misroute(question, call)
+                call = tools.correct_action_request(question, call)
+                call = tools.correct_greeting(question, call)
+                # Scored AFTER the guards, because the guards ship. Scoring the
+                # model's raw pick reported a defect the user never sees and
+                # hid the fact that a correction had happened at all — the
+                # action-request downgrade looked like a 3/3 failure while
+                # working correctly.
+                if call.tool != expected:
+                    found["wrong tool"] = [f"{call.tool or 'prose'} != {expected}"]
+                elif tool != expected:
+                    found["model misrouted, guard corrected"] = [
+                        f"{tool or 'prose'} -> {call.tool}"]
                 if not call.ok:
                     found["rejected"] = [call.error]
                 elif expect_hits:
@@ -271,6 +329,13 @@ class Command(BaseCommand):
                     if not n:
                         # The silent failure: a confident empty answer.
                         found["empty answer"] = [f"{call.args or 'no args'}"]
+                # The other silent failure: the right tool asked the wrong
+                # question. kahapon routed perfectly and requested today.
+                if call.ok and expected_args:
+                    wrong = {k: call.args.get(k) for k, v in expected_args.items()
+                             if call.args.get(k) != v}
+                    if wrong:
+                        found["wrong argument"] = [f"{wrong} != {expected_args}"]
                 for key, items in found.items():
                     flags.setdefault(key, 0)
                     flags[key] += 1

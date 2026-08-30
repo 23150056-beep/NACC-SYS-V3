@@ -45,9 +45,25 @@ The branch `cloud-setup` tracks `local-ver/main`, so:
 git push
 ```
 
-is correct and goes to the local-version repo. **Once the demo Blueprint is
-connected, that push also auto-deploys the demo** at `nacc-v3-demo-*`. It still
-cannot touch the live services, which are built from the other repository.
+is correct and goes to the local-version repo. It cannot touch the live
+services, which are built from the other repository.
+
+**A push is not a deploy, and on 30 Aug 2026 it demonstrably was not.** The
+line above used to say a push auto-deploys the demo "once the Blueprint is
+connected" — a condition nobody had checked. Four pushes and four green CI runs
+later, `nacc-v3-demo-*` was still serving 29 August's code: the new endpoint
+answered 404 and the frontend bundle still carried wording replaced a day
+earlier. Green CI proves the code is correct, never that it shipped.
+
+So verify the deploy rather than assuming it, from outside Render:
+
+```
+curl -s https://nacc-v3-demo-api.onrender.com/api/assistant/capabilities/ -o /dev/null -w "%{http_code}\n"
+```
+
+401 means deployed and gated; 404 means the container predates the endpoint.
+For the frontend, fetch the page, read the hashed `/assets/index-*.js` name out
+of it, and grep the bundle for a string only the new build contains.
 
 **Do not `git push origin`** — the owner has said he does not want Render
 touched, and that push is what deploys it. Pushing there needs asking first, in
@@ -212,7 +228,35 @@ Built 26 Aug 2026. A docked panel on every protected screen, backed by
 - **Tagalog works.** 55/55 clean over 5 reps x 11 cases, median 2.4s, both
   registers landing on identical answers. `ai_eval --feature chat` reproduces
   it, and scores whether the answer was *empty* as well as whether the routing
-  was right — the unmeasured half is the half that broke.
+  was right — the unmeasured half is the half that broke. It also scores the
+  ARGUMENTS, and it scores the tool AFTER the guards run: `kahapon` routed to
+  the right tool, asked for the wrong day, and passed; and a guard doing its
+  job read as a 3/3 failure.
+- **Ten tools as of 30 Aug 2026**, and the count is asserted in a test so an
+  eleventh cannot be added on a hunch. Every addition since the sixth came with
+  its own `ai_eval` run.
+- **A tool description is routing logic, not documentation.** Four separate
+  bugs, all the same root cause. An example is copied VERBATIM into arguments:
+  `'trouble sleeping'` matched nothing because the record says "Sleep
+  disturbance", and `'withdrawn'` matched nothing because it says "Withdrawal".
+  A Tagalog example ATTRACTS by shape: `'sino ang walang psychologist'` pulled
+  every "sino ang mga bata na…" question into the wrong tool 3/3. A "do NOT use
+  for anxiety, emotions" clause measured WORSE, because the router reads the
+  keywords and drops the negation. And a description that under-claims loses
+  the question: appointments never said it answered about the past, so "what
+  did I do last week?" went elsewhere. A test now reads the examples out of the
+  description and fails if any matches nothing in the live vocabulary.
+- **Descriptions interact globally.** Changing only the appointments
+  description flipped an unrelated Tagalog case from 3/3 right to 3/3 wrong.
+  The tool array is one prompt; nothing in it is tuned in isolation, so batches
+  stay small and each earns its own eval run.
+- **The tool ceiling is the model's, not the design's.** At ten tools the local
+  `qwen2.5:3b` scores 3/87 wrong tool and 3/87 wrong argument, and four rounds
+  of description tuning could not hold it. `@cf/meta/llama-4-scout` scores
+  **0/87 on everything at median 565ms**, against 4465ms local. The demo runs
+  hosted and a developer's machine runs the 3B, so the two now disagree on the
+  same questions — when someone reports a bad answer, ask which model answered.
+  `manage.py ai_check` says, and says HOSTED or local.
 - **One generation at a time, process-wide.** A question asked while a brief is
   generating waits for it: measured 1.7s idle, ~19s under that contention.
   Deliberate — concurrent runs on four cores are slower, not parallel.
@@ -252,8 +296,9 @@ Built 27 Aug 2026. Public, free, fictional children, real accounts. Runbook in
 `docs/superpowers/specs/2026-08-27-free-secure-web-deployment-design.md`.
 
 - **It deploys from `local-ver`, never `origin`.** Services are `nacc-v3-demo-*`;
-  the live ones are `nacc-v3-api`/`nacc-v3-web`, built from the other repo. A
-  bare `git push` auto-deploys the demo.
+  the live ones are `nacc-v3-api`/`nacc-v3-web`, built from the other repo.
+  Whether a push actually reaches the demo is a question with an answer, not an
+  assumption — see "A push is not a deploy" above.
 - **The database is a Neon BRANCH** named `demo`, off a default branch called
   **`production`** (not `main`). It exists so the demo inherits the real
   accounts while its writes — and this repo's newer migrations — never reach

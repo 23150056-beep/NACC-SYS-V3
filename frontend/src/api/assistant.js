@@ -48,3 +48,9 @@ export const checkAssistant = () =>
 // assistant is off or the runtime is down; the panel says so and stays usable.
 export const askAssistant = (question) =>
   api.post('/assistant/ask/', { question }).then((r) => r.data);
+
+// What this user can ask, and a few example questions. Served rather than
+// hardcoded so the empty panel and the assistant's own refusal text cannot
+// drift apart — there is one answer to "what can I ask", not two.
+export const getAssistantCapabilities = () =>
+  api.get('/assistant/capabilities/').then((r) => r.data);

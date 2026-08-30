@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { StatCard, Button, Badge, Icon, ROLE_META } from '../ui';
 import api from '../api/client';
 import { useActivity } from '../context/ActivityContext';
+import { useAssistant } from '../context/AssistantContext';
 import { eventText, timeAgo, eventDestination } from '../components/Topbar';
 import MiniCalendar from '../components/MiniCalendar';
 
@@ -55,6 +56,7 @@ const RANGES = [
 export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { openAssistant } = useAssistant();
   const role = user?.role_name || 'Staff';
   const isPsychologist = role === 'Psychologist';
   const m = ROLE_META[role] || ROLE_META.Staff;
@@ -82,6 +84,10 @@ export default function Dashboard() {
     // parameter was live with nothing pointing at it.
     { label: 'Add Record', icon: 'plus', variant: 'primary', to: '/children?openCreate=1', roles: ['Administrator', 'Staff'] },
     { label: 'Records', icon: 'folder-heart', variant: 'secondary', to: '/children', roles: ['Administrator', 'Psychologist', 'Staff'] },
+    // Not a second chatbot — the same panel, reachable without hunting for
+    // the floating button. `sparkles` is already this row's own header icon,
+    // so repeating it would read as decoration.
+    { label: 'Ask AI', icon: 'bot', variant: 'secondary', onClick: openAssistant, roles: ['Administrator', 'Psychologist', 'Staff'] },
     { label: 'Start Pre-Assessment', icon: 'clipboard-list', variant: 'primary', to: '/pre-assessment', roles: ['Psychologist'] },
     { label: 'Calendar', icon: 'calendar', variant: 'secondary', to: '/schedule', roles: ['Administrator', 'Psychologist', 'Staff'] },
     { label: 'Agency Summary', icon: 'bar-chart-3', variant: 'primary', to: '/reports/summary', roles: ['Administrator', 'Staff'] },
@@ -94,7 +100,9 @@ export default function Dashboard() {
         <span style={{ width: 28, height: 28, borderRadius: 'var(--radius-md)', background: m.soft, color: m.color, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}><Icon name="sparkles" size={15} /></span>
         <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 14, color: 'var(--text-strong)', marginRight: 4 }}>Quick actions</span>
         {actions.map((a) => (
-          <Button key={a.label} variant={a.variant} onClick={() => navigate(a.to)} iconLeft={<Icon name={a.icon} size={16} />}>{a.label}</Button>
+          <Button key={a.label} variant={a.variant}
+                  onClick={a.onClick ? a.onClick : () => navigate(a.to)}
+                  iconLeft={<Icon name={a.icon} size={16} />}>{a.label}</Button>
         ))}
       </div>
 

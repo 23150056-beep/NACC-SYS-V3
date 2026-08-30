@@ -915,9 +915,16 @@ export default function Users() {
             <span className="racco-mono" style={{ flex: 1, fontSize: 18, fontWeight: 700, color: 'var(--text-strong)', letterSpacing: '0.04em', wordBreak: 'break-all' }}>{resetResult.temp_password}</span>
             <button type="button" title="Copy" aria-label="Copy temporary password" onClick={copyTempPassword} {...hoverLift({ lift: -1, shadow: 'var(--shadow-md)' })} style={iconBtn('var(--blue-600)')}><Icon name="copy" size={15} /></button>
           </div>
+          {/* "Queued", not "sent": the server hands the message to a background
+              thread and never reads Brevo's answer, so a rejected key or an
+              unverified sender looks identical to a delivered email from here.
+              Saying "sent" is what would stop an administrator handing the
+              password over — which is the one thing that always works. */}
           {resetResult.email_queued ? (
-            <Alert tone="success" icon={<Icon name="mail-check" size={18} />}>
-              The temporary password was sent to {resetResult.user.email}.
+            <Alert tone="info" icon={<Icon name="mail" size={18} />}>
+              Queued for delivery to {resetResult.user.email}. Arrival is not
+              confirmed here — if it does not turn up, hand the password over
+              directly.
             </Alert>
           ) : (
             <Alert tone="danger" icon={<Icon name="mail-warning" size={18} />}>
