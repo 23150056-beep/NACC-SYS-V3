@@ -701,7 +701,12 @@ def _resolve_unassigned_children(request, args):
     qs = (_scope(request)
           .filter(assigned_psychologist__isnull=True, status=Child.ACTIVE)
           .order_by("fullname"))
+    # Carries its own empty sentence. This reuses the `children` kind for the
+    # list itself, and that renderer's own "no open concern matches that
+    # wording" is about a different question entirely — seen in the browser
+    # answering "which children have no psychologist?" with it.
     return {"kind": "children", "concern": "no assigned psychologist",
+            "empty": "Every active child has a psychologist assigned.",
             "items": [{"id": c.id, "name": c.fullname} for c in qs[:40]]}
 
 
