@@ -172,3 +172,71 @@ class BrevoRejectionIsLoggedWithItsReasonTest(SimpleTestCase):
             401, '{"code":"unauthorized","message":"Key not found"}')
         self.assertIn("Key not found", logged)
         self.assertIn("401", logged)
+
+
+@override_settings(BREVO_API_KEY="test-key", BREVO_SENDER_EMAIL="from@racco1.gov.ph",
+                   BREVO_SENDER_NAME="NACC RACCO 1",
+                   CORS_ALLOWED_ORIGINS=["http://localhost:5173",
+                                         "https://nacc-v3-demo-web.onrender.com"])
+class TemporaryPasswordEmailTest(TestCase):
+    """The password is the whole point of this message. If it is wrong,
+    truncated or absent, the person cannot get in and has no other route."""
+
+    def setUp(self):
+        role = Role.objects.create(role_name=Role.STAFF)
+        self.user = User.objects.create_user(
+            email="someone@gmail.com", username="someone", password="x",
+            role=role, first_name="Maria", last_name="Santos")
+
+    def test_the_password_appears_exactly_once_and_intact(self):
+        payload = build_temporary_password_payload(self.user, "nbqwyHsCzY8u")
+        self.assertEqual(payload["htmlContent"].count("nbqwyHsCzY8u"), 1)
+        self.assertIn("nbqwyHsCzY8u", payload["textContent"])
+
+    def test_a_password_with_html_characters_is_not_mangled_or_injected(self):
+        payload = build_temporary_password_payload(self.user, "a<b>&c")
+        self.assertNotIn("<b>", payload["htmlContent"])
+        self.assertIn("a&lt;b&gt;&amp;c", payload["htmlContent"])
+
+    def test_it_goes_to_the_account_holder(self):
+        payload = build_temporary_password_payload(self.user, "pw123456")
+        self.assertEqual(payload["to"][0]["email"], "someone@gmail.com")
+
+    def test_it_carries_a_plain_text_part(self):
+        # A message with no text part is likelier to be filtered as spam.
+        payload = build_temporary_password_payload(self.user, "pw123456")
+        self.assertTrue(payload["textContent"].strip())
+
+    def test_the_sign_in_link_prefers_the_deployed_origin(self):
+        # The mail is read on someone else's machine; localhost is useless there.
+        payload = build_temporary_password_payload(self.user, "pw123456")
+        self.assertIn("https://nacc-v3-demo-web.onrender.com",
+                      payload["htmlContent"])
+        self.assertNotIn("localhost:5173", payload["htmlContent"])
+
+    def test_no_link_rather_than_a_dead_one(self):
+        with override_settings(CORS_ALLOWED_ORIGINS=[]):
+            payload = build_temporary_password_payload(self.user, "pw123456")
+        self.assertNotIn("<a href", payload["htmlContent"])
+
+    def test_no_child_of_theirs_is_named_in_it(self):
+        """Brevo is a processor outside the agency's agreements, which is why
+        the assignment email carries a case number and no name. The same rule
+        applies here: this message is about an account, not about anyone's
+        caseload.
+
+        Asserting the absence of the word "child" would only catch the agency's
+        own name in the header. What matters is that no record reachable from
+        this user reaches the message."""
+        Child.objects.create(fullname="Anabelle Suguitan",
+                             assigned_psychologist=self.user)
+        payload = build_temporary_password_payload(self.user, "pw123456")
+        body = payload["htmlContent"] + payload["textContent"]
+        self.assertNotIn("Anabelle", body)
+        self.assertNotIn("Suguitan", body)
+
+    def test_the_recipient_name_cannot_inject_markup(self):
+        self.user.first_name = "<script>alert(1)</script>"
+        self.user.save()
+        payload = build_temporary_password_payload(self.user, "pw123456")
+        self.assertNotIn("<script>", payload["htmlContent"])

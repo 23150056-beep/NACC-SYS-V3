@@ -13,6 +13,11 @@ export default function CredentialHandoffs() {
   const toast = useToast();
   const [users, setUsers] = useState([]);
   const [generated, setGenerated] = useState({}); // { userId: tempPassword }
+  // Whether the server queued an email for each generated password. The
+  // endpoint has always returned this; this screen used to drop it, so an
+  // administrator generating from here could not tell whether the person had
+  // been emailed or was waiting to be told in person.
+  const [mailed, setMailed] = useState({});       // { userId: bool }
   const [busy, setBusy] = useState(false);
 
   const load = () => api.get('/users/').then((r) => setUsers(r.data.filter((u) => u.must_change_password)));
@@ -22,6 +27,7 @@ export default function CredentialHandoffs() {
     try {
       const { data } = await api.post(`/users/${u.id}/reset-password/`);
       setGenerated((g) => ({ ...g, [u.id]: data.temp_password }));
+      setMailed((m) => ({ ...m, [u.id]: Boolean(data.email_queued) }));
       return true;
     } catch (err) {
       toast.error(err.response?.data?.detail || `Could not generate a password for ${u.fullname || u.email}.`);
@@ -87,7 +93,20 @@ export default function CredentialHandoffs() {
                       <td style={{ padding: '12px 16px' }}>{u.role_name ? <RoleBadge role={u.role_name} /> : '—'}</td>
                       <td style={{ padding: '12px 16px' }}>
                         {generated[u.id]
-                          ? <span className="racco-mono" style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--text-strong)', letterSpacing: '0.04em' }}>{generated[u.id]}</span>
+                          ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                              <span className="racco-mono" style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--text-strong)', letterSpacing: '0.04em' }}>{generated[u.id]}</span>
+                              {/* Whether this person was emailed decides whether
+                                  the password still has to be handed over by
+                                  hand. The screen used to leave that unsaid. */}
+                              <span className="racco-no-print" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: 'var(--text-muted)' }}>
+                                <Icon name={mailed[u.id] ? 'mail' : 'mail-x'} size={13} />
+                                {mailed[u.id]
+                                  ? `Emailed to ${u.email}`
+                                  : 'Not emailed — hand this over yourself'}
+                              </span>
+                            </div>
+                          )
                           : <Badge tone="amber" size="sm" dot>Awaiting handoff</Badge>}
                       </td>
                       <td style={{ padding: '12px 16px' }}>

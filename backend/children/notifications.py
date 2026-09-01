@@ -120,28 +120,162 @@ def send_assignment_notification(child):
     return True
 
 
+def sign_in_url():
+    """Where to send someone to use the password we just gave them.
+
+    Taken from CORS_ALLOWED_ORIGINS, which already holds the frontend's own
+    origin on every deployment — a separate setting would be a second place to
+    get wrong, and one that only ever shows up as a dead link in an email
+    nobody reports. A localhost entry is skipped when a deployed one exists,
+    since the mail is read on someone else's machine.
+    """
+    origins = [o.strip().rstrip("/") for o in settings.CORS_ALLOWED_ORIGINS
+               if o and o.strip()]
+    deployed = [o for o in origins
+                if "localhost" not in o and "127.0.0.1" not in o]
+    return (deployed or origins or [""])[0]
+
+
+# Palette from the app's own stylesheet, so the mail looks like the system it
+# comes from. Inline on every element on purpose: Gmail strips <style> blocks,
+# and a table layout is the only thing every client agrees on.
+_BRAND = "#2236c4"
+_BRAND_DARK = "#1b2aa3"
+_TINT = "#eef1fd"
+_PAPER = "#f4f6fa"
+_INK = "#101828"
+_MUTED = "#667085"
+_BORDER = "#e4e7ec"
+
+
 def build_temporary_password_payload(user, temporary_password):
-    recipient_name = html.escape(
+    """The message itself, split out so a test can read what leaves the
+    building without standing up an HTTP server.
+
+    Carries the password and nothing else about the person — no case data, no
+    caseload, nothing about a child. Brevo is a processor outside the agency's
+    agreements, and the rule that keeps a child's name out of the assignment
+    email applies here too.
+    """
+    name = html.escape(
         getattr(user, "fullname", "")
         or getattr(user, "username", "")
-        or "User"
+        or "there"
     )
+    # The password is generated from a fixed alphabet, so escaping changes
+    # nothing today. It is escaped anyway: the day that alphabet grows, this
+    # should not become the thing that breaks the mail.
+    password = html.escape(str(temporary_password))
+    url = sign_in_url()
+
+    button = (
+        f'<tr><td align="center" style="padding:4px 32px 28px;">'
+        f'<a href="{html.escape(url)}" '
+        f'style="display:inline-block;background:{_BRAND};color:#ffffff;'
+        f'text-decoration:none;font-weight:700;font-size:15px;'
+        f'padding:13px 30px;border-radius:8px;">Go to NACC SYS</a>'
+        f"</td></tr>"
+    ) if url else ""
+
+    html_body = (
+        f'<!DOCTYPE html><html><body style="margin:0;padding:0;'
+        f'background:{_PAPER};">'
+        f'<table role="presentation" width="100%" cellpadding="0" '
+        f'cellspacing="0" style="background:{_PAPER};padding:24px 12px;">'
+        f'<tr><td align="center">'
+        f'<table role="presentation" width="100%" cellpadding="0" '
+        f'cellspacing="0" style="max-width:560px;background:#ffffff;'
+        f'border:1px solid {_BORDER};border-radius:14px;overflow:hidden;'
+        f'font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;">'
+
+        # Header
+        f'<tr><td style="background:{_BRAND};padding:22px 32px;">'
+        f'<div style="color:#ffffff;font-size:17px;font-weight:700;'
+        f'line-height:1.3;">NACC &ndash; RACCO 1</div>'
+        f'<div style="color:#c3cbf5;font-size:12px;padding-top:3px;">'
+        f'National Authority for Child Care</div></td></tr>'
+
+        # Greeting
+        f'<tr><td style="padding:30px 32px 0;">'
+        f'<div style="font-size:19px;font-weight:700;color:{_INK};">'
+        f'Your temporary password</div>'
+        f'<p style="margin:14px 0 0;font-size:15px;line-height:1.6;'
+        f'color:{_INK};">Hello {name},</p>'
+        f'<p style="margin:10px 0 0;font-size:15px;line-height:1.6;'
+        f'color:{_MUTED};">An administrator has set up access for you. Use the '
+        f'password below to sign in for the first time.</p></td></tr>'
+
+        # The password
+        f'<tr><td style="padding:22px 32px 0;">'
+        f'<div style="background:{_TINT};border:1px solid #d5dcfa;'
+        f'border-radius:10px;padding:18px 20px;text-align:center;">'
+        f'<div style="font-size:11px;letter-spacing:.09em;font-weight:700;'
+        f'color:{_BRAND_DARK};text-transform:uppercase;">Temporary password'
+        f'</div>'
+        f'<div style="font-family:Consolas,Menlo,Courier New,monospace;'
+        f'font-size:25px;font-weight:700;letter-spacing:.06em;color:{_INK};'
+        f'padding-top:9px;word-break:break-all;">{password}</div>'
+        f'</div></td></tr>'
+
+        # Steps
+        f'<tr><td style="padding:22px 32px 0;">'
+        f'<div style="font-size:14px;font-weight:700;color:{_INK};">'
+        f'What to do next</div>'
+        f'<ol style="margin:9px 0 0;padding-left:20px;font-size:14px;'
+        f'line-height:1.75;color:{_MUTED};">'
+        f'<li>Open NACC SYS and sign in with this email address.</li>'
+        f'<li>Enter the temporary password above.</li>'
+        f'<li>Choose your own password when prompted.</li>'
+        f'</ol></td></tr>'
+
+        f'<tr><td style="padding:24px 32px 0;"></td></tr>'
+        f"{button}"
+
+        # Security note
+        f'<tr><td style="padding:0 32px 26px;">'
+        f'<div style="background:{_PAPER};border-left:3px solid {_BRAND};'
+        f'border-radius:0 8px 8px 0;padding:13px 16px;font-size:13px;'
+        f'line-height:1.65;color:{_MUTED};">'
+        f'This password works once, until you set your own. Do not share it '
+        f'with anyone &mdash; not even a colleague. If you were not expecting '
+        f'this email, tell your administrator, and do not use the password.'
+        f'</div></td></tr>'
+
+        # Footer
+        f'<tr><td style="background:{_PAPER};border-top:1px solid {_BORDER};'
+        f'padding:15px 32px;font-size:11.5px;line-height:1.6;color:{_MUTED};">'
+        f'Automated message from NACC SYS. Replies are not monitored.'
+        f'</td></tr>'
+
+        f"</table></td></tr></table></body></html>"
+    )
+
+    # Plain text alongside the HTML: some clients show it, and a message with
+    # no text part is likelier to be filtered as spam.
+    text_body = (
+        f"Your temporary password\n\n"
+        f"Hello {getattr(user, 'fullname', '') or 'there'},\n\n"
+        f"An administrator has set up access for you.\n\n"
+        f"Temporary password: {temporary_password}\n\n"
+        f"1. Open NACC SYS and sign in with this email address.\n"
+        f"2. Enter the temporary password above.\n"
+        f"3. Choose your own password when prompted.\n\n"
+        + (f"{url}\n\n" if url else "")
+        + "This password works once, until you set your own. Do not share it "
+          "with anyone. If you were not expecting this email, tell your "
+          "administrator and do not use the password.\n\n"
+          "Automated message from NACC SYS. Replies are not monitored."
+    )
+
     return {
         "sender": {
             "name": settings.BREVO_SENDER_NAME,
             "email": settings.BREVO_SENDER_EMAIL,
         },
-        "to": [{"email": user.email, "name": recipient_name}],
+        "to": [{"email": user.email, "name": name}],
         "subject": "Your NACC SYS temporary password",
-        "htmlContent": (
-            "<h2>Your NACC SYS account is ready</h2>"
-            f"<p>Dear {recipient_name},</p>"
-            "<p>An administrator created or reset your NACC SYS account.</p>"
-            f"<p><strong>Temporary password:</strong> {temporary_password}</p>"
-            "<p>Sign in using your email address and this password. "
-            "You must change it before accessing the system.</p>"
-            "<br><small>This is an automated notification.</small>"
-        ),
+        "htmlContent": html_body,
+        "textContent": text_body,
     }
 
 
