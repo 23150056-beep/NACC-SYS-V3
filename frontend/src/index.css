@@ -408,23 +408,151 @@ tr:focus-visible {
   animation: racco-chat-rise var(--dur-base) var(--ease-out) both;
 }
 
-/* Login card. Two columns on a desktop, stacked on a phone — inline styles
-   cannot express a media query, and this is the one screen every user meets
-   before they have any reason to trust the system. */
+/* The two pages every user meets before they have any reason to trust the
+   system: sign in, and request access. Inline styles can express neither a
+   media query nor a viewport clamp, so all of their sizing lives here.
+
+   The rule is fit first. Request-access is a tall form — role cards, a Google
+   button, four fields, a strength meter — and at 100% zoom on a 768p laptop
+   it ran off the bottom of the window with the submit button below the fold.
+   So every vertical measurement below scales with the viewport HEIGHT, the
+   card is capped at the window, and the form panel takes whatever is left
+   over as an internal scroll rather than pushing the button out of sight. */
+.racco-auth-wash {
+  /* One number the whole page is built from. Read by the card below, which
+     is a descendant, so it inherits. */
+  --auth-pad: clamp(8px, 2.2vh, 24px);
+  /* #root is a fixed 100vh with overflow:hidden, so anything taller than the
+     window is clipped and unreachable unless the scrolling happens HERE.
+     That is the whole reason for the explicit height. */
+  height: 100%;
+  min-height: 100%;
+  overflow-y: auto;
+  display: flex;
+  /* `safe` so a card taller than the window scrolls from its top edge.
+     Plain centring pins the overflow above the scroll origin, which puts the
+     seal and the heading permanently out of reach. The unprefixed value is
+     the fallback for engines that do not know `safe`. */
+  align-items: center;
+  align-items: safe center;
+  justify-content: center;
+  padding: var(--auth-pad);
+}
+
 .racco-login-card {
   display: grid;
   grid-template-columns: 1.05fr 1fr;
+  width: 880px;
+  max-width: 100%;
+  /* Without this the card is a flex item that refuses to shrink below its
+     own min-content, and on a 390px phone it hangs off the right edge. */
+  min-width: 0;
+  /* 100% of the wash's content box, which is already the window minus the
+     padding above — no arithmetic to keep in sync. */
+  max-height: 100%;
 }
-@media (max-width: 760px) {
-  .racco-login-card {
-    grid-template-columns: 1fr;
+
+.racco-login-brand {
+  padding: clamp(18px, 3.2vh, 40px) clamp(20px, 2.6vw, 38px);
+  display: flex;
+  flex-direction: column;
+  /* Seal at the top, motto at the foot — until the motto is hidden, when the
+     seal should sit in the middle of the panel rather than alone at the top
+     of an empty blue field. */
+  justify-content: space-between;
+  gap: 20px;
+  min-width: 0;
+  overflow: hidden;
+}
+.racco-auth-seal {
+  width: clamp(46px, 6.6vh, 72px);
+  height: clamp(46px, 6.6vh, 72px);
+}
+.racco-auth-org {
+  font-size: clamp(17px, 2.4vh, 26px);
+}
+.racco-auth-motto {
+  font-size: clamp(19px, 2.8vh, 30px);
+}
+
+/* min-height: 0 is the whole trick: without it a grid item refuses to shrink
+   below its content, so the overflow-y below would never engage. */
+.racco-auth-panel {
+  padding: clamp(16px, 3vh, 40px) clamp(20px, 2.6vw, 38px);
+  display: flex;
+  flex-direction: column;
+  /* `safe`, for the same reason as the wash: once the form is taller than
+     the panel, plain centring pushes the heading above the scroll origin and
+     nothing can bring it back. With `safe` the overflow starts at the top and
+     every field is reachable. */
+  justify-content: center;
+  justify-content: safe center;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+.racco-auth-panel > h1 {
+  font-size: clamp(17px, 1.4vh + 12px, 22px);
+}
+
+/* The vertical rhythm of both pages, in one place, so a short window
+   tightens every stack at once rather than one of them. */
+.racco-auth-stack { gap: clamp(9px, 1.6vh, 16px); }
+.racco-auth-stack-sm { gap: clamp(8px, 1.4vh, 14px); }
+
+/* Side-by-side pairs: the two role cards, and first name / last name.
+   minmax(0, …) rather than a bare fr, or the column refuses to shrink below
+   a text input's intrinsic width and the right-hand one hangs off the card. */
+.racco-auth-duo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+@media (max-width: 430px) {
+  .racco-auth-duo {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Short windows, in the order things should give way. First the padding and
+   type shrink (the clamps above), then the fields tighten and the closing
+   note goes — it repeats what the subheading already said — and only then the
+   motto. The form itself is never what gets cut. */
+@media (max-height: 800px) {
+  /* <Input> reads var(--field-h) at the point of use, so redefining it on an
+     ancestor is enough. 42 -> 38 across four fields buys back a field's worth
+     of height without touching any other screen. */
+  .racco-auth-panel {
+    --field-h: 38px;
+  }
+  .racco-auth-fineprint {
+    display: none;
+  }
+}
+
+@media (max-height: 660px) {
+  .racco-login-tagline {
+    display: none;
   }
   .racco-login-brand {
-    min-height: 0 !important;
-    padding: 22px 24px !important;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 760px) {
+  .racco-login-card {
+    grid-template-columns: minmax(0, 1fr);
+    /* Stacked, the PAGE scrolls. Capping the card here would trap the form
+       in a scrolling box inside an already scrolling page. */
+    max-height: none;
+  }
+  .racco-auth-panel {
+    overflow-y: visible;
   }
   .racco-login-brand .racco-login-tagline {
     display: none;
+  }
+  .racco-login-brand {
+    justify-content: center;
   }
 }
 

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { Button, FormField, Input, Alert, Icon, Modal, ROLE_META } from '../ui';
+import AuthLayout, { AuthLink } from '../components/AuthLayout';
 import PasswordChangeGate from '../components/PasswordChangeGate';
 import GoogleSignInButton from '../components/GoogleSignInButton';
 
@@ -18,6 +19,7 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [capsLock, setCapsLock] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   // 'login'   — sign-in form
@@ -110,122 +112,145 @@ export default function Login() {
     pending: 'An administrator has to approve your access.',
   }[view] || '';
 
+  // The way out of every view. On the form it is the sign-up route; on the
+  // two dead ends it is the way back, because a screen someone lands on with
+  // nothing to click is where they decide the system is broken.
+  const footer = view === 'login'
+    ? <>No account yet? <AuthLink to="/signup">Request access</AuthLink></>
+    : (
+      <button type="button"
+              onClick={() => { setCredential(null); setError(''); setView('login'); }}
+              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                       fontFamily: 'var(--font-sans)', fontSize: 13, fontWeight: 700,
+                       color: 'var(--blue-600)' }}>
+        ← Back to sign in
+      </button>
+    );
+
   return (
-    <div className="racco-sky-wash" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, overflowY: 'auto' }}>
-      <div className="racco-login-card" style={{ width: 880, maxWidth: '100%', background: 'var(--surface)', borderRadius: 'var(--radius-2xl)', boxShadow: 'var(--shadow-xl)', overflow: 'hidden' }}>
-        {/* Brand panel */}
-        <div className="racco-login-brand" style={{ background: 'linear-gradient(155deg, var(--blue-700), var(--blue-600) 60%, var(--blue-800))', color: '#fff', padding: '40px 38px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', position: 'relative', overflow: 'hidden', minHeight: 480 }}>
-          <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(120% 90% at 100% 0%, rgba(255,172,42,0.22), transparent 55%)' }} />
-          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 16 }}>
-            <img src="/racco-seal.jpg" alt="NACC seal" style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover', boxShadow: 'var(--shadow-md)', flex: 'none' }} />
-            <div>
-              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, lineHeight: 1.1 }}>National Authority for Child Care</div>
-              <div style={{ fontSize: 12, opacity: 0.85, fontWeight: 600, letterSpacing: '0.02em' }}>NACC – Regional Alternative Childcare Office 1</div>
-            </div>
-          </div>
-          <div className="racco-login-tagline" style={{ position: 'relative' }}>
-            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 30, lineHeight: 1.1 }}>
-              In The Best Interests<br />of the Child
-            </div>
-            <p style={{ marginTop: 12, fontSize: 14, opacity: 0.85, lineHeight: 1.6, maxWidth: 320 }}>
-              Behavioral Assessment &amp; Counseling Support System
-            </p>
-          </div>
-        </div>
-
-        {/* Form panel */}
-        <div style={{ padding: '40px 38px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 800, color: 'var(--text-strong)' }}>{heading}</h1>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>{subheading}</p>
-
-          {view === 'login' && (
-            <div style={{ marginTop: 22, display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {error && <Alert tone="danger" icon={<Icon name="alert-triangle" size={18} />}>{error}</Alert>}
-
-              {/* Google first: it is the only route for staff and
-                  psychologists, and Google's own guidance asks that the button
-                  be at least as prominent as other sign-in options. Renders
-                  nothing at all when the server has no client configured, so
-                  this whole block disappears rather than leaving a stray
-                  divider above empty space. */}
-              <GoogleSignInButton onCredential={(c) => submitGoogle(c)} disabled={busy} />
-
-              <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <FormField label="Username">
-                  <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@racco1.gov.ph" leading={<Icon name="user" size={16} />} required />
-                </FormField>
-                <FormField label="Password">
-                  <Input
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value.replace(/\s/g, ''))}
-                    placeholder="••••••••"
-                    leading={<Icon name="lock" size={16} />}
-                    trailing={(
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword((visible) => !visible)}
-                        title={showPassword ? 'Hide password' : 'Show password'}
-                        aria-label={showPassword ? 'Hide password' : 'Show password'}
-                        style={{ display: 'inline-flex', alignItems: 'center', padding: 2, border: 'none', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
-                      >
-                        <Icon name={showPassword ? 'eye-off' : 'eye'} size={17} />
-                      </button>
-                    )}
-                    required
-                  />
-                </FormField>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: -6 }}>
-                  <button type="button" onClick={() => { setError(''); setView('help'); }} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: 12.5, color: 'var(--blue-600)' }}>Forgot password?</button>
-                </div>
-                <Button type="submit" variant="primary" size="lg" fullWidth disabled={busy} iconRight={busy ? null : <Icon name="arrow-right" size={18} />}>
-                  {busy ? 'Logging in…' : 'Log In'}
-                </Button>
-              </form>
-            </div>
-          )}
-
-          {view === 'help' && (
-            <div style={{ marginTop: 22, display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <Alert tone="info" icon={<Icon name="info" size={18} />}>
-                There is no self-service reset. Ask your administrator for a temporary
-                password, log in with it, and you will be asked to set a new password
-                of your own before continuing.
-              </Alert>
-              <Button type="button" variant="secondary" size="lg" fullWidth onClick={() => setView('login')}>← Back to log in</Button>
-            </div>
-          )}
-
-          {/* One message, and nothing to click but the way back. A waiting
-              screen that offers admin-facing instructions as its only link is
-              a documented trap: the person waiting clicks it, lands somewhere
-              meant for someone else, and concludes the system is broken. */}
-          {view === 'pending' && (
-            <div style={{ marginTop: 22, display: 'flex', flexDirection: 'column', gap: 18 }}>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 12, padding: '26px 20px', background: 'var(--blue-50)', border: '1px solid var(--blue-100)', borderRadius: 'var(--radius-lg)' }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 52, height: 52, borderRadius: '50%', background: 'var(--surface)', color: 'var(--blue-600)' }}>
-                  <Icon name="hourglass" size={24} />
-                </span>
-                <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 17, color: 'var(--text-strong)' }}>
-                  Waiting for approval
-                </div>
-                <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: 'var(--text-body)', maxWidth: 320 }}>
-                  Your request has been sent to the RACCO I administrator. Once
-                  they approve it and set your role, sign in with the same
-                  Google account and you will go straight in.
-                </p>
+    <>
+      <AuthLayout title={heading} heading={heading} subheading={subheading} footer={footer}>
+        {view === 'login' && (
+          <div className="racco-auth-stack"
+               style={{ marginTop: 'clamp(12px, 2vh, 22px)', display: 'flex', flexDirection: 'column' }}>
+            {error && (
+              <div role="alert" aria-live="assertive">
+                <Alert tone="danger" icon={<Icon name="alert-triangle" size={18} />}>{error}</Alert>
               </div>
-              <Button type="button" variant="secondary" size="lg" fullWidth onClick={() => { setCredential(null); setView('login'); }}>
-                ← Back to sign in
+            )}
+
+            {/* Google first: it is the only route for staff and
+                psychologists, and Google's own guidance asks that the button
+                be at least as prominent as other sign-in options. Renders
+                nothing at all when the server has no client configured, so
+                this whole block disappears rather than leaving a stray
+                divider above empty space. */}
+            <GoogleSignInButton onCredential={(c) => submitGoogle(c)} disabled={busy} />
+
+            <form onSubmit={submit} className="racco-auth-stack"
+                  style={{ display: 'flex', flexDirection: 'column' }}>
+              <FormField label="Username">
+                <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                       placeholder="you@racco1.gov.ph" leading={<Icon name="user" size={16} />}
+                       autoComplete="username" required />
+              </FormField>
+              {/* Caps Lock is the commonest cause of a password that
+                  "stopped working", and a masked field hides the evidence.
+                  The handlers sit on this wrapper rather than on <Input>:
+                  Input spreads its extra props AFTER its own onBlur, so an
+                  onBlur passed in would replace the one that clears the focus
+                  ring and leave every field lit up. keyup and focusout both
+                  bubble, so the wrapper sees them either way. */}
+              <div onKeyUp={(e) => setCapsLock(e.getModifierState?.('CapsLock') || false)}
+                   onBlur={() => setCapsLock(false)}>
+              <FormField label="Password">
+                <Input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value.replace(/\s/g, ''))}
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                  leading={<Icon name="lock" size={16} />}
+                  trailing={(
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((visible) => !visible)}
+                      title={showPassword ? 'Hide password' : 'Show password'}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      style={{ display: 'inline-flex', alignItems: 'center', padding: 2, border: 'none', background: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+                    >
+                      <Icon name={showPassword ? 'eye-off' : 'eye'} size={17} />
+                    </button>
+                  )}
+                  required
+                />
+              </FormField>
+              {capsLock && (
+                <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--warning-700)' }}>
+                  <Icon name="arrow-big-up" size={15} /> Caps Lock is on.
+                </div>
+              )}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: -6 }}>
+                <button type="button" onClick={() => { setError(''); setView('help'); }} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: 12.5, color: 'var(--blue-600)' }}>Forgot password?</button>
+              </div>
+              <Button type="submit" variant="primary" size="lg" fullWidth
+                      style={{ height: 'clamp(42px, 5.8vh, 50px)' }}
+                      disabled={busy} iconRight={busy ? null : <Icon name="arrow-right" size={18} />}>
+                {busy ? 'Logging in…' : 'Log In'}
               </Button>
+            </form>
+          </div>
+        )}
+
+        {view === 'help' && (
+          <div className="racco-auth-stack"
+               style={{ marginTop: 'clamp(12px, 2vh, 22px)', display: 'flex', flexDirection: 'column' }}>
+            <Alert tone="info" icon={<Icon name="info" size={18} />}>
+              There is no self-service reset. Ask your administrator for a temporary
+              password, log in with it, and you will be asked to set a new password
+              of your own before continuing.
+            </Alert>
+            <Button type="button" variant="secondary" size="lg" fullWidth
+                    style={{ height: 'clamp(42px, 5.8vh, 50px)' }}
+                    onClick={() => setView('login')}>← Back to log in</Button>
+          </div>
+        )}
+
+        {/* One message, and nothing to click but the way back. A waiting
+            screen that offers admin-facing instructions as its only link is
+            a documented trap: the person waiting clicks it, lands somewhere
+            meant for someone else, and concludes the system is broken. */}
+        {view === 'pending' && (
+          <div className="racco-auth-stack"
+               style={{ marginTop: 'clamp(12px, 2vh, 22px)', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 12, padding: 'clamp(16px, 3vh, 26px) 20px', background: 'var(--blue-50)', border: '1px solid var(--blue-100)', borderRadius: 'var(--radius-lg)' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 'clamp(42px, 5.6vh, 52px)', height: 'clamp(42px, 5.6vh, 52px)', flex: 'none', borderRadius: '50%', background: 'var(--surface)', color: 'var(--blue-600)' }}>
+                <Icon name="hourglass" size={24} />
+              </span>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 17, color: 'var(--text-strong)' }}>
+                Waiting for approval
+              </div>
+              <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: 'var(--text-body)', maxWidth: 320 }}>
+                Your request has been sent to the RACCO I administrator. Once
+                they approve it and set your role, sign in with the same
+                Google account and you will go straight in.
+              </p>
             </div>
-          )}
-        </div>
-      </div>
+            <Button type="button" variant="secondary" size="lg" fullWidth
+                    style={{ height: 'clamp(42px, 5.8vh, 50px)' }}
+                    onClick={() => { setCredential(null); setView('login'); }}>
+              ← Back to sign in
+            </Button>
+          </div>
+        )}
+      </AuthLayout>
 
       {/* Asked once, on a first sign-up. Why before what: people answer a
           question better when they know what it is for, and this one needs to
-          be visibly a request rather than a self-service switch. */}
+          be visibly a request rather than a self-service switch. Renders
+          through a portal, so it does not matter that it sits outside the
+          card. */}
       {view === 'role' && (
         <Modal
           open
@@ -266,6 +291,6 @@ export default function Login() {
           </Alert>
         </Modal>
       )}
-    </div>
+    </>
   );
 }

@@ -10,6 +10,7 @@ import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
 import AssistantPanel from './components/AssistantPanel';
 import Login from './pages/Login';
+import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
 import Children from './pages/Children';
 import Report from './pages/Report';
@@ -49,6 +50,9 @@ export default function App() {
         <BrowserRouter>
           <Routes>
           <Route path="/login" element={<Login />} />
+          {/* Open, like /login: someone without an account has to be able
+              to reach it. It creates a request, never access. */}
+          <Route path="/signup" element={<Signup />} />
           {/* Public, token-gated child opinionnaire (opened via QR code). */}
           <Route path="/survey/:token" element={<Survey />} />
           <Route path="/" element={<ProtectedRoute><Shell><Dashboard /></Shell></ProtectedRoute>} />
