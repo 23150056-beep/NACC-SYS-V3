@@ -1,4 +1,6 @@
+import io
 import urllib.error
+from unittest import mock
 from unittest.mock import patch
 
 from django.test import SimpleTestCase, TestCase, override_settings
@@ -140,3 +142,33 @@ class AssignmentEmailTriggerTest(APITestCase):
                                  {"medical_notes": "Updated."}, format="json")
         self.assertEqual(resp.status_code, 200, resp.data)
         mock_send.assert_not_called()
+
+
+@override_settings(BREVO_API_KEY="test-key")
+class BrevoRejectionIsLoggedWithItsReasonTest(SimpleTestCase):
+    """Brevo says WHY in the response body. A traceback does not carry it, so
+    an unverified sender and a bad key both read as "HTTP Error 400" — and the
+    only honest answer to "why did no email arrive" becomes a guess."""
+
+    def _failing_post(self, code, body):
+        err = urllib.error.HTTPError(
+            "https://api.brevo.com/v3/smtp/email", code, "Bad Request", {},
+            io.BytesIO(body.encode()))
+        with mock.patch("children.notifications.urllib.request.urlopen",
+                        side_effect=err):
+            with self.assertLogs("children.notifications", level="ERROR") as cap:
+                self.assertFalse(_post({}, "temporary password email"))
+        return "\n".join(cap.output)
+
+    def test_an_unverified_sender_says_so(self):
+        logged = self._failing_post(
+            400, '{"code":"invalid_parameter","message":"Sender email is not valid"}')
+        self.assertIn("Sender email is not valid", logged)
+        self.assertIn("400", logged)
+        self.assertIn("temporary password email", logged)
+
+    def test_a_bad_key_says_so(self):
+        logged = self._failing_post(
+            401, '{"code":"unauthorized","message":"Key not found"}')
+        self.assertIn("Key not found", logged)
+        self.assertIn("401", logged)

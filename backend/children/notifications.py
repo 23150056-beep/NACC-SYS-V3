@@ -49,8 +49,20 @@ def _post(payload, description):
     try:
         with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:
             return response.status in (200, 201, 202)
+    except urllib.error.HTTPError as exc:
+        # Brevo says WHY in the response body, and a traceback does not carry
+        # it: a rejected sender and a bad key both surface as "HTTP Error 400"
+        # with nothing to tell them apart. Read the body and log it, or the
+        # only honest answer to "why did no email arrive" is a guess.
+        try:
+            detail = exc.read().decode("utf-8", "replace")[:400]
+        except Exception:                                        # noqa: BLE001
+            detail = "(no response body)"
+        logger.error("Brevo %s failed: HTTP %s — %s",
+                     description, exc.code, detail)
+        return False
     except urllib.error.URLError:
-        logger.exception("Brevo %s failed", description)
+        logger.exception("Brevo %s failed: could not reach Brevo", description)
         return False
     except Exception:
         logger.exception("Unexpected error sending Brevo %s", description)

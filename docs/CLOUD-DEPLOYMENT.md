@@ -202,6 +202,8 @@ reproduce a deployment problem.
 The email carries the **case number only** — see
 [§6](#6-data-residency-and-ra-10173) before changing what it contains.
 
+Setting these up end to end is [§9a](#9a-transactional-mail-brevo-setup).
+
 ---
 
 ## 5. Uploaded files: why S3 is not optional
@@ -649,6 +651,107 @@ address change can neither lock them out nor hand their session to anyone else.
 
 The first and third produce an identical message on purpose, so an outsider
 cannot use the login page to discover which addresses belong to agency staff.
+
+---
+
+## 9a. Transactional mail (Brevo) setup
+
+What this switches on: when an administrator creates an account or issues a
+temporary password, the **person whose account it is** receives that password
+by email. It goes to `user.email` — not to the administrator — so it only ever
+reaches an account whose address is a real, reachable mailbox.
+
+### Step 1 — Verify a sender in Brevo. Do this first.
+
+This is the step that silently breaks everything else. Brevo refuses to send
+from an address it has not verified, and the refusal never reaches the screen.
+
+1. <https://app.brevo.com> → **Senders, Domains & Dedicated IPs** → **Senders**
+2. **Add a sender** → the address the mail should come *from*, e.g. the
+   agency's Gmail.
+3. Brevo emails that address a confirmation link. **Open it and click.**
+4. The sender must show as verified before continuing.
+
+Whatever you verify here is what goes in `BREVO_SENDER_EMAIL` in step 3. If
+they do not match, every send is rejected.
+
+### Step 2 — Create an API key
+
+**SMTP & API** → **API Keys** → **Generate a new API key**. Copy it now; Brevo
+shows it once.
+
+### Step 3 — Set three variables on Render
+
+Render → the API service → **Environment** → **Add Environment Variable**:
+
+| Key | Value |
+|---|---|
+| `BREVO_API_KEY` | the key from step 2 |
+| `BREVO_SENDER_EMAIL` | the **verified** address from step 1 |
+| `BREVO_SENDER_NAME` | e.g. `NACC RACCO 1` — the display name |
+
+Set all three. Leaving `BREVO_SENDER_EMAIL` out means the code falls back to
+`racco1nacc@gmail.com`, and unless that exact address is verified in *this*
+Brevo account, nothing will ever send.
+
+The demo is `nacc-v3-demo-api`; live is `nacc-v3-api`. They are separate
+services with separate environments — setting one does not set the other.
+
+**Save**, and wait for the redeploy to finish.
+
+### Step 4 — Test with an address you can actually open
+
+Sign in as an administrator → **User Management** → create a user whose email
+is a real inbox you control, or issue a temporary password to one. Gmail
+plus-addressing (`you+naccdemo@gmail.com`) works and keeps the test account
+separate from a real one.
+
+Check **Spam** and **Promotions** as well. A brand-new sender often lands
+there on the first message.
+
+### Step 5 — When nothing arrives
+
+The screen cannot tell you why: the send runs on a background thread after the
+response is returned, and its result is deliberately not waited for, so the
+panel says "Queued for delivery" either way. Three places have the answer.
+
+**The API's own log** — Render → the service → **Logs**, search:
+
+```
+Brevo temporary password email failed
+```
+
+The line carries Brevo's HTTP code and its response body, which names the
+cause outright.
+
+**Brevo's log** — **Transactional** → **Logs**, search the recipient address.
+Absent means Brevo never accepted it. Present but blocked or bounced names the
+reason.
+
+**Ask Brevo directly**, which answers in one line:
+
+```
+curl -X POST https://api.brevo.com/v3/smtp/email \
+  -H "api-key: YOUR_KEY" -H "content-type: application/json" \
+  -d "{\"sender\":{\"email\":\"YOUR_VERIFIED_SENDER\"},\"to\":[{\"email\":\"YOU@gmail.com\"}],\"subject\":\"test\",\"htmlContent\":\"<p>test</p>\"}"
+```
+
+| Response | Cause | Fix |
+|---|---|---|
+| `Sender email is not valid` | the sender is not verified | redo step 1, or point `BREVO_SENDER_EMAIL` at one that is |
+| `Key not found` / `unauthorized` | wrong or revoked key | new key, step 2 |
+| `{"messageId":"..."}` | Brevo accepted it | not a configuration problem — check spam, then Brevo's log for the delivery result |
+
+### Worth knowing
+
+- **Free Brevo allows 300 emails a day.** Past that, sends are refused.
+- **Nothing else breaks when mail is off.** Accounts are still created and
+  passwords still issued — the screen shows the password once, and an
+  administrator hands it over. Mail is a convenience, never the only route.
+- **Brevo is a processor outside the agency's agreements** — see
+  [§6](#6-data-residency-and-ra-10173). That is why the assignment email
+  carries a case number and no child's name, and why anything added to these
+  messages needs the same consideration.
 
 ---
 
