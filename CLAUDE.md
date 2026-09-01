@@ -69,6 +69,35 @@ of it, and grep the bundle for a string only the new build contains.
 touched, and that push is what deploys it. Pushing there needs asking first, in
 so many words.
 
+### When he does say to push live
+
+**A plain `git push origin` is wrong, and will be refused.** The two lineages
+have diverged permanently and on purpose: `render.yaml` here names the demo
+services and points at a Neon branch and an empty R2 bucket, while the live
+repo's names `nacc-v3-api`/`nacc-v3-web` and points at production. Forcing this
+file onto live is how the live deployment lost its file storage once already —
+the repair is commit `5d9342a`, "Restore the live Render blueprint that the
+demo's file overwrote".
+
+There is a local branch `live-push` tracking `origin/cloud-setup`. Merge into
+it rather than pushing across:
+
+```
+git checkout live-push && git pull
+git merge cloud-setup                 # keeps live's render.yaml on its own
+git rev-parse HEAD:render.yaml        # must equal origin/cloud-setup:render.yaml
+git diff --name-only origin/cloud-setup HEAD | grep -E 'render.yaml|Dockerfile|entrypoint|settings.py|\.github/'
+git push origin live-push:cloud-setup
+git checkout cloud-setup              # never leave the demo branch behind
+```
+
+That grep must print nothing. If it prints `render.yaml`, stop — the merge has
+picked up the demo blueprint and pushing it breaks live storage.
+
+Check for migrations too (`manage.py makemigrations --check --dry-run`): live
+runs against the Neon **production** branch, and `entrypoint.sh` migrates on
+every deploy, so a migration that arrives this way lands on real data.
+
 The branch is still called `cloud-setup` locally and lands as `main` on the new
 repo. The name is history, not intent.
 
