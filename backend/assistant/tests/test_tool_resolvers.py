@@ -747,6 +747,16 @@ class UnassignedChildrenResolverTest(ResolverTestBase):
         out = self._resolve(self.psy, "list_unassigned_children", {})
         self.assertEqual(out["items"], [])
 
+    def test_it_says_what_none_means_for_this_question(self):
+        # Seen in the browser: with nobody unassigned, the panel printed the
+        # concern search's "No open concern matches that wording" — a sentence
+        # about a different question. The tool carries its own.
+        self.orphaned.delete()
+        out = self._resolve(self.admin, "list_unassigned_children", {})
+        self.assertEqual(out["items"], [])
+        self.assertIn("psychologist", out["empty"].lower())
+        self.assertNotIn("concern", out["empty"].lower())
+
     def test_a_terminated_child_is_not_chased(self):
         self.orphaned.status = "terminated"
         self.orphaned.save()

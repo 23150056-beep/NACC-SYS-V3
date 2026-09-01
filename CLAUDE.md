@@ -169,6 +169,39 @@ point; it is what a divergence detector would be built to find.
 Refuses to run against a hosted database or with DEBUG=False, and the guard
 runs before anything opens a connection.
 
+## Getting an account
+
+Two doors, one queue. Since 2 Sep 2026 a sign-up form lives at `/signup`
+alongside the Google button; both create a **PENDING** row and neither grants
+anything. `AccessRequests.jsx` is the screen where a human decides, and it is
+the only access control the system has.
+
+- **`User.save()` derives `is_active` from `status`.** That one line is what
+  makes an internet-facing sign-up form safe: a PENDING account cannot
+  authenticate even with the correct password, because Django's auth backend
+  and SimpleJWT both check `is_active`. Never set `is_active` directly, and
+  never "fix" a stuck request by flipping it.
+- **The stated role is a claim, never a grant.** `requested_role` exists to
+  pre-fill the approver's dropdown, and `approve/` deliberately has no
+  fallback to it — defaulting to the claim would turn every request that
+  omitted the field into self-assignment. Administrator is refused at every
+  layer: the serializer, the approve endpoint, and the two cards on the page.
+- **One refusal message for every address already spoken for** — taken,
+  archived, declined. Different messages would turn an open form into a way to
+  enumerate agency staff, which is the same reasoning behind the Google path's
+  three-in-one refusal. A test asserts the active-account and archived-account
+  refusals come back identical.
+- **Both doors share one abuse budget** (`accounts/signup_limit.py`): a per-IP
+  cache counter plus a durable ceiling on outstanding PENDING rows. Two doors
+  with separate budgets just means the cheaper one is what an abuser uses.
+- **Declining archives rather than deletes.** An archived address cannot
+  register again, so a refused applicant cannot loop until a distracted
+  administrator approves them.
+- **The form verifies nothing.** No confirmation mail is sent, so a typed
+  address is only what someone typed — unlike a Google one, which Google
+  verified. The queue says which door each request came through for exactly
+  that reason.
+
 ## The assistant app
 
 Restored 26 Aug 2026 — pre-session briefs, document summaries, remark polish, a
@@ -331,7 +364,7 @@ Built 27 Aug 2026. Public, free, fictional children, real accounts. Runbook in
 Both of these, every time:
 
 ```
-cd backend && .venv/Scripts/python.exe manage.py test   # 724 tests, ~13 min
+cd backend && .venv/Scripts/python.exe manage.py test   # 855 tests, ~16 min
 cd frontend && npm run lint && npm run build
 ```
 

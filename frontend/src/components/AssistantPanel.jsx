@@ -147,7 +147,11 @@ function Answer({ result }) {
     // use the same words, and a dead end tells the user nothing.
     return (
       <>
-        <Line muted>No open concern matches that wording.</Line>
+        {/* The tool says what "none" means for the question that was asked.
+            This branch renders more than one tool's list, and the concern
+            search's sentence answered "which children have no psychologist?"
+            with "no open concern matches that wording". */}
+        <Line muted>{result.empty || 'No open concern matches that wording.'}</Line>
         {result.available?.length > 0 && (
           <div style={{ marginTop: 6 }}>
             <Line muted>Concerns recorded in your caseload:</Line>

@@ -28,8 +28,14 @@ function loadGis() {
  * agency running without Google sees the plain password form and no dead
  * button. The client ID comes from the API rather than a build-time variable
  * so switching this on doesn't require rebuilding the frontend.
+ *
+ * The divider below the button belongs to this component (see the comment at
+ * the bottom), so `dividerLabel` is how a page names the alternative it is
+ * offering: signing in with a password, or requesting access with an email.
  */
-export default function GoogleSignInButton({ onCredential, onError, disabled = false }) {
+export default function GoogleSignInButton({
+  onCredential, disabled = false, dividerLabel = 'or use your password',
+}) {
   const holder = useRef(null);
   const [state, setState] = useState('loading'); // loading | ready | off | failed
 
@@ -118,7 +124,7 @@ export default function GoogleSignInButton({ onCredential, onError, disabled = f
           three administrators know to use the form. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%' }}>
         <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-        <span style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>or use your password</span>
+        <span style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{dividerLabel}</span>
         <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
       </div>
     </div>

@@ -1,9 +1,12 @@
-"""Abuse control for the open Google sign-up path.
+"""Abuse control for the two open sign-up paths.
 
-POST /api/auth/google/ is the only endpoint in this system that both accepts
-anonymous traffic and writes a row. Sign-up is open to any Gmail address —
-RACCO I staff use personal accounts, so there is no domain allowlist doing any
-work — which means anyone on the internet can create approval requests.
+POST /api/auth/google/ and POST /api/auth/signup/ are the only endpoints in
+this system that both accept anonymous traffic and write a row. Neither has a
+domain allowlist doing any work — RACCO I staff use personal Google accounts —
+which means anyone on the internet can create approval requests.
+
+Both paths share these limits, and they must: two doors with one budget
+between them, or the cheaper door is simply the one an abuser uses.
 
 The harm is not storage. It is that an administrator wading through a hundred
 plausible-looking fake requests eventually approves one by mistake, and that

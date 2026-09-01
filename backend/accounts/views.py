@@ -1,3 +1,4 @@
+import logging
 import secrets
 import string
 
@@ -15,16 +16,20 @@ from accounts.google_auth import (
 )
 from accounts.lockout import client_ip, clear_failures, is_locked, register_failure
 from accounts.models import Role
+from accounts import signup_limit
 from accounts.permissions import IsAdministrator, IsAdminOrStaff
 from children.models import Child
 from accounts.serializers import (
     LoginSerializer, UserSerializer, UserWriteSerializer, RoleSerializer,
     ChangePasswordSerializer,
+    SignupSerializer,
 )
 from activity.models import ActivityLog
 from activity.serializers import ActivityLogSerializer
 from activity.services import log_activity
 from children.notifications import send_temporary_password_notification
+
+logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
@@ -133,6 +138,86 @@ class GoogleLoginView(generics.GenericAPIView):
             "access": str(refresh.access_token),
             "user": UserSerializer(user).data,
         }, status=status.HTTP_200_OK)
+
+
+class SignupView(generics.GenericAPIView):
+    """Open sign-up: creates a request, never an account with access.
+
+    The counterpart to the Google path in accounts.google_auth, for people
+    without a Google address. Same outcome, same protections: a PENDING row
+    with no role, the stated role recorded as a claim, the same per-IP and
+    queue limits, and the same refusal to say whether an address already
+    exists.
+
+    Deliberately returns 202 and no tokens. Registering is not being let in —
+    an administrator decides, and until then the account cannot authenticate
+    because is_active follows status.
+    """
+
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+    serializer_class = SignupSerializer
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # Checked only once the payload is known good, and only on the path
+        # that creates a row — the same reasoning as the Google flow, where a
+        # returning applicant must never be throttled out of their own status.
+        ip = client_ip(request)
+        if signup_limit.ip_is_throttled(ip) or signup_limit.queue_is_full():
+            logger.warning("Refused access request from %s (throttled)",
+                           serializer.validated_data.get("email"))
+            return Response(
+                {"detail": "Too many access requests right now. Try again "
+                           "later, or ask an administrator to create the "
+                           "account for you."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        user = serializer.save()
+        signup_limit.register_attempt(ip)
+        log_activity(
+            None, ActivityLog.CREATED, ActivityLog.SECURITY,
+            entity_type="User",
+            entity_label=(f"{user.fullname or user.email} — access request "
+                          f"(asked for: "
+                          f"{user.requested_role.role_name if user.requested_role else 'none stated'})"))
+        return Response(
+            {"detail": "Your request has been sent. An administrator will "
+                       "review it and you will be able to sign in once it is "
+                       "approved.",
+             "state": "pending_approval"},
+            status=status.HTTP_202_ACCEPTED)
+
+
+class EmailConfigTestView(generics.GenericAPIView):
+    """Send a test email and report exactly what Brevo said.
+
+    Every other send here is fire-and-forget, so a rejected message is
+    invisible unless someone reads the server log — and on Render's free plan
+    an administrator cannot. Diagnosing "no email arrived" therefore meant
+    guessing at settings one at a time. This turns that into one button and a
+    sentence.
+
+    Administrator only, and it sends to the caller's own address: it must not
+    become a way to send mail to anyone from inside the app.
+    """
+
+    permission_classes = [IsAdministrator]
+    serializer_class = None
+
+    def post(self, request):
+        from children.notifications import send_test_email
+
+        ok, detail = send_test_email(getattr(request.user, "email", ""))
+        return Response({
+            "ok": ok,
+            "detail": detail,
+            "sender": settings.BREVO_SENDER_EMAIL,
+            "recipient": getattr(request.user, "email", ""),
+            "key_configured": bool(settings.BREVO_API_KEY),
+        })
 
 
 class GoogleAuthConfigView(generics.GenericAPIView):
@@ -328,7 +413,11 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
-        """Grant a pending Google sign-up its role and let it in.
+        """Grant a pending sign-up its role and let it in.
+
+        Both doors land here: the Google flow in accounts.google_auth and the
+        password form at auth/signup/. Nothing below reads how they arrived,
+        because the decision is the same either way.
 
         The role must be supplied explicitly. There is deliberately NO fallback
         to `requested_role`: the applicant's claim is a hint for the dropdown,
