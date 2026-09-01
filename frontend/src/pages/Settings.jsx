@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Badge, Input, FormField, Switch, Button, Alert, PAGE } from '../ui';
+import { Card, Badge, Input, FormField, Switch, Button, Alert, Icon, PAGE } from '../ui';
 import { useToast } from '../context/ToastContext';
 import { getAssistantSettings, saveAssistantSettings, getAssistantMetrics, checkAssistant } from '../api/assistant';
+import { testEmailDelivery } from '../api/email';
 
 const FEATURE_LABELS = {
   brief: 'Pre-session briefs',
@@ -26,6 +27,8 @@ export default function Settings() {
   // pressed. They never live on cfg, so an unrelated switch's save (which
   // sends the whole cfg as its payload) can never ship a half-typed value.
   const [draft, setDraft] = useState({ ollama_url: '', model_name: '' });
+  const [mailTesting, setMailTesting] = useState(false);
+  const [mailResult, setMailResult] = useState(null);   // { ok, detail, sender, recipient }
 
   useEffect(() => {
     getAssistantSettings().then((data) => {
@@ -65,6 +68,54 @@ export default function Settings() {
               <Input value="https://api.nacc.gov.ph/v1/sync" disabled trailing={<Badge tone="success" size="sm">PROD</Badge>} />
             </FormField>
             <Switch checked={sync} onChange={setSync} disabled label="Auto-sync signed reports to NACC" />
+          </div>
+        </Card>
+
+        {/* Email is the one feature whose failures are invisible: the send
+            happens on a background thread after the response, so a rejected
+            message looks exactly like a delivered one. Diagnosing it meant
+            reading server logs, which Render's free plan does not give an
+            administrator. This asks Brevo and prints the answer. */}
+        <Card eyebrow="Notifications" title="Email delivery" padding="22px">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ fontSize: 13.5, lineHeight: 1.6, color: 'var(--text-muted)' }}>
+              Temporary passwords are emailed to the person whose account it is.
+              This sends a test message to your own address and reports exactly
+              what the mail service replied.
+            </div>
+            <div>
+              <Button variant="secondary" disabled={mailTesting}
+                      iconLeft={<Icon name="mail" size={16} />}
+                      onClick={async () => {
+                        setMailTesting(true);
+                        setMailResult(null);
+                        try {
+                          setMailResult(await testEmailDelivery());
+                        } catch (err) {
+                          setMailResult({
+                            ok: false,
+                            detail: err.response?.data?.detail
+                              || 'The test could not be run.',
+                          });
+                        } finally {
+                          setMailTesting(false);
+                        }
+                      }}>
+                {mailTesting ? 'Sending…' : 'Send a test email'}
+              </Button>
+            </div>
+            {mailResult && (
+              <Alert tone={mailResult.ok ? 'success' : 'danger'}
+                     icon={<Icon name={mailResult.ok ? 'mail-check' : 'mail-warning'} size={18} />}>
+                <div style={{ lineHeight: 1.6 }}>{mailResult.detail}</div>
+                {mailResult.sender && (
+                  <div style={{ fontSize: 12, marginTop: 6, color: 'var(--text-muted)' }}>
+                    Sending from <strong>{mailResult.sender}</strong>
+                    {mailResult.recipient ? <> to <strong>{mailResult.recipient}</strong></> : null}
+                  </div>
+                )}
+              </Alert>
+            )}
           </div>
         </Card>
 

@@ -148,6 +148,75 @@ _MUTED = "#667085"
 _BORDER = "#e4e7ec"
 
 
+def send_test_email(recipient):
+    """Send a test message and RETURN what Brevo said. (ok, detail).
+
+    Synchronous and result-returning, unlike every other send in this module.
+    The others are fire-and-forget because a slow Brevo must never hold a case
+    record open — but that also means a rejected send is invisible unless
+    somebody reads the server log, and reading the log is not something an
+    administrator can do on Render's free plan.
+
+    So this one is for a person pressing a button and waiting for an answer,
+    and it reports the answer verbatim: which sender it used, and exactly what
+    Brevo replied.
+    """
+    sender = settings.BREVO_SENDER_EMAIL
+    if not settings.BREVO_API_KEY:
+        return False, ("No API key is set on the server (BREVO_API_KEY). "
+                       "Emails are switched off; passwords must be handed "
+                       "over in person.")
+    if not recipient:
+        return False, "That account has no email address."
+
+    payload = {
+        "sender": {"name": settings.BREVO_SENDER_NAME, "email": sender},
+        "to": [{"email": recipient}],
+        "subject": "NACC SYS email test",
+        "htmlContent": ("<p>This is a test from NACC SYS. If you are reading "
+                        "it, temporary password emails will arrive.</p>"),
+        "textContent": ("This is a test from NACC SYS. If you are reading it, "
+                        "temporary password emails will arrive."),
+    }
+    request = urllib.request.Request(
+        BREVO_ENDPOINT,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "accept": "application/json",
+            "api-key": settings.BREVO_API_KEY,
+            "content-type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:
+            if response.status in (200, 201, 202):
+                return True, (f"Brevo accepted a test message from {sender} "
+                              f"to {recipient}. Check that inbox, including "
+                              f"spam.")
+            return False, f"Brevo replied HTTP {response.status}."
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = exc.read().decode("utf-8", "replace")[:300]
+        except Exception:                                        # noqa: BLE001
+            detail = "(no response body)"
+        # The two that actually happen, named in words rather than codes.
+        if exc.code == 401:
+            hint = ("The API key on the server is not one Brevo recognises. "
+                    "Check BREVO_API_KEY.")
+        elif exc.code == 400 and "sender" in detail.lower():
+            hint = (f"Brevo will not send from {sender}. Verify that exact "
+                    f"address in Brevo, or change BREVO_SENDER_EMAIL to one "
+                    f"that is verified.")
+        else:
+            hint = "See the message from Brevo below."
+        logger.error("Brevo test email failed: HTTP %s — %s", exc.code, detail)
+        return False, f"{hint}  (Brevo said: HTTP {exc.code} — {detail})"
+    except urllib.error.URLError as exc:
+        logger.exception("Brevo test email could not reach Brevo")
+        return False, f"Could not reach Brevo: {exc}"
+
+
 def build_temporary_password_payload(user, temporary_password):
     """The message itself, split out so a test can read what leaves the
     building without standing up an HTTP server.

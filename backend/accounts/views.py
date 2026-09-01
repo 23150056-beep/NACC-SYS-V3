@@ -135,6 +135,35 @@ class GoogleLoginView(generics.GenericAPIView):
         }, status=status.HTTP_200_OK)
 
 
+class EmailConfigTestView(generics.GenericAPIView):
+    """Send a test email and report exactly what Brevo said.
+
+    Every other send here is fire-and-forget, so a rejected message is
+    invisible unless someone reads the server log — and on Render's free plan
+    an administrator cannot. Diagnosing "no email arrived" therefore meant
+    guessing at settings one at a time. This turns that into one button and a
+    sentence.
+
+    Administrator only, and it sends to the caller's own address: it must not
+    become a way to send mail to anyone from inside the app.
+    """
+
+    permission_classes = [IsAdministrator]
+    serializer_class = None
+
+    def post(self, request):
+        from children.notifications import send_test_email
+
+        ok, detail = send_test_email(getattr(request.user, "email", ""))
+        return Response({
+            "ok": ok,
+            "detail": detail,
+            "sender": settings.BREVO_SENDER_EMAIL,
+            "recipient": getattr(request.user, "email", ""),
+            "key_configured": bool(settings.BREVO_API_KEY),
+        })
+
+
 class GoogleAuthConfigView(generics.GenericAPIView):
     """Tells the login page whether to render the Google button.
 
