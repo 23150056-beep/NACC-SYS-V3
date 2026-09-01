@@ -7,13 +7,16 @@ import {
   ConfirmDialog, RoleAccessPanel,
 } from '../ui';
 
-// People who signed up with Google and are waiting on a decision. Rendered as
-// a tab inside User Management (Users.jsx), not its own route.
+// People who asked for access and are waiting on a decision. Rendered as a
+// tab inside User Management (Users.jsx), not its own route.
 //
-// This screen is the only access control the system has. Sign-up is open to
-// any Google address, so nothing between a stranger and child case records
-// except an administrator reading a row and clicking Approve. Everything here
-// is built around making that click deliberate rather than quick.
+// Two doors lead here — the Google button and the sign-up form at /signup —
+// and this screen is the only access control standing behind either. Sign-up
+// is open to anyone on the internet, so nothing separates a stranger from
+// child case records except an administrator reading a row and clicking
+// Approve. Everything here is built around making that click deliberate
+// rather than quick, and that now includes saying which door they used: a
+// Google address was verified by Google, a typed one was verified by nobody.
 
 const DATE_FMT = { day: 'numeric', month: 'short', year: 'numeric' };
 const exactDate = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { ...DATE_FMT, hour: 'numeric', minute: '2-digit' }) : '');
@@ -27,6 +30,27 @@ const waitingFor = (iso) => {
 };
 
 const nameOf = (u) => (u.fullname || u.username || u.email || '');
+
+/* Which door, and what it is worth.
+ *
+ * Google verified the address it handed over (the flow rejects an unverified
+ * one). The sign-up form verifies nothing — no confirmation mail is sent, so
+ * the address is only what someone typed. An approver deciding whether they
+ * recognise this person should not have to guess which of the two they are
+ * looking at. */
+function DoorChip({ google }) {
+  const [label, hint, icon, color] = google
+    ? ['Google', 'Address verified by Google.', 'badge-check', 'var(--blue-600)']
+    : ['Typed in', 'Signed up with the form. Nobody has verified this address.',
+       'keyboard', 'var(--text-muted)'];
+  return (
+    <span title={hint}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 3,
+                   fontSize: 11, fontWeight: 700, color, whiteSpace: 'nowrap' }}>
+      <Icon name={icon} size={12} /> {label}
+    </span>
+  );
+}
 
 /* The claimed role, styled so it cannot be mistaken for a settled one.
  * Dashed and quiet, deliberately unlike the solid RoleBadge used everywhere
@@ -123,10 +147,10 @@ export default function AccessRequests({ onChange }) {
   return (
     <>
       <Alert tone="warning" icon={<Icon name="shield-alert" size={18} />} style={{ marginBottom: 16 }}>
-        Anyone with a Google account can send a request. Approving one is what
-        grants access to child case records, so approve only people you know
-        work here — and set the role yourself rather than trusting what they
-        typed.
+        Anyone on the internet can send a request — with a Google account or
+        the sign-up form. Approving one is what grants access to child case
+        records, so approve only people you know work here, and set the role
+        yourself rather than trusting what they typed.
       </Alert>
 
       <Card padding="0">
@@ -175,6 +199,7 @@ export default function AccessRequests({ onChange }) {
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 700, fontSize: 13.5, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nameOf(u)}</div>
                           <div className="racco-mono" style={{ fontSize: 11.5, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email}</div>
+                          <DoorChip google={!!u.google_linked} />
                         </div>
                       </div>
                     </td>
@@ -195,7 +220,7 @@ export default function AccessRequests({ onChange }) {
                       <EmptyState
                         icon={<Icon name="inbox" size={24} />}
                         title="No one is waiting"
-                        description="When a staff member or psychologist signs up with their Google account, their request appears here for you to approve."
+                        description="When a staff member or psychologist asks for access — with Google or the sign-up form — their request appears here for you to approve."
                       />
                     </td>
                   </tr>
@@ -242,7 +267,7 @@ export default function AccessRequests({ onChange }) {
           onClose={() => setConfirm(null)} onConfirm={run} busy={busy}
           tone="danger" icon={<Icon name="user-x" size={19} />}
           title={`Decline ${nameOf(confirm.user)}?`}
-          description="They will not be able to sign in, and this Google address cannot send another request. If you decline someone by mistake, an administrator can still create their account by hand."
+          description="They will not be able to sign in, and this address cannot send another request. If you decline someone by mistake, an administrator can still create their account by hand."
           confirmLabel="Decline" cancelLabel="Cancel"
         />
       )}

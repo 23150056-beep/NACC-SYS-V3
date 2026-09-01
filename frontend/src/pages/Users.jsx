@@ -20,12 +20,12 @@ const EDITABLE = ['first_name', 'middle_initial', 'last_name', 'email', 'contact
  * one place those have to be read as a single state, so derive it here and let
  * every other part of the screen (column, filter, drawer) share the answer. */
 const LIFECYCLE = {
-  requested: { label: 'Awaiting approval', dot: 'var(--blue-500)', note: 'Signed up with Google and is waiting on an administrator. Holds no role and can reach nothing until approved.' },
+  requested: { label: 'Awaiting approval', dot: 'var(--blue-500)', note: 'Asked for access and is waiting on an administrator. Holds no role and can reach nothing until approved. The “Signs in with” column says which door they came through.' },
   active: { label: 'Active', dot: 'var(--success-500)', note: 'Has signed in and set their own password.' },
   pending: { label: 'Pending first sign-in', dot: 'var(--warning-500)', note: 'Holding a temporary password — they must set their own before they reach any case data.' },
   takeover: { label: 'Takeover pending', dot: 'var(--red-500)', note: 'At this administrator’s first sign-in, every other administrator account is deactivated.' },
   deactivated: { label: 'Deactivated', dot: 'var(--ink-400)', note: 'Cannot sign in. Everything they recorded is retained.' },
-  declined: { label: 'Request declined', dot: 'var(--ink-300)', note: 'A Google sign-up an administrator refused. The account was never approved, holds no role, and this address cannot ask again.' },
+  declined: { label: 'Request declined', dot: 'var(--ink-300)', note: 'An access request an administrator refused. The account was never approved, holds no role, and this address cannot ask again.' },
 };
 
 // Two things this ordering has to get right.
@@ -35,7 +35,7 @@ const LIFECYCLE = {
 // — the one reading this screen must never give.
 //
 // And archived covers two different people. A colleague who left has a role; a
-// refused Google sign-up never got one. Filing a declined stranger under
+// refused sign-up never got one. Filing a declined stranger under
 // "Deactivated" alongside former staff misreads the directory, and over time
 // the refused ones outnumber the colleagues.
 const statusOf = (u) => (
@@ -760,7 +760,7 @@ export default function Users() {
           )}
 
           {[['first_name', 'First name'], ['middle_initial', 'Middle initial'], ['last_name', 'Last name'], ['email', 'Email'], ['contact_details', 'Contact details']].map(([k, label]) => (
-            <FormField key={k} label={label} hint={k === 'email' ? 'Also their username — and, for staff and psychologists, the Google address they sign in with.' : undefined}>
+            <FormField key={k} label={label} hint={k === 'email' ? 'Also their username. For anyone signing in with Google, it must be the Google address.' : undefined}>
               <Input value={form[k] || ''} onChange={(e) => setForm({ ...form, [k]: e.target.value })} type={k === 'email' ? 'email' : 'text'} />
             </FormField>
           ))}
