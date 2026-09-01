@@ -237,3 +237,72 @@ class LoginSerializer(TokenObtainPairSerializer):
         data["user"] = UserSerializer(self.user).data
         log_activity(self.user, ActivityLog.LOGIN, ActivityLog.SECURITY)
         return data
+
+
+class SignupSerializer(serializers.Serializer):
+    """A request to be let in — never an account that is in.
+
+    Mirrors the Google sign-up path deliberately (see accounts.google_auth):
+    a new address becomes a PENDING row with no role and no access, and an
+    administrator decides. The stated role is a claim recorded on the request,
+    never a grant.
+    """
+
+    first_name = serializers.CharField(max_length=150)
+    last_name = serializers.CharField(max_length=150)
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+    requested_role = serializers.CharField(required=False, allow_blank=True)
+
+    # The two roles a person may ask to be. Administrator is absent on
+    # purpose: that account is the agency's recovery path and is created only
+    # by another administrator, so a queue for it is not a queue but a target.
+    REQUESTABLE = (Role.PSYCHOLOGIST, Role.STAFF)
+
+    # One message for every refusal that involves an existing address —
+    # taken, archived, or otherwise spoken for. Saying which would turn this
+    # open form into a way to enumerate the agency's staff.
+    GENERIC = ("This address cannot be registered. If you already have an "
+               "account, sign in instead, or ask an administrator.")
+
+    def validate_email(self, value):
+        email = value.strip().lower()
+        if User.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError(self.GENERIC)
+        return email
+
+    def validate_requested_role(self, value):
+        if not value:
+            return ""
+        if value not in self.REQUESTABLE:
+            raise serializers.ValidationError(
+                f"Choose one of: {', '.join(self.REQUESTABLE)}.")
+        return value
+
+    def validate_password(self, value):
+        # Django's own validators, and raised the same way the change-password
+        # serializer raises them, so the two rules cannot drift apart.
+        try:
+            validate_password(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages))
+        return value
+
+    def create(self, validated):
+        role_name = validated.get("requested_role") or ""
+        user = User(
+            email=validated["email"],
+            username=validated["email"],
+            first_name=validated["first_name"].strip(),
+            last_name=validated["last_name"].strip(),
+            status=User.PENDING,          # is_active follows this in save()
+            role=None,                    # granted by an administrator, never here
+        )
+        user.set_password(validated["password"])
+        user.save()
+        if role_name:
+            role = Role.objects.filter(role_name=role_name).first()
+            if role:
+                user.requested_role = role
+                user.save(update_fields=["requested_role", "updated_at"])
+        return user

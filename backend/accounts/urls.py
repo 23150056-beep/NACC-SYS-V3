@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 from accounts.views import (
     LoginView, MeView, ChangePasswordView, UserViewSet, RoleListView, PsychologistListView,
-    GoogleLoginView, EmailConfigTestView, GoogleAuthConfigView,
+    GoogleLoginView, EmailConfigTestView, GoogleAuthConfigView, SignupView,
 )
 
 router = DefaultRouter()
@@ -11,6 +11,7 @@ router.register("users", UserViewSet, basename="user")
 
 urlpatterns = [
     path("auth/login/", LoginView.as_view(), name="login"),
+    path("auth/signup/", SignupView.as_view(), name="signup"),
     # Google Sign-In (staff and psychologists only — see accounts/google_auth.py)
     path("auth/google/", GoogleLoginView.as_view(), name="google-login"),
     path("auth/google/config/", GoogleAuthConfigView.as_view(), name="google-config"),
