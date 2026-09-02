@@ -459,7 +459,22 @@ function ConsentStep({ child, consents, templates, onLinked, onRefresh, setError
             <div style={{ flex: 1, minHeight: 0, background: 'var(--ink-50)' }}>
               {preview.type.startsWith('image/')
                 ? <img src={preview.url} alt="Consent scan" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                : <iframe title="Consent scan" src={preview.url} style={{ width: '100%', height: '100%', border: 'none' }} />}
+                : (
+                  /* sandbox with no allow-scripts. The src is a blob: URL,
+                     and a blob inherits THIS page's origin — so anything
+                     executable in it would run as the app and could read the
+                     tokens in localStorage. The server now refuses to serve a
+                     consent scan as anything but a PDF or an image, and this
+                     is the second lock: a PDF still previews without scripts.
+                     Do not add allow-scripts to make some viewer work. */
+                  <iframe
+                    title="Consent scan"
+                    src={preview.url}
+                    sandbox=""
+                    referrerPolicy="no-referrer"
+                    style={{ width: '100%', height: '100%', border: 'none' }}
+                  />
+                )}
             </div>
           </div>
         </div>

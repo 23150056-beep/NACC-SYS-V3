@@ -20,7 +20,17 @@ from clinical.models import (
     PsychologicalReport, RemarkNote, TreatmentPlan, ResultEntry, CaseReferral,
     OpinionnaireInvite, SelfReportFlag,
 )
+# The extensions a consent scan may be, and the exact type each is served
+# as. Keyed off the stored name rather than anything the browser guesses.
+_CONSENT_CONTENT_TYPES = {
+    "pdf": "application/pdf",
+    "jpg": "image/jpeg", "jpeg": "image/jpeg",
+    "png": "image/png", "webp": "image/webp",
+    "heic": "image/heic", "heif": "image/heif",
+}
+
 from clinical.serializers import (
+    ALLOWED_CONSENT_EXTENSIONS,
     InstrumentCatalogSerializer, AgencyFormTemplateSerializer,
     ConsentRecordSerializer, ClinicalInterviewRecordSerializer,
     ProblemEntrySerializer, PreAssessmentSerializer,
@@ -290,8 +300,27 @@ class ConsentRecordViewSet(_ChildScopedClinicalViewSet):
         except (FileNotFoundError, ValueError):
             return Response({"detail": "File is missing from storage."},
                             status=status.HTTP_404_NOT_FOUND)
-        return FileResponse(handle, as_attachment=False,
-                            filename=obj.scan.name.rsplit("/", 1)[-1])
+
+        # Inline is what makes the preview work, and it is also what makes an
+        # uploaded .html dangerous: the frontend renders this response in an
+        # iframe from a blob: URL, and a blob inherits the app's origin. The
+        # upload is now restricted (ConsentRecordSerializer.validate_scan), but
+        # rows predating that restriction are still in storage, so the decision
+        # is made again here on the way out rather than trusted from the way in.
+        name = obj.scan.name.rsplit("/", 1)[-1]
+        ext = (name.rsplit(".", 1)[-1] if "." in name else "").lower()
+        previewable = ext in ALLOWED_CONSENT_EXTENSIONS
+        response = FileResponse(
+            handle,
+            as_attachment=not previewable,
+            filename=name,
+            # Never let the browser pick: a guessed text/html renders, and
+            # nosniff only stops the guess when the header is already right.
+            content_type=(_CONSENT_CONTENT_TYPES.get(ext) if previewable
+                          else "application/octet-stream"),
+        )
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
 
 
 class ClinicalInterviewRecordViewSet(_ChildScopedClinicalViewSet):
