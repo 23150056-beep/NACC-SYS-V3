@@ -1,6 +1,110 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Base reset.
+ *
+ * This was three @tailwind directives. Tailwind was pulling its whole
+ * toolchain into every build to serve one utility class in the entire app
+ * (`p-6 text-gray-500`, in ProtectedRoute) — but its base layer, preflight,
+ * was doing real work that every screen assumes: no margin on paragraphs and
+ * headings, no bullets or indent on lists, buttons with no browser padding,
+ * images as blocks. So preflight stays and the toolchain goes.
+ *
+ * These rules are Tailwind preflight v3.4 (MIT), transcribed rather than
+ * generated, so they can be read and changed here like any other CSS. Nothing
+ * was dropped in the move — the rendered pages were compared pixel for pixel
+ * before and after. If a rule below turns out to be unwanted, delete it on
+ * purpose; do not assume it is vestigial.
+ */
+
+*,
+::before,
+::after {
+  box-sizing: border-box;
+  /* A border-width of 0 with a style already set is what lets `border: 1px`
+     work as a whole declaration anywhere in the app. */
+  border-width: 0;
+  border-style: solid;
+  border-color: #e5e7eb;
+}
+::before,
+::after { --tw-content: ""; }
+
+html {
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  tab-size: 4;
+  -webkit-tap-highlight-color: transparent;
+}
+body { margin: 0; line-height: inherit; }
+
+hr { height: 0; color: inherit; border-top-width: 1px; }
+abbr:where([title]) { text-decoration: underline dotted; }
+
+/* Headings take their size from the design system, never from the browser. */
+h1, h2, h3, h4, h5, h6 { font-size: inherit; font-weight: inherit; }
+a { color: inherit; text-decoration: inherit; }
+b, strong { font-weight: bolder; }
+code, kbd, samp, pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+               "Liberation Mono", "Courier New", monospace;
+  font-size: 1em;
+}
+small { font-size: 80%; }
+sub, sup { font-size: 75%; line-height: 0; position: relative; vertical-align: baseline; }
+sub { bottom: -0.25em; }
+sup { top: -0.5em; }
+
+table { text-indent: 0; border-color: inherit; border-collapse: collapse; }
+
+/* Form controls inherit the page's type instead of the browser's. */
+button, input, optgroup, select, textarea {
+  font-family: inherit;
+  font-feature-settings: inherit;
+  font-variation-settings: inherit;
+  font-size: 100%;
+  font-weight: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  margin: 0;
+  padding: 0;
+}
+button, select { text-transform: none; }
+button,
+input:where([type="button"]),
+input:where([type="reset"]),
+input:where([type="submit"]) {
+  -webkit-appearance: button;
+  background-color: transparent;
+  background-image: none;
+}
+:-moz-focusring { outline: auto; }
+:-moz-ui-invalid { box-shadow: none; }
+progress { vertical-align: baseline; }
+::-webkit-inner-spin-button, ::-webkit-outer-spin-button { height: auto; }
+[type="search"] { -webkit-appearance: textfield; outline-offset: -2px; }
+::-webkit-search-decoration { -webkit-appearance: none; }
+::-webkit-file-upload-button { -webkit-appearance: button; font: inherit; }
+summary { display: list-item; }
+
+/* No default margins anywhere — spacing is laid out, not inherited. */
+blockquote, dl, dd, h1, h2, h3, h4, h5, h6, hr, figure, p, pre { margin: 0; }
+fieldset { margin: 0; padding: 0; }
+legend { padding: 0; }
+ol, ul, menu { list-style: none; margin: 0; padding: 0; }
+dialog { padding: 0; }
+textarea { resize: vertical; }
+
+input::placeholder, textarea::placeholder { opacity: 1; color: #9ca3af; }
+button, [role="button"] { cursor: pointer; }
+:disabled { cursor: default; }
+
+/* Images as blocks: inline images sit on the text baseline and leave a gap
+   underneath that looks like a spacing bug and is not one. */
+img, svg, video, canvas, audio, iframe, embed, object {
+  display: block;
+  vertical-align: middle;
+}
+img, video { max-width: 100%; height: auto; }
+[hidden]:where(:not([hidden="until-found"])) { display: none; }
 
 /* ============================================================
    RACCO I Design System — color, type, spacing, motion tokens.

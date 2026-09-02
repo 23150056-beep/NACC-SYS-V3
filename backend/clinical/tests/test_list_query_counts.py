@@ -89,6 +89,6 @@ class ListEndpointsDoNotScaleWithRowsTest(APITestCase):
         self._assert_flat("/api/problems/")
 
     def test_the_child_list_does_not_query_per_row(self):
-        """Same failure, different relations: the child list renders
-        guardian_name and psychologist_name on every row."""
+        """Same failure, different relation: the child list renders
+        psychologist_name on every row."""
         self._assert_flat("/api/children/")

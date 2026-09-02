@@ -9,7 +9,6 @@ User = get_user_model()
 
 
 class ChildSerializer(serializers.ModelSerializer):
-    guardian_name = serializers.CharField(source="guardian.fullname", read_only=True, default=None)
     # Frontend uses `psychologist`; map it to the assigned_psychologist FK.
     psychologist = serializers.PrimaryKeyRelatedField(
         source="assigned_psychologist", queryset=User.objects.all(),
@@ -47,7 +46,7 @@ class ChildSerializer(serializers.ModelSerializer):
             "photo", "referral_source", "referral_reason",
             "education_level", "current_placement", "medical_notes", "recommendation",
             "psychologist", "psychologist_name",
-            "guardian", "guardian_name", "termination", "terminations",
+            "termination", "terminations",
             "pre_assessment_status", "instruments_used",
             "updated_at",
         ]
