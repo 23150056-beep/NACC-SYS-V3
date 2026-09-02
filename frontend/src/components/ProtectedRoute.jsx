@@ -4,7 +4,7 @@ import PasswordChangeGate from './PasswordChangeGate';
 
 export default function ProtectedRoute({ children, roles }) {
   const { user, loading } = useAuth();
-  if (loading) return <div className="p-6 text-gray-500">Loading…</div>;
+  if (loading) return <div style={{ padding: 24, color: 'var(--text-muted)' }}>Loading…</div>;
   if (!user) return <Navigate to="/login" replace />;
   // Covers the page-refresh case: /auth/me/ still reports an outstanding
   // admin-issued temporary password, so every route renders the change gate
