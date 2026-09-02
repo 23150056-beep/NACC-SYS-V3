@@ -3,7 +3,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
-from accounts.models import Role
+from accounts.models import Role, UserProfile
 from activity.models import ActivityLog
 from activity.services import log_activity
 
@@ -306,3 +306,71 @@ class SignupSerializer(serializers.Serializer):
                 user.requested_role = role
                 user.save(update_fields=["requested_role", "updated_at"])
         return user
+
+
+# What people actually type into a "your Facebook" box, in the order we see
+# it: a full URL, a bare host and path, an @handle, or just the handle. All
+# four mean the same thing, so they are normalised to one shape on the way in
+# rather than four shapes being stored and the screen having to cope.
+_SOCIAL_HOSTS = {
+    "facebook": ("facebook.com", ("facebook.com", "www.facebook.com", "m.facebook.com", "fb.com")),
+    "twitter": ("x.com", ("x.com", "www.x.com", "twitter.com", "www.twitter.com")),
+    "instagram": ("instagram.com", ("instagram.com", "www.instagram.com")),
+}
+
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    """A person's own optional details. Never anybody else's — the view binds
+    this to request.user and takes no id."""
+
+    class Meta:
+        model = UserProfile
+        fields = ["facebook", "twitter", "instagram", "updated_at"]
+        read_only_fields = ["updated_at"]
+
+    def _normalise(self, field, value):
+        raw = (value or "").strip()
+        if not raw:
+            return ""
+        canonical, accepted = _SOCIAL_HOSTS[field]
+        cleaned = raw
+        for prefix in ("https://", "http://"):
+            if cleaned.lower().startswith(prefix):
+                cleaned = cleaned[len(prefix):]
+        cleaned = cleaned.rstrip("/")
+
+        # Match the host explicitly rather than guessing from a dot: plenty of
+        # Facebook usernames contain one, and "maria.santos" is a handle, not a
+        # domain. An earlier version refused exactly that.
+        first, slash, rest = cleaned.partition("/")
+        if first.lower() in accepted:
+            handle = rest
+        elif slash:
+            # Worded to avoid "a instagram.com" — the article changes per
+            # site and the message is read far more often than it is written.
+            raise serializers.ValidationError(
+                f"That link is not on {canonical}. Paste the link to your "
+                f"profile, or just your username.")
+        else:
+            # A bare handle, with or without the @.
+            handle = cleaned.lstrip("@")
+
+        handle = handle.split("?")[0].strip("/")
+        if not handle:
+            raise serializers.ValidationError(
+                "Add your username or the link to your profile, not just the "
+                "site address.")
+        # Query strings and paths deeper than a username are not a profile.
+        if "/" in handle:
+            raise serializers.ValidationError(
+                "That looks like a link to a post rather than a profile.")
+        return f"{canonical}/{handle}"
+
+    def validate_facebook(self, value):
+        return self._normalise("facebook", value)
+
+    def validate_twitter(self, value):
+        return self._normalise("twitter", value)
+
+    def validate_instagram(self, value):
+        return self._normalise("instagram", value)

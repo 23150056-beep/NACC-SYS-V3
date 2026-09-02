@@ -556,6 +556,40 @@ tr:focus-visible {
   }
 }
 
+/* My Profile. Two columns — stable reference on the left, a stream on the
+   right — collapsing to one on a narrow window. The left column sticks while
+   the activity list scrolls past it, which is the whole reason for the split:
+   who you are stays put, what you did moves. */
+.racco-profile-grid {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.racco-profile-grid > :first-child {
+  position: sticky;
+  top: 0;
+}
+.racco-profile-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 1000px) {
+  .racco-profile-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* Stacked, sticking would pin the Intro card over the activity below it. */
+  .racco-profile-grid > :first-child {
+    position: static;
+  }
+}
+@media (max-width: 560px) {
+  .racco-profile-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* Loading placeholder. Used by <Skeleton> to hold a table's shape while its
    rows are in flight, so an empty list never reads as "no records". */
 .racco-skeleton {

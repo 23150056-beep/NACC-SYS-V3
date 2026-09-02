@@ -37,7 +37,7 @@ it stands.
 | Remote | Repository | Deploys Render |
 |---|---|---|
 | `local-ver` | `NACC-SYS-V3.1-LOCAL-VER` | **no** |
-| `origin` | `nacc-sys-v3` | **yes, on `cloud-setup`** |
+| `origin` | `NACC-SYS-V3` | **yes, on `cloud-setup`** |
 
 The branch `cloud-setup` tracks `local-ver/main`, so:
 

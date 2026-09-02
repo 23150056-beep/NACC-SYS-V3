@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.models import Role
+from accounts.scoping import role_of as _role, scope_to_visible
 from accounts.permissions import CanViewResults, IsAdminOrStaff
 from children.models import Child, TerminationRecord
 from children.serializers import ChildSerializer
@@ -22,8 +23,6 @@ from clinical.serializers import (
 )
 
 
-def _role(request):
-    return getattr(getattr(request.user, "role", None), "role_name", None)
 
 
 class ChildReportView(generics.GenericAPIView):
@@ -91,8 +90,7 @@ class MonitoringListView(generics.GenericAPIView):
         children = (Child.objects.exclude(status=Child.INACTIVE)
                     .select_related("assigned_psychologist")
                     .prefetch_related("pre_assessments__instruments", "consents"))
-        if role == Role.PSYCHOLOGIST:
-            children = children.filter(assigned_psychologist=request.user)
+        children = scope_to_visible(children, request, path=None)
         children = list(children)
         ids = [c.id for c in children]
 
@@ -315,11 +313,13 @@ class DashboardView(generics.GenericAPIView):
                        .select_related("child", "psychologist").order_by("start"))
         pending = PreAssessment.objects.exclude(status=PreAssessment.COMPLETED)
         blocks = AvailabilityBlock.objects.filter(active=True).select_related("psychologist")
+        scoped_children = scope_to_visible(scoped_children, request, path=None)
+        pas = scope_to_visible(pas, request)
+        pending = scope_to_visible(pending, request)
+        # Appointments and availability belong to the psychologist directly,
+        # not through a child, so they are a different rule and stay here.
         if role == Role.PSYCHOLOGIST:
-            scoped_children = scoped_children.filter(assigned_psychologist=request.user)
-            pas = pas.filter(child__assigned_psychologist=request.user)
             appts_today = appts_today.filter(psychologist=request.user)
-            pending = pending.filter(child__assigned_psychologist=request.user)
             blocks = blocks.filter(psychologist=request.user)
         pas = list(pas.order_by("date", "id"))
 
@@ -347,8 +347,7 @@ class DashboardView(generics.GenericAPIView):
             b = reports.bucket(c.created_at.date(), rng)
             intake[b] = intake.get(b, 0) + 1
         term_qs = TerminationRecord.objects.all()
-        if role == Role.PSYCHOLOGIST:
-            term_qs = term_qs.filter(child__assigned_psychologist=request.user)
+        term_qs = scope_to_visible(term_qs, request)
         for t in term_qs:
             b = reports.bucket(t.date, rng)
             term[b] = term.get(b, 0) + 1

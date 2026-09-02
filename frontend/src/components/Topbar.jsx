@@ -1,10 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import api from '../api/client';
 import { Avatar, Icon, ROLE_META, hoverLift, hoverTint, Button, FormField, Input, Alert, ConfirmDialog } from '../ui';
 import { useActivity } from '../context/ActivityContext';
+import { timeAgo } from '../utils/time';
 
 const SCREEN_TITLES = {
   '/': ['Dashboard', 'Regional overview of cases & activity'],
@@ -45,16 +46,6 @@ export function eventDestination(e, role) {
   if (e.category === 'user' || e.category === 'security' || type === 'user')
     return role === 'Administrator' ? '/users' : '/';
   return '/';
-}
-export function timeAgo(iso) {
-  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return 'just now';
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m} min ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h} hr ago`;
-  const d = Math.floor(h / 24);
-  return `${d} day${d > 1 ? 's' : ''} ago`;
 }
 
 const EMPTY_PW = { current_password: '', new_password: '', confirm: '' };

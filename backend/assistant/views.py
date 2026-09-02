@@ -11,6 +11,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.models import Role
+from accounts.scoping import (role_of as _role, role_of_user as _role_of,
+                              scope_to_visible)
 from accounts.permissions import IsAdministrator, IsAdminOrStaff
 from assistant import evaluation, prompts, tools
 from assistant.models import AssistantJob, AssistantSetting
@@ -24,12 +26,6 @@ from scheduling.models import Appointment
 logger = logging.getLogger(__name__)
 
 
-def _role_of(user):
-    return getattr(getattr(user, "role", None), "role_name", None)
-
-
-def _role(request):
-    return _role_of(request.user)
 
 
 def _brief_only_author(child, user, role):
@@ -146,9 +142,7 @@ def _visible_children(request):
     "assigned to me" parameter, so no caller can widen its own view.
     """
     qs = Child.objects.all()
-    if _role(request) == Role.PSYCHOLOGIST:
-        qs = qs.filter(assigned_psychologist=request.user)
-    return qs
+    return scope_to_visible(qs, request, path=None)
 
 
 class PreSessionBriefView(AssistantBaseView):

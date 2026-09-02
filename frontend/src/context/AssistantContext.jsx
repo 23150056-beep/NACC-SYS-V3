@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useMemo, useState } from 'react';
 
 /* The panel's open state used to live inside AssistantPanel, which meant
  * nothing outside it could open the assistant — the quick actions row could

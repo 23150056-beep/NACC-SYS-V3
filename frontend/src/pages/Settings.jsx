@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, Badge, Input, FormField, Switch, Button, Alert, Icon, PAGE } from '../ui';
 import { useToast } from '../context/ToastContext';
 import { getAssistantSettings, saveAssistantSettings, getAssistantMetrics, checkAssistant } from '../api/assistant';

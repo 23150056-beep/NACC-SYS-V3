@@ -1,7 +1,7 @@
 from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
 from accounts.models import Role
-from children.models import Guardian, Child
+from children.models import Child
 
 User = get_user_model()
 
@@ -48,13 +48,6 @@ class ChildApiTest(APITestCase):
         self.client.post(f"/api/children/{child.id}/archive/")
         names = [c["fullname"] for c in self.client.get("/api/children/").data]
         self.assertNotIn("Ana Lopez", names)
-
-    def test_staff_can_create_guardian(self):
-        self._auth("staff@racco1.gov.ph", "staff1234")
-        resp = self.client.post("/api/guardians/", {
-            "fullname": "Maria Cruz", "case_type": "Foster"})
-        self.assertEqual(resp.status_code, 201)
-        self.assertTrue(Guardian.objects.filter(fullname="Maria Cruz").exists())
 
     def test_create_child_with_valid_case_category_persists_and_returns_it(self):
         self._auth("staff@racco1.gov.ph", "staff1234")

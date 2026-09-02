@@ -2,18 +2,10 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from accounts.models import Role
-from children.models import Guardian, Child, TerminationRecord
+from children.models import Child
 
 User = get_user_model()
 
-
-class GuardianSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Guardian
-        fields = [
-            "id", "fullname", "birth_date", "gender", "address",
-            "case_type", "status",
-        ]
 
 
 class ChildSerializer(serializers.ModelSerializer):
@@ -220,11 +212,4 @@ class ChildSerializer(serializers.ModelSerializer):
                 if missing:
                     raise serializers.ValidationError(missing)
         return attrs
-
-
-class TerminationRecordSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = TerminationRecord
-        fields = ["id", "child", "date", "reason_category", "note", "created_at"]
-
 

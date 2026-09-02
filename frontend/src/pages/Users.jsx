@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api/client';
 import { useActivity } from '../context/ActivityContext';
 import {
@@ -9,6 +9,7 @@ import {
 import { useToast } from '../context/ToastContext';
 import CredentialHandoffs from './CredentialHandoffs';
 import AccessRequests from './AccessRequests';
+import { exactDate, shortDate, timeAgo } from '../utils/time';
 
 // No password field: the server generates a temporary password on create and
 // returns it exactly once — admins never choose another user's password.
@@ -70,17 +71,6 @@ const BUCKET_OF = {
   takeover: 'pending', deactivated: 'deactivated', declined: 'declined',
 };
 
-const DATE_ONLY = { day: 'numeric', month: 'short', year: 'numeric' };
-const exactDate = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { ...DATE_ONLY, hour: 'numeric', minute: '2-digit' }) : '');
-const sinceLabel = (iso) => {
-  if (!iso) return null;
-  const secs = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (secs < 90) return 'Just now';
-  if (secs < 3600) return `${Math.round(secs / 60)} min ago`;
-  if (secs < 86400) return `${Math.round(secs / 3600)} hr ago`;
-  if (secs < 604800) return `${Math.round(secs / 86400)} d ago`;
-  return new Date(iso).toLocaleDateString(undefined, DATE_ONLY);
-};
 
 // Ordered by how much of the administrator's attention the state wants, not
 // alphabetically: sorting by Status should surface what needs a decision.
@@ -167,7 +157,7 @@ function ActivityRow({ entry }) {
           )}
         </div>
         <div style={{ fontSize: 11, color: 'var(--text-faint)' }} title={exactDate(entry.created_at)}>
-          {sinceLabel(entry.created_at)}
+          {timeAgo(entry.created_at)}
         </div>
       </div>
     </li>
@@ -626,7 +616,7 @@ export default function Users() {
                           <td style={TD}><SignInCell google={u.google_linked} /></td>
                           <td style={{ ...TD, whiteSpace: 'nowrap' }} title={exactDate(u.last_login)}>
                             {u.last_login
-                              ? <span style={{ color: 'var(--text-body)' }}>{sinceLabel(u.last_login)}</span>
+                              ? <span style={{ color: 'var(--text-body)' }}>{timeAgo(u.last_login)}</span>
                               : <span style={{ color: 'var(--text-faint)' }}>Never</span>}
                           </td>
                           <td style={{ ...TD, textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
@@ -691,7 +681,7 @@ export default function Users() {
               <Fact label="Status"><StatusCell state={statusOf(form)} /></Fact>
               <Fact label="Signs in with"><SignInCell google={form.google_linked} /></Fact>
               <Fact label="Last sign-in">{form.last_login ? exactDate(form.last_login) : <span style={{ color: 'var(--text-faint)', fontWeight: 500 }}>Never</span>}</Fact>
-              <Fact label="Added">{form.created_at ? new Date(form.created_at).toLocaleDateString(undefined, DATE_ONLY) : '—'}</Fact>
+              <Fact label="Added">{form.created_at ? shortDate(form.created_at) : '—'}</Fact>
               <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
                 {LIFECYCLE[statusOf(form)].note}
               </div>
@@ -804,7 +794,7 @@ export default function Users() {
               <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <RoleAccessPanel from={roleChange.from} to={roleChange.to} />
                 <Alert tone="warning" icon={<Icon name="alert-triangle" size={18} />}>
-                  Not saved yet — you'll be asked to confirm. If {form.first_name || 'this person'} is
+                  Not saved yet — you&rsquo;ll be asked to confirm. If {form.first_name || 'this person'} is
                   signed in right now, the new access applies immediately, but their
                   menu keeps the old shape until they sign out and back in.
                 </Alert>
@@ -932,8 +922,8 @@ export default function Users() {
             </Alert>
           )}
           <Alert tone="warning" icon={<Icon name="alert-triangle" size={18} />}>
-            Give this to the user — they'll be required to set a new password at next login.
-            This password will not be shown again; generate a new one if it's lost.
+            Give this to the user — they&rsquo;ll be required to set a new password at next login.
+            This password will not be shown again; generate a new one if it&rsquo;s lost.
           </Alert>
         </Modal>
       )}
