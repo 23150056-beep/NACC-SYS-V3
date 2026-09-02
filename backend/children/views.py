@@ -89,10 +89,10 @@ class ChildViewSet(_ArchivableViewSet):
             qs = super().get_queryset()
         # consents feed the derived pre_assessment_status (No Consent Yet, …).
         qs = qs.prefetch_related("pre_assessments__instruments", "terminations", "consents")
-        # Both are rendered as names on every row (guardian_name,
-        # psychologist_name), so without this the list costs two extra queries
-        # per child: 47 for 40 children, against 7 with it.
-        qs = qs.select_related("guardian", "assigned_psychologist")
+        # psychologist_name is rendered on every row, so without this the list
+        # costs an extra query per child: 47 for 40 children, against 7 with
+        # it. The guardian join went with guardian_name — nothing reads it.
+        qs = qs.select_related("assigned_psychologist")
         return scope_to_visible(qs, self.request, path=None)
 
     def update(self, request, *args, **kwargs):

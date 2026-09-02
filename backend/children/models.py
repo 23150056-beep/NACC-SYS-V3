@@ -11,9 +11,13 @@ class Guardian(models.Model):
     the frontend ever called it and no production code has ever constructed a
     row. The demo database has zero guardians and zero children linked to one.
 
+    The serializer stopped exposing `guardian` and `guardian_name` on the same
+    day, so the API mentions this model nowhere at all.
+
     What is left is the table and the Child.guardian column, kept because
     dropping them needs a migration that runs against production data on the
-    next deploy. Check the live row count before writing it.
+    next deploy. Check the live row count before writing it — everything above
+    is about the demo, and production may hold rows from before July.
     """
 
     ACTIVE = "active"

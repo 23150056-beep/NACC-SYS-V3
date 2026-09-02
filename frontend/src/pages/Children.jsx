@@ -199,7 +199,7 @@ export default function Children() {
     setError('');
     const payload = { ...form, expected_updated_at: form.updated_at };
     delete payload.age; delete payload.group; delete payload.ref;
-    delete payload.psychologist_name; delete payload.guardian_name;
+    delete payload.psychologist_name;
     delete payload._origPsychologist; delete payload.termination; delete payload.photo;
     delete payload.updated_at; delete payload._conflict; delete payload._draft;
     if (!payload.psychologist) payload.psychologist = null;
