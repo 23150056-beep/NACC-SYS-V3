@@ -3,6 +3,19 @@ from django.utils import timezone
 
 
 class Guardian(models.Model):
+    """Superseded, and on its way out.
+
+    The UI has handled records by assigned psychologist since 2026-07 (see the
+    note on Child.guardian below). As of 2026-09-02 the API surface is gone —
+    no viewset, no /api/guardians/ route, no serializer — because nothing in
+    the frontend ever called it and no production code has ever constructed a
+    row. The demo database has zero guardians and zero children linked to one.
+
+    What is left is the table and the Child.guardian column, kept because
+    dropping them needs a migration that runs against production data on the
+    next deploy. Check the live row count before writing it.
+    """
+
     ACTIVE = "active"
     ARCHIVED = "archived"
     STATUS_CHOICES = [(ACTIVE, "Active"), (ARCHIVED, "Archived")]

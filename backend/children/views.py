@@ -10,9 +10,9 @@ from accounts.permissions import RecordsAccess, ChildRecordAccess
 from accounts.scoping import role_of, scope_to_visible
 from activity.models import ActivityLog
 from activity.services import log_activity
-from children.models import Guardian, Child, TerminationRecord
+from children.models import Child, TerminationRecord
 from children.notifications import send_assignment_notification
-from children.serializers import GuardianSerializer, ChildSerializer
+from children.serializers import ChildSerializer
 
 
 class _ArchivableViewSet(viewsets.ModelViewSet):
@@ -48,11 +48,6 @@ class _ArchivableViewSet(viewsets.ModelViewSet):
         obj.save(update_fields=["status", "updated_at"])
         self._log(obj, ActivityLog.ARCHIVED)
         return Response({"status": "archived"}, status=status.HTTP_200_OK)
-
-
-class GuardianViewSet(_ArchivableViewSet):
-    model = Guardian
-    serializer_class = GuardianSerializer
 
 
 class ChildViewSet(_ArchivableViewSet):
