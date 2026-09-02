@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { useAuth } from '../context/AuthContext';
@@ -6,7 +6,8 @@ import { StatCard, Button, Badge, Icon, ROLE_META } from '../ui';
 import api from '../api/client';
 import { useActivity } from '../context/ActivityContext';
 import { useAssistant } from '../context/AssistantContext';
-import { eventText, timeAgo, eventDestination } from '../components/Topbar';
+import { eventText, eventDestination } from '../components/Topbar';
+import { timeAgo } from '../utils/time';
 import MiniCalendar from '../components/MiniCalendar';
 
 const EMPTY = {
@@ -76,7 +77,6 @@ export default function Dashboard() {
 
   const census = stats.census || EMPTY.census;
   const caseMix = Object.entries(census.by_case_type || {});
-  const sessionsThisPeriod = (stats.trend || []).reduce((sum, t) => sum + t.count, 0);
   const gaps = stats.care_gaps || [];
 
   const actions = [

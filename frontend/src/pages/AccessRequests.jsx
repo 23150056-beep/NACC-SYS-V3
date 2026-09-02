@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import api from '../api/client';
+import { exactDate, timeAgo } from '../utils/time';
 import { useActivity } from '../context/ActivityContext';
 import { useToast } from '../context/ToastContext';
 import {
@@ -18,16 +19,6 @@ import {
 // rather than quick, and that now includes saying which door they used: a
 // Google address was verified by Google, a typed one was verified by nobody.
 
-const DATE_FMT = { day: 'numeric', month: 'short', year: 'numeric' };
-const exactDate = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { ...DATE_FMT, hour: 'numeric', minute: '2-digit' }) : '');
-const waitingFor = (iso) => {
-  if (!iso) return '—';
-  const secs = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (secs < 3600) return `${Math.max(1, Math.round(secs / 60))} min ago`;
-  if (secs < 86400) return `${Math.round(secs / 3600)} hr ago`;
-  if (secs < 604800) return `${Math.round(secs / 86400)} d ago`;
-  return new Date(iso).toLocaleDateString(undefined, DATE_FMT);
-};
 
 const nameOf = (u) => (u.fullname || u.username || u.email || '');
 
@@ -204,7 +195,7 @@ export default function AccessRequests({ onChange }) {
                       </div>
                     </td>
                     <td style={TD}><ClaimChip role={u.requested_role_name} /></td>
-                    <td style={{ ...TD, whiteSpace: 'nowrap' }} title={exactDate(u.created_at)}>{waitingFor(u.created_at)}</td>
+                    <td style={{ ...TD, whiteSpace: 'nowrap' }} title={exactDate(u.created_at)}>{timeAgo(u.created_at)}</td>
                     <td style={{ ...TD, textAlign: 'right' }}>
                       <div style={{ display: 'inline-flex', gap: 8 }}>
                         <Button variant="ghost" size="sm" style={{ color: 'var(--red-600)' }} onClick={() => setConfirm({ kind: 'decline', user: u })}>Decline</Button>
