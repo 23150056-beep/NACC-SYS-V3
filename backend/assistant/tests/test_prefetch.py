@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -43,7 +43,14 @@ class PrefetchTest(APITestCase):
         # Appointment has no `end` field -- only `start` and `duration_minutes`
         # (default 60, i.e. one hour), so the default stands in for the brief's
         # `end=start + timedelta(hours=1)`.
-        start = timezone.now() + timedelta(days=days, hours=1)
+        #
+        # Midday on the target day, not "an hour from now". The view matches on
+        # start__date, so an hour from now lands on TOMORROW for anyone running
+        # the suite after 23:00 — and then "today's appointment" is not today's
+        # and these tests fail on the clock rather than on the code. Found at
+        # 23:38. The view does not care whether the time is past or future.
+        day = timezone.localdate() + timedelta(days=days)
+        start = timezone.make_aware(datetime.combine(day, time(12, 0)))
         return Appointment.objects.create(
             child=child, psychologist=psychologist, start=start,
             status=Appointment.SCHEDULED)
