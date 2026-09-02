@@ -10,6 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.models import Role
+from accounts.scoping import role_of as _role
 from accounts.permissions import CanManageInstruments, ProgressRecordAccess
 from activity.models import ActivityLog
 from activity.services import log_activity
@@ -34,8 +35,6 @@ from clinical.services import extract_pdf_text
 logger = logging.getLogger(__name__)
 
 
-def _role(request):
-    return getattr(getattr(request.user, "role", None), "role_name", None)
 
 
 class InstrumentCatalogViewSet(viewsets.ModelViewSet):
@@ -176,7 +175,14 @@ class _ChildScopedClinicalViewSet(viewsets.ModelViewSet):
     author_field = None  # set by subclass: who recorded the row
 
     def get_queryset(self):
+        # The author comes along with the child, because every serializer in
+        # this family renders `author.fullname`. Without it the list runs one
+        # extra query per row: /api/remarks/ measured 306 queries for 303
+        # rows, and 3 with this line. Locally that is cheap SQLite; in
+        # production it is one network round-trip each, to another region.
         qs = self.model.objects.select_related("child")
+        if self.author_field:
+            qs = qs.select_related(self.author_field)
         child_id = self.request.query_params.get("child")
         if child_id:
             if not str(child_id).isdigit():
