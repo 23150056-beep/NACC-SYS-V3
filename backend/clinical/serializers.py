@@ -11,6 +11,16 @@ from clinical.models import (
 ALLOWED_REPORT_EXTENSIONS = ("pdf", "doc", "docx")
 MAX_REPORT_BYTES = 15 * 1024 * 1024
 
+# A consent scan is a photograph or scan of signed paper, so images belong
+# here in a way they do not for a report. What matters is what is NOT on the
+# list: the consent download is served inline, and the frontend previews it in
+# an iframe from a blob: URL, which inherits the app's own origin. An .html or
+# .svg accepted here would therefore run as the application — reading the
+# tokens in localStorage — for whoever opened the preview next. Anything added
+# to this tuple has to be safe to render, not merely useful to upload.
+ALLOWED_CONSENT_EXTENSIONS = ("pdf", "jpg", "jpeg", "png", "webp", "heic", "heif")
+MAX_CONSENT_BYTES = 15 * 1024 * 1024
+
 
 class InstrumentCatalogSerializer(serializers.ModelSerializer):
     owner_name = serializers.CharField(source="owner.fullname", read_only=True, default=None)
@@ -75,6 +85,23 @@ class ConsentRecordSerializer(serializers.ModelSerializer):
 
     def get_scan_filename(self, obj):
         return obj.scan.name.rsplit("/", 1)[-1] if obj.scan else ""
+
+    def validate_scan(self, f):
+        """The same gate the report and referral uploads have had all along.
+
+        Its absence here was the one door in: this field took any file type,
+        and this is the only upload the API serves back inline.
+        """
+        if f is None:
+            return f
+        ext = (f.name.rsplit(".", 1)[-1] if "." in f.name else "").lower()
+        if ext not in ALLOWED_CONSENT_EXTENSIONS:
+            raise serializers.ValidationError(
+                "Upload a PDF or a photo of the signed paper "
+                "(.pdf, .jpg, .png, .webp, .heic).")
+        if f.size > MAX_CONSENT_BYTES:
+            raise serializers.ValidationError("File too large (max 15 MB).")
+        return f
 
 
 class ClinicalInterviewRecordSerializer(serializers.ModelSerializer):
