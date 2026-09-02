@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import { useToast } from '../context/ToastContext';
 import {
@@ -236,7 +236,7 @@ function PrintSummary({ round, checklist }) {
         30-day action plan — items marked &ldquo;Not&rdquo; ({notItems.length})
       </h2>
       {notItems.length === 0 ? (
-        <p style={{ fontSize: 12, color: '#555' }}>No indicators were marked "Not" in this round.</p>
+        <p style={{ fontSize: 12, color: '#555' }}>No indicators were marked &quot;Not&quot; in this round.</p>
       ) : (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
           <thead>

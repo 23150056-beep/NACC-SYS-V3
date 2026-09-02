@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { askAssistant, getAssistantCapabilities } from '../api/assistant';
 import { useAssistant } from '../context/AssistantContext';
 import { Icon } from '../ui';

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 
 const GIS_SRC = 'https://accounts.google.com/gsi/client';

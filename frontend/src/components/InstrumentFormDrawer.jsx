@@ -1,4 +1,3 @@
-import React from 'react';
 import { Button, Input, Select, FormField, Alert, Icon, iconBtn, hoverLift } from '../ui';
 
 export const CATEGORIES = [
