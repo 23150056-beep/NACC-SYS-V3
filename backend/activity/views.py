@@ -2,6 +2,7 @@ from rest_framework import mixins, viewsets, permissions
 from accounts.models import Role
 from activity.models import ActivityLog
 from activity.serializers import ActivityLogSerializer
+from accounts.scoping import role_of
 
 
 class ActivityLogViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
@@ -11,7 +12,7 @@ class ActivityLogViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
 
     def get_queryset(self):
         qs = ActivityLog.objects.all()
-        role = getattr(getattr(self.request.user, "role", None), "role_name", None)
+        role = role_of(self.request)
         if role == Role.PSYCHOLOGIST:
             # Psychologists only see notifications targeted at them.
             qs = qs.filter(recipient=self.request.user)

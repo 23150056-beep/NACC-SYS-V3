@@ -10,7 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.models import Role
-from accounts.scoping import role_of as _role
+from accounts.scoping import role_of as _role, scope_to_visible
 from accounts.permissions import CanManageInstruments, ProgressRecordAccess
 from activity.models import ActivityLog
 from activity.services import log_activity
@@ -188,8 +188,7 @@ class _ChildScopedClinicalViewSet(viewsets.ModelViewSet):
             if not str(child_id).isdigit():
                 return qs.none()
             qs = qs.filter(child_id=child_id)
-        if _role(self.request) == Role.PSYCHOLOGIST:
-            qs = qs.filter(child__assigned_psychologist=self.request.user)
+        qs = scope_to_visible(qs, self.request)
         return qs
 
     def _assert_can_write(self, child):
@@ -356,8 +355,7 @@ class CaseReferralViewSet(viewsets.ModelViewSet):
             if not str(child_id).isdigit():
                 return qs.none()
             qs = qs.filter(child_id=child_id)
-        if _role(self.request) == Role.PSYCHOLOGIST:
-            qs = qs.filter(child__assigned_psychologist=self.request.user)
+        qs = scope_to_visible(qs, self.request)
         return qs
 
     def _assert_can_write(self):
@@ -434,8 +432,7 @@ class OpinionnaireInviteViewSet(viewsets.ModelViewSet):
             if not str(child_id).isdigit():
                 return qs.none()
             qs = qs.filter(child_id=child_id)
-        if _role(self.request) == Role.PSYCHOLOGIST:
-            qs = qs.filter(child__assigned_psychologist=self.request.user)
+        qs = scope_to_visible(qs, self.request)
         return qs
 
     def _assert_can_write(self, child):
@@ -565,8 +562,7 @@ class SelfReportFlagViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
                 return qs.none()
             qs = qs.filter(child_id=child_id)
         # Scope from the caller, never from a parameter.
-        if _role(self.request) == Role.PSYCHOLOGIST:
-            qs = qs.filter(child__assigned_psychologist=self.request.user)
+        qs = scope_to_visible(qs, self.request)
         return qs
 
     @action(detail=True, methods=["post"])
