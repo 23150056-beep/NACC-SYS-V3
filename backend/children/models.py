@@ -2,44 +2,6 @@ from django.db import models
 from django.utils import timezone
 
 
-class Guardian(models.Model):
-    """Superseded, and on its way out.
-
-    The UI has handled records by assigned psychologist since 2026-07 (see the
-    note on Child.guardian below). As of 2026-09-02 the API surface is gone —
-    no viewset, no /api/guardians/ route, no serializer — because nothing in
-    the frontend ever called it and no production code has ever constructed a
-    row. The demo database has zero guardians and zero children linked to one.
-
-    The serializer stopped exposing `guardian` and `guardian_name` on the same
-    day, so the API mentions this model nowhere at all.
-
-    What is left is the table and the Child.guardian column, kept because
-    dropping them needs a migration that runs against production data on the
-    next deploy. Check the live row count before writing it — everything above
-    is about the demo, and production may hold rows from before July.
-    """
-
-    ACTIVE = "active"
-    ARCHIVED = "archived"
-    STATUS_CHOICES = [(ACTIVE, "Active"), (ARCHIVED, "Archived")]
-
-    fullname = models.CharField(max_length=150)
-    birth_date = models.DateField(null=True, blank=True)
-    gender = models.CharField(max_length=10, blank=True)
-    address = models.CharField(max_length=150, blank=True)
-    case_type = models.CharField(max_length=150, blank=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=ACTIVE)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "tbl_guardian"
-
-    def __str__(self):
-        return self.fullname
-
-
 class Child(models.Model):
     ACTIVE = "active"
     INACTIVE = "inactive"
@@ -119,10 +81,7 @@ class Child(models.Model):
     ]
 
     # Deprecated in favour of assigned_psychologist; kept for migration safety.
-    guardian = models.ForeignKey(
-        Guardian, on_delete=models.SET_NULL, null=True, blank=True, related_name="children"
-    )
-    # A record is handled by an assigned psychologist (replaces Guardian in the UI).
+    # A record is handled by an assigned psychologist.
     assigned_psychologist = models.ForeignKey(
         "accounts.User", on_delete=models.SET_NULL, null=True, blank=True,
         related_name="assigned_children",

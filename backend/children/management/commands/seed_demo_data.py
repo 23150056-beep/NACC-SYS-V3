@@ -37,7 +37,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from accounts.models import Role, User
-from children.models import Child, Guardian
+from children.models import Child
 from clinical.models import (
     AgencyFormTemplate, ConsentRecord, InstrumentCatalog, OpinionnaireInvite,
     PreAssessment, ProblemEntry, RemarkNote, ResultEntry, TreatmentPlan)
@@ -190,7 +190,6 @@ class Command(BaseCommand):
         if options["purge"]:
             self.stdout.write(self.style.WARNING("Purging existing children and clinical records..."))
             Child.objects.all().delete()   # cascades to the clinical tables
-            Guardian.objects.all().delete()
         elif Child.objects.exists() and not options["force"]:
             raise CommandError(
                 f"The database already has {Child.objects.count()} children. "

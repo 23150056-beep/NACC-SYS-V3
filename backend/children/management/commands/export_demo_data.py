@@ -18,7 +18,6 @@ from django.core.management.base import BaseCommand
 # Everything seed_demo_data creates, minus anything identifying a real person.
 DEMO_MODELS = [
     "children.Child",
-    "children.Guardian",
     "clinical.AgencyFormTemplate",
     "clinical.InstrumentCatalog",
     "clinical.ConsentRecord",
