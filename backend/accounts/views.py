@@ -15,13 +15,13 @@ from accounts.google_auth import (
     resolve_google_user, verify_google_credential,
 )
 from accounts.lockout import client_ip, clear_failures, is_locked, register_failure
-from accounts.models import Role
+from accounts.models import Role, UserProfile
 from accounts import signup_limit
 from accounts.permissions import IsAdministrator, IsAdminOrStaff
 from children.models import Child
 from accounts.serializers import (
     LoginSerializer, UserSerializer, UserWriteSerializer, RoleSerializer,
-    ChangePasswordSerializer,
+    ChangePasswordSerializer, UserProfileSerializer,
     SignupSerializer,
 )
 from activity.models import ActivityLog
@@ -262,6 +262,27 @@ class ChangePasswordView(generics.GenericAPIView):
             request.user, ActivityLog.UPDATED, ActivityLog.SECURITY,
             entity_type="User", entity_label="Changed own password", entity_id=request.user.id)
         return Response({"detail": "Password changed."}, status=status.HTTP_200_OK)
+
+
+class MyProfileView(generics.RetrieveUpdateAPIView):
+    """A person's own optional details. Theirs, and only theirs.
+
+    There is deliberately no id in the URL and no way to name another
+    account: get_object returns request.user's row and nothing else, which is
+    the same rule ChangePasswordView follows. An endpoint that took an id
+    would need a permission check, and a permission check is a thing that can
+    be got wrong.
+
+    The row is created on first write rather than with the account, so an
+    account that never opens this page never gets one.
+    """
+
+    serializer_class = UserProfileSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        profile, _ = UserProfile.objects.get_or_create(user=self.request.user)
+        return profile
 
 
 class UserViewSet(viewsets.ModelViewSet):

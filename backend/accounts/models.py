@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 
@@ -115,3 +116,38 @@ class User(AbstractUser):
 
     def __str__(self):
         return self.email
+
+
+class UserProfile(models.Model):
+    """The handful of things a person may say about themselves.
+
+    Deliberately its own table rather than three more columns on User, and the
+    reason is concrete: UserSerializer backs /api/users/, the directory every
+    administrator opens. Anything added to User shows up there. Keeping this
+    separate means profile data stays out of that screen by construction
+    rather than by somebody remembering not to add it to a field list.
+
+    Optional by definition — a row is created on first save, and an account
+    without one is normal, not incomplete.
+
+    No home address. The earlier prototype asked for one; nothing in the
+    system reads a staff member's home address, and collecting personal data
+    with no purpose is the thing RA 10173 asks agencies not to do. If a
+    process ever needs it, add it then, with a retention rule.
+    """
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="profile")
+    # Stored as the bare "host/path" the serializer normalises to, never as
+    # raw input: people type @handles, full URLs and everything between.
+    facebook = models.CharField(max_length=200, blank=True, default="")
+    twitter = models.CharField(max_length=200, blank=True, default="")
+    instagram = models.CharField(max_length=200, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "tbl_user_profile"
+
+    def __str__(self):
+        return f"Profile for {self.user.email}"

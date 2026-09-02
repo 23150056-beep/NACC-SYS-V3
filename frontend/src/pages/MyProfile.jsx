@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import {
-  Card, Button, Badge, Alert, Input, FormField, Avatar, RoleBadge, Icon,
+  Card, Button, Badge, Input, FormField, Avatar, RoleBadge, Icon,
   RoleAccessPanel, Skeleton, EmptyState, PAGE, hoverLift,
 } from '../ui';
 import { eventText, eventDestination } from '../components/Topbar';
@@ -23,20 +23,26 @@ import api from '../api/client';
  * /api/appointments/ (scoped to their own). Nothing new was needed on the
  * server to make this page worth opening.
  *
- * The "Optional details" card is the one part that is still a prototype
- * (product decision 2026-07-18) and it says so, both on the card and on the
- * button that saves it. Those four values live in this browser's
- * localStorage and reach no server. docs: see the note at the bottom of this
- * file for what making them real would take.
+ * The "Links" card is the one thing on this page a person writes rather than
+ * reads. It goes to /api/auth/me/profile/, which is bound to the caller and
+ * takes no id — so there is no request shape that edits somebody else's. The
+ * server normalises what gets typed (a full URL, a bare handle, an @handle
+ * all mean the same thing) and refuses another site or a link to a post, so
+ * the messages below come from it rather than being guessed at here.
+ *
+ * There is no home address field. The earlier prototype had one; nothing in
+ * the system reads a staff member's home address, and collecting personal
+ * data with no purpose is what RA 10173 asks agencies not to do.
  */
 
-const EMPTY = { facebook: '', twitter: '', instagram: '', address: '' };
+const EMPTY = { facebook: '', twitter: '', instagram: '' };
 
+// Short enough not to truncate in a 300px field. The note under the form is
+// where "or just your username" is said, once, rather than three times.
 const FIELDS = [
   ['facebook', 'Facebook', 'facebook', 'facebook.com/your.name'],
   ['twitter', 'X (Twitter)', 'twitter', 'x.com/yourhandle'],
   ['instagram', 'Instagram', 'instagram', 'instagram.com/yourhandle'],
-  ['address', 'Home address', 'map-pin', 'House No., Street, Barangay, City, Province'],
 ];
 
 /* One row of the Intro card. Renders the dash rather than collapsing when a
@@ -69,20 +75,26 @@ export default function MyProfile() {
   const role = user?.role_name;
   const isPsych = role === 'Psychologist';
 
-  const storageKey = `nacc-profile-demo:${user?.id ?? 'anon'}`;
   const [form, setForm] = useState(EMPTY);
-  const [saved, setSaved] = useState(EMPTY);
+  const [saved, setSaved] = useState(null);   // null until the server answers
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [busy, setBusy] = useState(false);
   const [children, setChildren] = useState(null);
   const [appointments, setAppointments] = useState(null);
   const [activity, setActivity] = useState(null);
 
   useEffect(() => {
-    let stored = EMPTY;
-    try { stored = { ...EMPTY, ...JSON.parse(localStorage.getItem(storageKey) || '{}') }; }
-    catch { stored = EMPTY; }
-    setForm(stored);
-    setSaved(stored);
-  }, [storageKey]);
+    api.get('/auth/me/profile/')
+      .then((r) => {
+        const next = { ...EMPTY, ...r.data };
+        setForm(next);
+        setSaved(next);
+      })
+      // An account that has never saved still gets a row back, so a failure
+      // here is the network rather than a missing profile. Show the empty
+      // form; the save will report properly if it is still down.
+      .catch(() => setSaved(EMPTY));
+  }, []);
 
   useEffect(() => {
     // Each fails independently: a psychologist with no caseload yet should
@@ -93,8 +105,10 @@ export default function MyProfile() {
   }, []);
 
   const dirty = useMemo(
-    () => FIELDS.some(([k]) => (form[k] || '') !== (saved[k] || '')), [form, saved]);
-  const hasDetails = useMemo(() => FIELDS.some(([k]) => (saved[k] || '').trim()), [saved]);
+    () => !!saved && FIELDS.some(([k]) => (form[k] || '') !== (saved[k] || '')),
+    [form, saved]);
+  const hasLinks = useMemo(
+    () => !!saved && FIELDS.some(([k]) => (saved[k] || '').trim()), [saved]);
 
   const stats = useMemo(() => {
     if (children === null || appointments === null) return null;
@@ -110,20 +124,35 @@ export default function MyProfile() {
     return { active: active.length, upcoming: upcoming.length, done: done.length };
   }, [children, appointments]);
 
-  const save = (e) => {
-    e.preventDefault();
-    try { localStorage.setItem(storageKey, JSON.stringify(form)); }
-    catch { toast.error('This browser would not store the details (private mode?).'); return; }
-    setSaved(form);
-    toast.success('Saved in this browser. Not sent to the system.');
+  const write = async (payload, message) => {
+    setBusy(true);
+    setFieldErrors({});
+    try {
+      const { data } = await api.patch('/auth/me/profile/', payload);
+      const next = { ...EMPTY, ...data };
+      setForm(next);
+      setSaved(next);
+      toast.success(message);
+    } catch (err) {
+      const body = err.response?.data;
+      if (body && typeof body === 'object' && !body.detail) {
+        // The server rejected a value — "that looks like a link to a post"
+        // and so on. Its wording is better than anything guessed at here.
+        const mapped = {};
+        Object.entries(body).forEach(([k, v]) => {
+          mapped[k] = Array.isArray(v) ? v.join(' ') : String(v);
+        });
+        setFieldErrors(mapped);
+      } else {
+        toast.error(body?.detail || 'Could not save. Please try again.');
+      }
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const clear = () => {
-    try { localStorage.removeItem(storageKey); } catch { /* nothing to remove */ }
-    setForm(EMPTY);
-    setSaved(EMPTY);
-    toast.success('Details cleared from this browser.');
-  };
+  const save = (e) => { e.preventDefault(); write(form, 'Links saved.'); };
+  const clear = () => write(EMPTY, 'Links removed.');
 
   return (
     <div style={{ ...PAGE, maxWidth: 1080 }}>
@@ -207,50 +236,47 @@ export default function MyProfile() {
             </div>
           </Card>
 
-          {/* The prototype. Flagged on the card, on the save button, and under
-              the form — three places, because someone who fills this in and
-              expects it on their account will be disappointed on a different
-              machine. */}
-          <Card
-            padding="20px"
-            eyebrow="Optional details"
-            title={(
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
-                Social &amp; address
-                <Badge tone="warning" size="sm"><Icon name="flask-conical" size={12} />Prototype</Badge>
-              </span>
-            )}
-          >
-            <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 13, marginTop: 6 }}>
-              {FIELDS.map(([key, label, icon, placeholder]) => (
-                <FormField key={key} label={label}>
-                  <Input
-                    value={form[key]} placeholder={placeholder}
-                    leading={<Icon name={icon} size={16} />}
-                    onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-                  />
-                </FormField>
-              ))}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
-                <Button type="submit" variant="primary" size="sm" disabled={!dirty}
-                        iconLeft={<Icon name="save" size={15} />}>
-                  {dirty ? 'Save in this browser' : 'Saved'}
-                </Button>
-                {hasDetails && (
-                  <Button type="button" variant="ghost" size="sm" onClick={clear}
-                          style={{ color: 'var(--red-600)' }}
-                          iconLeft={<Icon name="trash-2" size={15} />}>
-                    Clear
-                  </Button>
-                )}
+          {/* The one thing on this page a person writes. */}
+          <Card padding="20px" eyebrow="Optional" title="Links">
+            {saved === null ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 10 }}>
+                {[0, 1, 2].map((i) => <Skeleton key={i} height={58} radius="var(--radius-md)" />)}
               </div>
-            </form>
-            <Alert tone="warning" icon={<Icon name="flask-conical" size={17} />} style={{ marginTop: 14 }}>
-              These four stay in <strong>this browser only</strong>. They are not
-              on your account, no administrator can see them, and they are gone
-              if you use another computer or clear your browsing data. Clear
-              removes them for good.
-            </Alert>
+            ) : (
+              <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 13, marginTop: 6 }}>
+                {FIELDS.map(([key, label, icon, placeholder]) => (
+                  <FormField key={key} label={label} error={fieldErrors[key]}>
+                    <Input
+                      value={form[key]} placeholder={placeholder} disabled={busy}
+                      invalid={!!fieldErrors[key]}
+                      leading={<Icon name={icon} size={16} />}
+                      onChange={(e) => {
+                        setForm({ ...form, [key]: e.target.value });
+                        setFieldErrors((fe) => ({ ...fe, [key]: undefined }));
+                      }}
+                    />
+                  </FormField>
+                ))}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
+                  <Button type="submit" variant="primary" size="sm" disabled={!dirty || busy}
+                          iconLeft={<Icon name="save" size={15} />}>
+                    {busy ? 'Saving…' : dirty ? 'Save' : 'Saved'}
+                  </Button>
+                  {hasLinks && (
+                    <Button type="button" variant="ghost" size="sm" onClick={clear} disabled={busy}
+                            style={{ color: 'var(--red-600)' }}
+                            iconLeft={<Icon name="trash-2" size={15} />}>
+                      Remove
+                    </Button>
+                  )}
+                </div>
+              </form>
+            )}
+            <div style={{ fontSize: 12, lineHeight: 1.55, color: 'var(--text-faint)', marginTop: 13 }}>
+              Optional, and only you can see them. Paste the link to your
+              profile or just your username — either works. Remove takes them
+              off your account for good.
+            </div>
           </Card>
         </div>
 
