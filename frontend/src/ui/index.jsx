@@ -1,6 +1,6 @@
 // RACCO I Design System — primitives ported from the Claude Design workspace kit.
 // Token-driven inline styles; one import surface for every screen.
-import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import * as Lucide from 'lucide-react';
 
@@ -28,7 +28,7 @@ export const ROLE_META = {
  * queue grants one, User Management corrects one — and they must not describe
  * the same role differently. Mirrors the RBAC matrix in
  * docs/CLOUD-DEPLOYMENT.md; if that matrix moves, this has to move with it. */
-export const ROLE_ACCESS = {
+const ROLE_ACCESS = {
   Administrator: [
     'User accounts, roles and access requests',
     'Settings, AI switches and catalogue governance',
@@ -47,11 +47,6 @@ export const ROLE_ACCESS = {
   ],
 };
 
-const SEVERITY = {
-  standard: { label: 'Standard Adjustment', color: 'var(--success-500)', bg: 'var(--success-50)', fg: 'var(--success-700)' },
-  moderate: { label: 'Moderate Concern', color: 'var(--warning-500)', bg: 'var(--warning-50)', fg: 'var(--warning-700)' },
-  high: { label: 'High Indicator', color: 'var(--red-500)', bg: 'var(--red-50)', fg: 'var(--red-700)' },
-};
 
 /* ----------------------------- Avatar ----------------------------- */
 export function Avatar({ name = '', initials = '', tone = 'brand', size = 'md', src = null, style = {} }) {
@@ -200,42 +195,6 @@ export function ConfidenceMeter({ value = 0, tone = 'brand', label = 'Confidence
         </div>
       )}
     </div>
-  );
-}
-
-/* ----------------------------- ProgressSteps ----------------------------- */
-export function ProgressSteps({ steps = [], current = 1, style = {} }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', ...style }}>
-      {steps.map((label, i) => {
-        const n = i + 1;
-        const done = current > n;
-        const active = current === n;
-        const last = i === steps.length - 1;
-        return (
-          <div key={n} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative' }}>
-            {!last && <div style={{ position: 'absolute', top: 16, left: '50%', width: '100%', height: 2, background: done ? 'var(--blue-500)' : 'var(--ink-200)', zIndex: 0 }} />}
-            <div style={{ position: 'relative', zIndex: 1, width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, border: `2px solid ${done || active ? 'var(--blue-600)' : 'var(--ink-200)'}`, background: active ? 'var(--blue-600)' : done ? 'var(--blue-50)' : 'var(--surface)', color: active ? '#fff' : done ? 'var(--blue-700)' : 'var(--text-faint)', transition: 'all var(--dur-base) var(--ease-out)' }}>
-              {done ? '✓' : n}
-            </div>
-            <span style={{ marginTop: 8, fontFamily: 'var(--font-sans)', fontSize: 'var(--text-xs)', fontWeight: 700, textAlign: 'center', color: current >= n ? 'var(--text-strong)' : 'var(--text-faint)', maxWidth: 110 }}>{label}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/* ----------------------------- SeverityBadge ----------------------------- */
-export function SeverityBadge({ level = 'standard', children = null, size = 'md', style = {} }) {
-  const l = SEVERITY[level] || SEVERITY.standard;
-  const sizes = { sm: { fs: 11, pad: '3px 9px', dot: 6 }, md: { fs: 13, pad: '5px 12px', dot: 8 }, lg: { fs: 15, pad: '7px 15px', dot: 10 } };
-  const s = sizes[size] || sizes.md;
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: s.pad, background: l.bg, color: l.fg, borderRadius: 'var(--radius-pill)', fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: s.fs, lineHeight: 1, whiteSpace: 'nowrap', ...style }}>
-      <span style={{ width: s.dot, height: s.dot, borderRadius: '50%', background: l.color, flex: 'none' }} />
-      {children || l.label}
-    </span>
   );
 }
 
@@ -502,7 +461,7 @@ const FOCUSABLE_SELECTOR = 'a[href],button:not([disabled]),textarea:not([disable
  * of the dialog the user is actually looking at. */
 const dialogStack = [];
 
-export function useDialogBehaviour({ active = true, onClose, closeOnEscape = true } = {}) {
+function useDialogBehaviour({ active = true, onClose, closeOnEscape = true } = {}) {
   const ref = useRef(null);
   // The handlers live in a ref so the effect's only dependency is `active`.
   // Re-running it would pull focus back to the first control — and callers
