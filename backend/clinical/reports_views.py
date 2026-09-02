@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.models import Role
+from accounts.scoping import role_of as _role
 from accounts.permissions import CanViewResults, IsAdminOrStaff
 from children.models import Child, TerminationRecord
 from children.serializers import ChildSerializer
@@ -22,8 +23,6 @@ from clinical.serializers import (
 )
 
 
-def _role(request):
-    return getattr(getattr(request.user, "role", None), "role_name", None)
 
 
 class ChildReportView(generics.GenericAPIView):

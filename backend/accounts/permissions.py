@@ -1,10 +1,8 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 from accounts.models import Role
-
-
-def _role_name(request):
-    role = getattr(request.user, "role", None)
-    return role.role_name if role else None
+# The one definition, shared with every viewset that scopes by role. This file
+# held the fifth hand-written copy.
+from accounts.scoping import role_of as _role_name
 
 
 class IsAdministrator(BasePermission):

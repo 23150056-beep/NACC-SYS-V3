@@ -11,6 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.models import Role
+from accounts.scoping import role_of as _role, role_of_user as _role_of
 from accounts.permissions import IsAdministrator, IsAdminOrStaff
 from assistant import evaluation, prompts, tools
 from assistant.models import AssistantJob, AssistantSetting
@@ -24,12 +25,6 @@ from scheduling.models import Appointment
 logger = logging.getLogger(__name__)
 
 
-def _role_of(user):
-    return getattr(getattr(user, "role", None), "role_name", None)
-
-
-def _role(request):
-    return _role_of(request.user)
 
 
 def _brief_only_author(child, user, role):

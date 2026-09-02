@@ -8,6 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.models import Role
+from accounts.scoping import role_of as _role
 from activity.models import ActivityLog
 from activity.services import log_activity
 from children.models import Child
@@ -16,8 +17,6 @@ from scheduling.models import AvailabilityBlock, Appointment
 from scheduling.serializers import AvailabilityBlockSerializer, AppointmentSerializer
 
 
-def _role(request):
-    return getattr(getattr(request.user, "role", None), "role_name", None)
 
 
 class AvailabilityBlockViewSet(viewsets.ModelViewSet):
