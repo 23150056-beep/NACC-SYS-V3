@@ -18,6 +18,9 @@ class ActivityLogViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
             qs = qs.filter(recipient=self.request.user)
         elif role == Role.STAFF:
             # Staff see the case-coordination stream (records + assessments).
+            # "Guardian" stays in this list although the model is gone: these
+            # are log rows, and the ones written before July still say it.
+            # Dropping it here would hide history, not tidy it.
             qs = qs.filter(category=ActivityLog.RECORD,
                            entity_type__in=["Child", "Guardian", "Assessment"])
         # Administrator: full audit stream (unchanged).
