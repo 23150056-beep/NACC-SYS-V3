@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -98,7 +98,7 @@ export default function Children() {
 
   useEffect(() => { if (status !== 'inactive') setReasonFilter(''); }, [status]);
 
-  const load = () => {
+  const load = useCallback(() => {
     // Include inactive (terminated) cases — the V2 roster shows them with chips.
     api.get('/children/?include_archived=true').then((r) => setChildren(r.data));
     // Active psychologists + current caseload (admin/staff endpoint — also lets Staff assign).
@@ -119,8 +119,8 @@ export default function Children() {
         setApptsByChild(map);
       })
       .catch(() => setApptsByChild({}));
-  };
-  useEffect(() => { load(); }, []);
+  }, [canManage]);
+  useEffect(() => { load(); }, [load]);
 
   const setQ = (v) => setSearchParams(v ? { q: v } : {}, { replace: true });
 
@@ -407,11 +407,11 @@ function ChildDrawer({ child, upcoming = [], canEdit, canTerminate, isAdmin = fa
   // inline effect body) so a later task can re-invoke it after booking.
   const [slots, setSlots] = useState(null);
   const canSuggestSlots = child.status === 'active' && !!child.psychologist_name;
-  const loadSlots = () => {
+  const loadSlots = useCallback(() => {
     if (!canSuggestSlots) { setSlots(null); return; }
     api.get(`/availability/next-slots/?child=${child.id}`).then((r) => setSlots(r.data)).catch(() => setSlots(null));
-  };
-  useEffect(() => { loadSlots(); /* eslint-disable-next-line */ }, [child.id, child.status, child.psychologist_name]);
+  }, [child.id, canSuggestSlots]);
+  useEffect(() => { loadSlots(); }, [loadSlots]);
   // One-click first booking — clicking a suggested slot opens an inline
   // confirm (purpose + Book/Cancel) instead of navigating to /schedule.
   const [pendingSlot, setPendingSlot] = useState(null);

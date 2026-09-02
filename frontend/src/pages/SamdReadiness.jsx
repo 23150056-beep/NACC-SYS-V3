@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import { useToast } from '../context/ToastContext';
 import {
@@ -338,11 +338,11 @@ export default function SamdReadiness() {
     api.get('/samd/checklist/').then((r) => setChecklist(r.data)).catch(() => toast.error('Could not load the checklist.'));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const loadRounds = () => {
+  const loadRounds = useCallback(() => {
     setLoadingRounds(true);
     api.get('/samd/assessments/').then((r) => setRounds(r.data)).catch(() => toast.error('Could not load self-assessments.')).finally(() => setLoadingRounds(false));
-  };
-  useEffect(() => { loadRounds(); }, []);
+  }, [toast]);
+  useEffect(() => { loadRounds(); }, [loadRounds]);
 
   const openRound = (id) => {
     api.get(`/samd/assessments/${id}/`).then((r) => {

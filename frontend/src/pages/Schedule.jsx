@@ -38,13 +38,13 @@ export default function Schedule() {
   const [slotHints, setSlotHints] = useState(null);
   const [openPsy, setOpenPsy] = useState(null); // { id, name } — full-page availability view (admin/staff)
 
-  const load = () => {
+  const load = useCallback(() => {
     api.get('/appointments/').then((r) => setAppointments(r.data)).catch(() => {});
     api.get('/availability/').then((r) => setBlocks(r.data)).catch(() => {});
     api.get('/children/').then((r) => setChildren(r.data.filter((c) => c.status === 'active'))).catch(() => {});
     if (!isPsych) api.get('/psychologists/').then((r) => setPsychologists(r.data)).catch(() => {});
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  }, [isPsych]);
+  useEffect(() => { load(); }, [load]);
   useEffect(() => {
     if (!booking?.child) { setSlotHints(null); return; }
     api.get(`/availability/next-slots/?child=${booking.child}`).then((r) => setSlotHints(r.data)).catch(() => setSlotHints(null));
