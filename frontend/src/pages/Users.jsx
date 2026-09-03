@@ -278,6 +278,12 @@ export default function Users() {
   useEffect(() => {
     if (!roleChange) return;
     roleFieldRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+    // roleChange is derived fresh on every render, so depending on the object
+    // itself would scroll the field into view on every keystroke. The only
+    // thing that should move the page is the target role actually changing.
+    // (The disable has to sit on the line before the dependency array — that
+    // is where the rule reports, not on the useEffect above.)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roleChange?.to]);
 
   const save = (e) => {
