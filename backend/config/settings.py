@@ -197,6 +197,12 @@ STATIC_ROOT = Path(os.getenv("STATIC_ROOT", BASE_DIR / "staticfiles"))
 # via urlpatterns, and the S3 bucket below stays private for the same reason.
 MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", BASE_DIR / "media"))
 MEDIA_URL = "media/"
+
+# Django isolates the test database and not the test files. Without this, a
+# test that saves a FileField writes into MEDIA_ROOT above and leaves it
+# there — 1,485 orphans had collected under media/case-referrals.
+TEST_RUNNER = "config.test_runner.IsolatedMediaRunner"
+
 FILE_UPLOAD_MAX_MEMORY_SIZE = int(
     os.getenv("FILE_UPLOAD_MAX_MB", "15")
 ) * 1024 * 1024

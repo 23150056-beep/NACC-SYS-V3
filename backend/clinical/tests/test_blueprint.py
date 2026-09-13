@@ -1,9 +1,7 @@
 """Tests for the blueprint additions: case tracker, baseline category,
 case-referral sharing, and the QR opinionnaire flow."""
-import tempfile
 
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
@@ -14,7 +12,6 @@ from clinical.models import (
 )
 
 User = get_user_model()
-TEMP_MEDIA = tempfile.mkdtemp(prefix="nacc-test-media-bp-")
 
 
 class BlueprintBase(APITestCase):
@@ -94,7 +91,6 @@ class CaseTrackerTest(BlueprintBase):
         self.assertEqual(resp.data["counseling_per_psychologist"][0]["count"], 1)
 
 
-@override_settings(MEDIA_ROOT=TEMP_MEDIA)
 class CaseReferralTest(BlueprintBase):
     def _pdf(self):
         import fitz

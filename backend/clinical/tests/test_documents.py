@@ -1,11 +1,8 @@
-import tempfile
 
 import fitz  # PyMuPDF
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import override_settings
 from rest_framework.test import APITestCase
 
-TEMP_MEDIA = tempfile.mkdtemp(prefix="nacc-test-media-")
 from django.contrib.auth import get_user_model
 from accounts.models import Role
 from children.models import Child
@@ -43,7 +40,6 @@ class DocumentsBase(APITestCase):
         return SimpleUploadedFile("report.pdf", doc.tobytes(), content_type="application/pdf")
 
 
-@override_settings(MEDIA_ROOT=TEMP_MEDIA)
 class PsychologicalReportTest(DocumentsBase):
     def test_upload_extracts_text_and_uuid_filename(self):
         self._auth("p@racco1.gov.ph")
@@ -84,7 +80,6 @@ class PsychologicalReportTest(DocumentsBase):
         self.assertEqual(resp.status_code, 403)
 
 
-@override_settings(MEDIA_ROOT=TEMP_MEDIA)
 class ConsentScanDownloadTest(DocumentsBase):
     def test_scan_download_scoped(self):
         from clinical.models import ConsentRecord

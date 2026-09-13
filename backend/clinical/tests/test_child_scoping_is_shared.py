@@ -14,11 +14,9 @@ without scoping the endpoint fails immediately.
 Every case is the same shape and it is the shape that matters: the record
 belongs to somebody else's child, and the psychologist asking must not see it.
 """
-import tempfile
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
@@ -30,11 +28,9 @@ from clinical.models import (
     RemarkNote, ResultEntry, SelfReportFlag, TreatmentPlan,
 )
 
-TEMP_MEDIA = tempfile.mkdtemp(prefix="nacc-scoping-test-")
 User = get_user_model()
 
 
-@override_settings(MEDIA_ROOT=TEMP_MEDIA)
 class PsychologistSeesOnlyAssignedChildrenTest(APITestCase):
     """One record per endpoint, all belonging to a child assigned to someone
     else. Every list must come back empty."""

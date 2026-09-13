@@ -1,9 +1,7 @@
-import tempfile
 
 from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import override_settings
 from accounts.models import Role
 from children.models import Child
 from clinical.models import (
@@ -11,7 +9,6 @@ from clinical.models import (
     ClinicalInterviewRecord, ProblemEntry,
 )
 
-TEMP_MEDIA = tempfile.mkdtemp(prefix="nacc-test-media-")
 
 User = get_user_model()
 
@@ -155,7 +152,6 @@ class ConsentRecordTest(ClinicalBase):
         self._auth("p@racco1.gov.ph")
         self.assertEqual(len(self.client.get("/api/consents/").data), 0)
 
-    @override_settings(MEDIA_ROOT=TEMP_MEDIA)
     def test_consent_scan_upload_and_download(self):
         self._auth("p@racco1.gov.ph")
         scan = SimpleUploadedFile("consent.pdf", b"%PDF-1.4 test", content_type="application/pdf")
