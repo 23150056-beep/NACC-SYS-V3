@@ -223,13 +223,21 @@ point; it is what a divergence detector would be built to find.
 Refuses to run against a hosted database or with DEBUG=False, and the guard
 runs before anything opens a connection.
 
-**Seeded data must satisfy the rules the endpoint enforces.** This has now
-failed twice in one day. No seeded psychologist had a bookable hour, so the
-calendar refused all forty children; then the referral gate shipped and refused
-them again, because the test fixtures had referrals and the seeder did not. A
-rule and a seeder maintained separately drift, and the tests do not notice.
-Both seeders are now covered by a test that goes through the real rule, and
-`fix_demo_schedule` repairs an existing database without re-seeding it.
+**Seeded data must satisfy the rules the endpoint enforces.** Three times
+now. No seeded psychologist had a bookable hour, so the calendar refused all
+forty children; then the referral gate shipped and refused them again, because
+the test fixtures had referrals and the seeder did not; then the same two
+faults turned up on the HOSTED path, where `import_demo_data` loads the
+fixture. A rule and a seeder maintained separately drift, and the tests do not
+notice.
+
+The hosted one was the worst of the three, because the repair was unreachable:
+a referral is a file and availability belongs to the branch's own accounts, so
+the fixture can carry neither, and `fix_demo_schedule` — which fixes exactly
+this — refuses hosted databases by design. `import_demo_data` now installs
+both itself. Every one of these paths is covered by a test that goes through
+`booking.bookable_slots`, the real rule; asserting rows exist passes while the
+calendar stays empty.
 
 
 ## Booking and the calendar
