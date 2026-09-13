@@ -372,7 +372,11 @@ Settings, no per-feature flags.
 - **Set `OLLAMA_HOST=127.0.0.1`.** It binds `0.0.0.0` by default, which puts an
   unauthenticated model server on the local network. Also
   `OLLAMA_KEEP_ALIVE=-1` (avoids a ~12-16s cold load, costs 1.9 GB resident) and
-  `OLLAMA_NUM_PARALLEL=1`.
+  `OLLAMA_NUM_PARALLEL=1`. **`start-ollama.bat` sets all of these and
+  `run-local.bat` calls it**, so the local copy starts the model server itself.
+  The trap is the Ollama tray app: it starts its own server at login, bound to
+  every interface, and the script can then only stand aside and warn. The four
+  variables are asserted in a test, because losing the first one is silent.
 - **The notes are Taglish, and that breaks things.** Measured: remark polish
   drifts into Tagalog on 67% of Taglish inputs and 0% of English ones, so a
   drifted draft is now rejected rather than shown. Briefs are far better —

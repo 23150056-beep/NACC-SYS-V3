@@ -69,9 +69,10 @@ in Region I do.
 
 ## The writing assistant
 
-Off by default. The system is fully usable without it — every AI feature
-degrades to a message the screen absorbs rather than an error. Turning it on
-is optional and entirely local; nothing about it reaches the network.
+On by default, and entirely local — nothing about it reaches the network. The
+system is still fully usable without Ollama running: every AI feature degrades
+to a message the screen absorbs rather than an error, so a machine without it
+is missing those features and nothing else.
 
 1. Install [Ollama](https://ollama.com) and pull the model this was built and
    measured against:
@@ -80,21 +81,31 @@ is optional and entirely local; nothing about it reaches the network.
    ollama pull qwen2.5:3b-instruct
    ```
 
-2. Before starting Ollama, set:
+2. Nothing. `run-local.bat` starts the model server itself, with these
+   already applied — `start-ollama.bat` does it, and can be run on its own:
 
    ```
+   OLLAMA_HOST=127.0.0.1
    OLLAMA_KEEP_ALIVE=-1
    OLLAMA_NUM_PARALLEL=1
    OLLAMA_MAX_LOADED_MODELS=1
    ```
 
-   These keep one model loaded indefinitely and one generation running at a
-   time. Reloading between calls and running generations concurrently were
-   both measured slower on this hardware, not faster.
+   The first is the one with teeth: Ollama listens on every network interface
+   unless told otherwise, which puts an unauthenticated model server on
+   whatever network this machine has joined. The other three keep one model
+   loaded indefinitely and one generation running at a time — reloading
+   between calls and running generations concurrently were both measured
+   slower on this hardware, not faster.
 
-3. Sign in as the administrator, open **Settings**, and switch on **Assistant
-   enabled** under "Local writing assistant". Confirm it is answering with the
-   **Test connection** button there, or from a terminal:
+   Letting the Ollama tray app start at login instead applies none of them.
+   `start-ollama.bat` stands aside when a server is already listening, and
+   says so when that server is bound to every interface.
+
+3. Confirm it is answering. Sign in as the administrator, open **Settings**,
+   and use **Test connection** under "Local writing assistant" — the
+   **Assistant enabled** switch there is already on, and exists so a
+   misbehaving feature can be stopped without a deploy. Or from a terminal:
 
    ```
    cd backend
