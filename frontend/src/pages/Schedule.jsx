@@ -61,6 +61,52 @@ function patternsOf(blocks) {
     .sort((a, b) => a.start.localeCompare(b.start));
 }
 
+const DAY_ABBR = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/* Which weekdays this psychologist actually works, read off their own blocks.
+   The date field accepts any day, and a native <input type="date"> cannot grey
+   out a weekday — so rather than let somebody wander onto a dead day and find
+   out only from the empty panel underneath, the field says which days exist
+   and offers the real ones. */
+function workingWeekdays(blocks, psychologistId) {
+  return [...new Set(blocks
+    .filter((b) => String(b.psychologist) === String(psychologistId)
+                   && b.active !== false && b.weekday != null)
+    .map((b) => b.weekday))].sort((a, b) => a - b);
+}
+
+function spokenDays(weekdays) {
+  if (!weekdays.length) return '';
+  const run = weekdays.every((d, i) => i === 0 || d === weekdays[i - 1] + 1);
+  return run && weekdays.length > 2
+    ? `${DAY_ABBR[weekdays[0]]}–${DAY_ABBR[weekdays[weekdays.length - 1]]}`
+    : weekdays.map((d) => DAY_ABBR[d]).join(', ');
+}
+
+/* The next few dates this person can actually be booked on: a weekday they
+   work, not covered by leave, today or later. The slot grid still has the
+   final say — this only saves the guessing. */
+function nextWorkingDates(blocks, leave, psychologistId, count = 5) {
+  const weekdays = workingWeekdays(blocks, psychologistId);
+  const dated = new Set(blocks
+    .filter((b) => String(b.psychologist) === String(psychologistId) && b.date)
+    .map((b) => b.date));
+  if (!weekdays.length && !dated.size) return [];
+  const away = leave.filter((l) => String(l.psychologist) === String(psychologistId));
+  const out = [];
+  const cursor = new Date();
+  cursor.setHours(0, 0, 0, 0);
+  for (let i = 0; i < 60 && out.length < count; i += 1) {
+    const iso = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+    const weekday = (cursor.getDay() + 6) % 7;   // JS Sunday=0 -> Monday=0
+    const works = weekdays.includes(weekday) || dated.has(iso);
+    const onLeave = away.some((l) => iso >= l.starts_on && iso <= l.ends_on);
+    if (works && !onLeave) out.push({ iso, label: `${DAY_ABBR[weekday]} ${cursor.getDate()}` });
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return out;
+}
+
 const todayIso = () => {
   // Local date. toISOString() converts to UTC and hands back yesterday for
   // anybody east of Greenwich, which is all of the Philippines.
@@ -142,6 +188,14 @@ export default function Schedule() {
   }, [booking?.child, booking?.psychologist, children, isPsych]);
 
   const bookingPsy = booking?.psychologist || (isPsych ? user?.id : '');
+  const bookingWorkingDays = useMemo(
+    () => (bookingPsy ? workingWeekdays(blocks, bookingPsy) : []),
+    [blocks, bookingPsy],
+  );
+  const bookingNextDays = useMemo(
+    () => (bookingPsy ? nextWorkingDates(blocks, leave, bookingPsy) : []),
+    [blocks, leave, bookingPsy],
+  );
   const bookingDate = booking?.date;
   const bookingDuration = booking?.duration;
   const bookingChild = booking?.child;
@@ -859,11 +913,43 @@ export default function Schedule() {
                   </Select>
                 </FormField>
               </div>
-              <FormField label="Day" required>
+              <FormField
+                label="Day" required
+                hint={bookingPsy && bookingWorkingDays.length
+                  ? `Works ${spokenDays(bookingWorkingDays)}. Any other day has nothing to offer.`
+                  : undefined}
+              >
                 <Input
                   type="date" value={booking.date} min={todayIso()}
                   onChange={(e) => setBooking({ ...booking, date: e.target.value, time: '' })}
                 />
+                {/* The days they can actually be booked on. A native date input
+                    cannot grey out a weekday, so the alternative was letting
+                    somebody try days one at a time and read an empty panel
+                    each time. Leave is excluded here too. */}
+                {bookingNextDays.length > 0 && (
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                    {bookingNextDays.map((d) => {
+                      const on = booking.date === d.iso;
+                      return (
+                        <button
+                          key={d.iso} type="button" aria-pressed={on}
+                          onClick={() => setBooking({ ...booking, date: d.iso, time: '' })}
+                          style={{
+                            padding: '5px 10px', borderRadius: 'var(--radius-pill)',
+                            border: `1px solid ${on ? 'var(--blue-600)' : 'var(--border)'}`,
+                            background: on ? 'var(--blue-600)' : 'var(--surface)',
+                            color: on ? '#fff' : 'var(--text-body)',
+                            fontFamily: 'var(--font-sans)', fontWeight: 700,
+                            fontSize: 11.5, cursor: 'pointer',
+                          }}
+                        >
+                          {d.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </FormField>
 
               {/* The time is chosen, not typed. Every option here has been put

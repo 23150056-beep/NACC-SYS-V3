@@ -723,7 +723,7 @@ export default function ChildProgressReport() {
               {isStaffOrAdmin && (
                 <Button
                   variant="primary" size="sm"
-                  onClick={() => navigate(`/report?upload=1&child=${child.id}`)}
+                  onClick={() => navigate(`/reports?upload=1&child=${child.id}`)}
                   iconLeft={<Icon name="upload" size={15} />}
                 >
                   Upload case referral

@@ -237,16 +237,48 @@ export default function Children() {
     delete payload.psychologist_name;
     delete payload._origPsychologist; delete payload.termination; delete payload.photo;
     delete payload.updated_at; delete payload._conflict; delete payload._draft;
+    // A file, not a column. It is uploaded separately once the child exists,
+    // because a CaseReferral needs a child id to belong to.
+    const referralFile = form.referralFile || null;
+    delete payload.referralFile;
     if (!payload.psychologist) payload.psychologist = null;
     if (!payload.birth_date) delete payload.birth_date;
     if (!payload.date_of_admission) delete payload.date_of_admission;
     if (!payload.date_of_placement_to_custodian) delete payload.date_of_placement_to_custodian;
     if (form.id) delete payload.fullname;
     try {
-      if (form.id) await api.put(`/children/${form.id}/`, payload);
-      else await api.post('/children/', payload);
+      let saved;
+      if (form.id) saved = (await api.put(`/children/${form.id}/`, payload)).data;
+      else saved = (await api.post('/children/', payload)).data;
       try { localStorage.removeItem(draftKey); } catch { /* private browsing */ }
-      toast.success(form.id ? 'Record updated' : 'Record added');
+
+      /* The referral goes up straight after, against the id the child has just
+         been given. Separately on purpose: a CaseReferral belongs to a child,
+         so there is no id to attach it to until the record exists.
+
+         A failure here must be loud. The child IS saved at this point, and a
+         quiet failure leaves somebody with a record they cannot book against
+         and no idea why — which is exactly the dead end this field was added
+         to remove. */
+      let referralFailed = false;
+      if (referralFile && saved?.id) {
+        const fd = new FormData();
+        fd.append('child', saved.id);
+        fd.append('file', referralFile);
+        fd.append('description', 'Case referral');
+        try {
+          await api.post('/case-referrals/', fd);
+        } catch {
+          referralFailed = true;
+        }
+      }
+
+      if (referralFailed) {
+        toast.error('Record saved, but the case referral did not upload. '
+          + 'Open the record and try again — sessions cannot be booked without it.');
+      } else {
+        toast.success(form.id ? 'Record updated' : 'Record added');
+      }
       setForm(null);
       load();
       refreshActivity();
