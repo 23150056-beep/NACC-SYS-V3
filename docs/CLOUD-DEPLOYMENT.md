@@ -197,6 +197,10 @@ reproduce a deployment problem.
 |---|---|---|
 | `BREVO_API_KEY` | — | Unset = no assignment emails are sent; nothing else changes. |
 | `BREVO_SENDER_EMAIL` | `racco1nacc@gmail.com` | Must be a verified sender in the Brevo account. |
+| `SMS_PROVIDER` | unset | Unset = messages go to the log, nothing is sent. Set to `semaphore` or `philsms` to switch texts on. See §9b. |
+| `SMS_API_KEY` | — | The chosen gateway's API key. Required when SMS_PROVIDER is set. |
+| `SMS_SENDER_NAME` | unset | An approved Semaphore sender name, e.g. NACC. Unset uses their shared sender. |
+| `SESSION_REMINDER_TOKEN` | unset | Lets a scheduler trigger the daily reminder. Unset = that endpoint 404s. See §9c. |
 | `BREVO_SENDER_NAME` | `NACC RACCO1` | |
 
 The email carries the **case number only** — see
@@ -321,6 +325,7 @@ once the contracts exist.
 | Object storage | Cloudflare R2, bucket `nacc-v3-media` | Set by the bucket's location hint — **confirm this in the R2 dashboard** | Uploaded reports, consent scans |
 | Sign-in | Google Identity Services | Google global | Email and display name of staff and psychologists only. **No child data reaches Google.** |
 | Transactional mail | Brevo | Brevo (EU) | One message: "a case has been assigned to you", carrying the **case number only**. No child name, no case type, no clinical detail. |
+| Text messages | Semaphore | Philippines | Three messages, each a prompt to sign in: a new assignment (**case number only**), a temporary password *notice* (never the password), and a count of tomorrow's sessions. No child name, no case detail. |
 | AI (writing assistant) | None — does not run on this deployment (see below) | — | — |
 
 **State it plainly, because a panel will ask:** under this deployment, no
@@ -429,6 +434,7 @@ to reach.
 - [ ] Data-processing agreement executed with **Neon**
 - [ ] Data-processing agreement executed with **Cloudflare**
 - [ ] Data-processing agreement executed with **Brevo** (transactional mail)
+- [ ] Data-processing agreement executed with **Semaphore** (text messages), if SMS is switched on
 - [ ] R2 bucket location hint confirmed and recorded in the table above
 - [ ] All three providers listed as sub-processors in the agency's NPC records
 - [ ] Hosting arrangement reviewed by the agency's Data Protection Officer
@@ -754,6 +760,207 @@ curl -X POST https://api.brevo.com/v3/smtp/email \
   messages needs the same consideration.
 
 ---
+
+## 9b. Text messages (Semaphore) setup
+
+What this switches on: staff who have **verified their own mobile number**
+receive a text for three things — a new case assignment, a notice that a
+temporary password is waiting, and a count of the next day's sessions.
+
+Nothing confidential travels this way. No child's name, no case detail, no
+password. Each message says to sign in. That is not caution for its own sake:
+a text is unencrypted, passes through a telco, and sits on a lock screen
+anyone standing nearby can read. The rule the mail already follows (case
+number, never a name) is applied harder here, not relaxed.
+
+**It is off until configured.** With no gateway set, messages are written to
+the server log and nothing is sent. That is the default on purpose — a missing
+key should neither crash a save nor silently do nothing.
+
+### Why Semaphore rather than a global provider
+
+International A2P termination into the Philippines is expensive, so a global
+CPaaS charges roughly **₱10 per message** here. A Philippine aggregator on
+domestic interconnects is **well under ₱1** for the same delivery to the same
+handset. At this office's volume — around a hundred messages a month — that is
+the difference between roughly ₱1,000/month and under ₱100/month.
+
+Coverage is identical: Semaphore reaches Globe, Smart, DITO and the sub-brands
+(TM, TNT, Sun, GOMO).
+
+### Step 1 — Get an API key
+
+Three gateways are supported. The first two are local aggregators on
+domestic interconnects; the third is not an aggregator at all. Pick on what
+you can actually open an account for and afford — the APIs are all one setting
+apart.
+
+| | `semaphore` | `philsms` | `textbee` |
+|---|---|---|---|
+| Per message | ~₱0.50 | from ~₱0.35 | free (your own SIM) |
+| Minimum outlay | a top-up | a top-up — check the dashboard, not the marketing page | none |
+| Account needed | business | business | **personal** |
+| Sender shown | `NACC` once approved | `NACC` once approved | **the handset's own number** |
+| Volume ceiling | your credit | your credit | 50/day, 300/month on the free plan |
+| Needs | nothing | nothing | an Android phone, kept on and online |
+
+**`textbee` is the one to use when the aggregators are out of reach**, which
+they were: both wanted a business account and a top-up worth about three years
+of this office's traffic. The app runs on an Android handset, the SIM in it
+sends the message, and the API is a relay telling the phone what to send. No
+business registration, no sender-name approval, no credit.
+
+The trade is real and worth stating plainly. Messages arrive from a personal
+mobile number rather than `NACC`, and if that phone is off, out of signal or
+unpaired, nothing sends — so the check button counts linked phones rather than
+credits for this provider, because an empty device list is exactly what a
+working setup looks like otherwise. At around a hundred messages a month the
+free plan's 300 is comfortable; the 50/day cap is far above the ceiling here,
+since the daily reminder is one message per psychologist rather than one per
+appointment.
+
+1. `semaphore` / `philsms`: sign up at <https://semaphore.co> or
+   <https://philsms.com>, copy the API key, load credit.
+2. `textbee`: sign up at <https://textbee.dev>, install the Android app on the
+   handset that holds the SIM, pair it, copy the API key.
+
+Nothing in the code prefers any of them, and moving between them is the
+`SMS_PROVIDER` line and nothing else. That is why the interface exists.
+
+### Step 2 — Register a sender name (optional, recommended)
+
+Without one, messages arrive from Semaphore's shared sender. With one they
+arrive from `NACC`. Register it in the dashboard under **Sender Names** — it
+needs their approval before it works, and an unapproved name is rejected at
+send time with a message the test button will show you verbatim.
+
+### Step 3 — Set four variables on the API service
+
+| Variable | Value |
+|---|---|
+| `SMS_PROVIDER` | `semaphore`, `philsms` or `textbee` |
+| `SMS_API_KEY` | the key from step 1 |
+| `SMS_SENDER_NAME` | your approved sender name; ignored by `textbee` |
+| `SMS_DEVICE_ID` | `textbee` only, and only with more than one phone paired |
+| `SMS_ENDPOINT` | leave unset — each provider has its own default URL |
+
+Leaving `SMS_PROVIDER` unset keeps the console behaviour, which is what you
+want on the demo.
+
+### Step 4 — Prove it works before trusting it
+
+Every notification send happens on a background thread, so a gateway refusing
+a message looks exactly like one delivering it. There is a button for this,
+for the same reason the mail has one.
+
+1. **Settings** → **Text messages** → **Check the key**. This asks the gateway
+   who you are and sends nothing, so a mistyped key costs no credit and needs
+   no verified handset. On `textbee` it reports how many phones are paired,
+   which is that gateway's real failure mode.
+2. Sign in as an administrator → **My Profile** → add and verify your own
+   mobile number. You will receive a six-digit code.
+3. **Settings** → **Text messages** → **Send a test text**.
+3. The screen prints what the gateway actually replied — a bad key, an
+   unapproved sender name and an empty balance all say so in their own words.
+
+If no code arrives at step 1, the gateway is refusing and step 2 will say why.
+
+### What breaks it, in order of likelihood
+
+- **`SMS_PROVIDER` still unset.** Messages go to the log, not to a handset.
+  The test button says so plainly rather than reporting success.
+- **`textbee`: the phone.** Switched off, out of signal, out of battery or
+  unpaired all stop delivery while the API key stays perfectly valid. Check
+  the key — it counts paired phones.
+- **Sender name not approved.** Rejected at send time, named in the error.
+- **No credit.** Rejected with a balance message.
+- **The recipient never verified their number.** An unverified number is
+  skipped silently by design — a number somebody typed may be a typo, and a
+  typo is a stranger's handset. Check **Users** for who has a verified number.
+- **A link in the message.** Since 2023 the NTC has required carriers to block
+  every SMS containing a clickable URL, in real time — so a message with one
+  is dropped by the network after the gateway has accepted and billed it,
+  which reads as a delivery failure with nobody at fault. No message this
+  system sends contains a URL; they say "Sign in to review it" instead, and a
+  well-meant edit adding a link is the way that quietly stops being true.
+
+### Sending the daily reminder
+
+The other two messages fire from the actions that cause them. The session
+reminder is a scheduled job:
+
+```
+manage.py send_session_reminders             # tomorrow
+manage.py send_session_reminders --dry-run   # print, send nothing
+```
+
+Run it once a day. It is safe to run twice — it records who it has already
+told and will not double-text. On Render's free plan there is no cron, so this
+is either a paid add-on or somebody running it; `--dry-run` first is a good
+habit either way.
+
+## 9c. Running the daily reminder without paying for cron
+
+Two of the three text messages fire from the action that causes them — an
+assignment, a password reset. The session reminder is the odd one: it has to
+happen at a time, and Render's free plan runs no scheduled jobs.
+
+The paid add-on is not worth buying for one text a day, so the job is exposed
+as an endpoint and something free calls it. **The schedule lives outside; the
+work stays on the server.** Whatever calls it knows a URL and a token, and
+never touches the database.
+
+### Recommended: GitHub Actions (free, and you already have it)
+
+`.github/workflows/session-reminders.yml` is committed and ready. It runs at
+09:00 UTC, which is 17:00 in Manila.
+
+1. Make a token: `openssl rand -hex 32` — or any long random string.
+2. **Render** → the API service → **Environment** → add
+   `SESSION_REMINDER_TOKEN` = that value. Until this is set the endpoint 404s.
+3. **GitHub** → the repo → **Settings → Secrets and variables → Actions** →
+   add two repository secrets:
+   - `SESSION_REMINDER_TOKEN` — the same value
+   - `SESSION_REMINDER_URL` — `https://<your-api>.onrender.com/api/tasks/session-reminders/`
+4. **Actions** tab → **Daily session reminders** → **Run workflow**, with
+   *dry run* ticked. It reports how many people would be texted without
+   sending anything.
+
+Two things to know about free scheduled workflows. They are **best effort** and
+can be delayed by tens of minutes at busy times — fine for "your sessions
+tomorrow", not fine for anything time-critical. And GitHub **disables
+scheduled workflows on a repository with no activity for 60 days**, with an
+email first; any push re-enables it.
+
+### Alternative: a free cron pinger
+
+Anything that can POST on a schedule works — cron-job.org and UptimeRobot both
+have free tiers. Point it at the same URL with the header
+`X-Task-Token: <your token>`. Same two setup steps on the Render side.
+
+Use this if you would rather not have the token in GitHub, or if the repository
+goes quiet enough to trip the 60-day rule.
+
+### Alternative: nobody schedules it
+
+The reminder is a convenience, not a safety feature — the schedule screen is
+the source of truth and it is always right. If nothing is scheduling this, the
+other two messages still work, and somebody can run:
+
+```
+manage.py send_session_reminders --dry-run
+manage.py send_session_reminders
+```
+
+### Why calling it twice is safe
+
+It records who it has told, for 36 hours. A second call the same day sends
+nothing and reports `skipped`. That is deliberate: free schedulers retry, and
+the workflow itself retries a cold start, so being called more than once is
+the normal case rather than the exception.
+
+The reply counts people and never names them — it lands in a CI log, and a
+caseload has no business there.
 
 ## 10. Troubleshooting
 

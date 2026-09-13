@@ -1,10 +1,13 @@
 from datetime import timedelta
 
+from django.core.files.uploadedfile import SimpleUploadedFile
+
 from django.utils import timezone
 from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
 from accounts.models import Role
 from children.models import Child
+from clinical.models import CaseReferral
 from scheduling.models import AvailabilityBlock, Appointment
 
 User = get_user_model()
@@ -19,6 +22,25 @@ def next_weekday(weekday, hour):
     if candidate <= now:
         candidate += timedelta(days=7)
     return candidate
+
+
+def give_referral(child, uploaded_by=None):
+    """The social worker's referral, on file.
+
+    Booking now requires one - see test_referral_gate. A child who has been
+    through intake has it, so the shared fixture has it too; the tests that
+    are ABOUT the missing referral remove it and say so.
+    """
+    return CaseReferral.objects.create(
+        child=child, uploaded_by=uploaded_by,
+        file=SimpleUploadedFile("referral.pdf", b"%PDF-1.4 referral"),
+        original_filename="referral.pdf")
+
+
+def child_with_referral(name, psychologist=None):
+    child = Child.objects.create(fullname=name, assigned_psychologist=psychologist)
+    give_referral(child)
+    return child
 
 
 class SchedulingBase(APITestCase):
@@ -36,6 +58,7 @@ class SchedulingBase(APITestCase):
             email="s@racco1.gov.ph", username="s", password="pass1234", role=self.staff_role)
         self.child = Child.objects.create(
             fullname="Ana", case_type="Foster Care", assigned_psychologist=self.psy)
+        give_referral(self.child, self.staff)
         # Wednesday 9:00-12:00, capacity 2
         self.block = AvailabilityBlock.objects.create(
             psychologist=self.psy, weekday=2, start_time="09:00", end_time="12:00", capacity=2)
@@ -165,6 +188,10 @@ class BookingTest(SchedulingBase):
         aid = self._book(next_weekday(2, 10)).data["id"]
         # staff may cancel but not complete
         self.assertEqual(self.client.post(f"/api/appointments/{aid}/complete/").status_code, 403)
+        # An outcome is a claim about something that happened, so it cannot be
+        # recorded ahead of time - see test_booking_integrity. This test is
+        # about WHO may record one, so put the session in the past first.
+        Appointment.objects.filter(pk=aid).update(start=timezone.now() - timedelta(hours=2))
         # psychologist completes
         self._auth("p@racco1.gov.ph")
         resp = self.client.post(f"/api/appointments/{aid}/complete/")

@@ -33,6 +33,7 @@ class ChildSerializer(serializers.ModelSerializer):
     # which instrument titles were used (titles only — copyright policy).
     pre_assessment_status = serializers.SerializerMethodField()
     instruments_used = serializers.SerializerMethodField()
+    has_case_referral = serializers.SerializerMethodField()
 
     class Meta:
         model = Child
@@ -47,7 +48,7 @@ class ChildSerializer(serializers.ModelSerializer):
             "education_level", "current_placement", "medical_notes", "recommendation",
             "psychologist", "psychologist_name",
             "termination", "terminations",
-            "pre_assessment_status", "instruments_used",
+            "pre_assessment_status", "instruments_used", "has_case_referral",
             "updated_at",
         ]
         # The tracker moves only through the advance-status / terminate actions.
@@ -57,6 +58,23 @@ class ChildSerializer(serializers.ModelSerializer):
     def get_pre_assessment_status(self, obj):
         # 5-state pipeline status; see Child.pre_assessment_status.
         return obj.pre_assessment_status()
+
+    def get_has_case_referral(self, obj):
+        """Whether a session can be booked for this child at all.
+
+        Booking refuses a child with no referral on file, and until this field
+        existed the only way to discover that was to open the form, pick a day
+        and read the refusal — the list and the drawer showed nothing.
+
+        Reads the prefetch when the viewset supplied one rather than asking per
+        row. The list returns the whole caseload on several screens, and a
+        query per child to draw a chip is invisible here and obvious in a field
+        office.
+        """
+        cached = getattr(obj, "_prefetched_objects_cache", {}).get("case_referrals")
+        if cached is not None:
+            return bool(cached)
+        return obj.case_referrals.exists()
 
     def get_instruments_used(self, obj):
         titles = []

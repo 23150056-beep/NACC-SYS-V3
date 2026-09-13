@@ -49,6 +49,11 @@ export default function ChildForm({ form, setForm, draftKey, psychologists, bloc
     const t = setTimeout(() => {
       const data = { ...form };
       delete data._draft; delete data._conflict;
+      // A File does not survive JSON.stringify — it serialises to {}, which is
+      // TRUTHY on the way back in. The restored draft would then show a chip
+      // with no filename and try to upload an empty object. A chosen file is
+      // not something a draft can hold, so it is not kept.
+      delete data.referralFile;
       if (Object.entries(data).some(([k, v]) => k !== 'assignee_sees_history' && v)) {
         try { localStorage.setItem(draftKey, JSON.stringify(data)); } catch { /* storage full */ }
       }
@@ -394,6 +399,39 @@ export default function ChildForm({ form, setForm, draftKey, psychologists, bloc
           {step === 5 && (
           <section>
             <div className="racco-eyebrow" style={{ fontSize: 10, marginBottom: 10 }}>Assignment</div>
+
+            {/* The referral belongs on this step because this is the step where
+                somebody hands the child to a psychologist, and no session can
+                be booked without it. Without the field here the record saves
+                fine and then refuses every booking, with the only way to fix it
+                on a different screen — a dead end somebody has to be told about
+                rather than shown. Uploaded after the record is created, because
+                a referral belongs to a child and there is no id until then. */}
+            {!isPsych && (
+              <FormField
+                label="Case referral"
+                hint={form.id
+                  ? 'Already on file? Add or replace it from the child’s record.'
+                  : 'PDF or Word. The social worker’s referral — sessions cannot be booked without one, though the record saves either way.'}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <input
+                    id="case-referral-file"
+                    type="file"
+                    /* Exactly what CaseReferralSerializer.validate_file
+                       accepts. Offering a .png in the picker and then
+                       refusing it on the server is the screen lying. */
+                    accept=".pdf,.doc,.docx"
+                    onChange={(e) => setForm({ ...form, referralFile: e.target.files?.[0] || null })}
+                    style={{ fontFamily: 'var(--font-sans)', fontSize: 13, color: 'var(--text-body)' }}
+                  />
+                  {form.referralFile && (
+                    <Badge tone="success" size="sm">{form.referralFile.name}</Badge>
+                  )}
+                </div>
+              </FormField>
+            )}
+
             {isPsych ? (
               <FormField label="Assigned Psychologist" hint="Reassignment is done by admin/staff.">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 13px', borderRadius: 'var(--radius-md)', background: 'var(--ink-50)', border: '1px solid var(--border)', color: 'var(--text-strong)', fontWeight: 700, fontSize: 14 }}>

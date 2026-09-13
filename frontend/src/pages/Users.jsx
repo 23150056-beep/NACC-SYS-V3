@@ -2,14 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api/client';
 import { useActivity } from '../context/ActivityContext';
 import {
-  Card, Button, Alert, Input, Select, FormField, Avatar, RoleBadge, EmptyState,
-  Icon, iconBtn, hoverLift, PAGE, Tabs, Skeleton, Modal, ConfirmDialog, Drawer,
-  Menu, FilterPills, RoleAccessPanel,
+  Alert, Avatar, Button, ConfirmDialog, Drawer, EmptyState, FilterPills, FormField, hoverLift,
+  Icon, iconBtn, Input, Menu, Modal, PAGE, PageHeader, RoleAccessPanel, RoleBadge, Select,
+  Skeleton, Tabs, TOOLBAR,
 } from '../ui';
 import { useToast } from '../context/ToastContext';
 import CredentialHandoffs from './CredentialHandoffs';
 import AccessRequests from './AccessRequests';
 import { exactDate, shortDate, timeAgo } from '../utils/time';
+import { useOpenFromLink } from '../utils/links';
 
 // No password field: the server generates a temporary password on create and
 // returns it exactly once — admins never choose another user's password.
@@ -105,8 +106,8 @@ const COLUMNS = [
   { key: 'last', label: 'Last sign-in', dir: 'desc' },
 ];
 
-const TH = { textAlign: 'left', padding: '11px 16px', fontSize: 11, fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)', whiteSpace: 'nowrap', background: 'var(--surface)', position: 'sticky', top: 0, zIndex: 2, borderBottom: '1px solid var(--border)' };
-const TD = { padding: '13px 16px', fontSize: 13, color: 'var(--text-body)', verticalAlign: 'middle' };
+const TH = { textAlign: 'left', padding: '9px 14px', fontFamily: 'var(--font-sans)', fontSize: 'var(--text-3xs)', fontWeight: 800, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--text-muted)', whiteSpace: 'nowrap', background: 'var(--ink-25)', position: 'sticky', top: 0, zIndex: 2, borderBottom: '1px solid var(--border)' };
+const TD = { padding: '9px 14px', fontSize: 12.5, color: 'var(--text-body)', verticalAlign: 'middle' };
 
 function StatusCell({ state }) {
   const s = LIFECYCLE[state];
@@ -142,7 +143,7 @@ function ActivityRow({ entry }) {
   const label = entry.by_them ? meta.verb : meta.passive;
   const target = entry.entity_label || entry.entity_type || '';
   return (
-    <li style={{ display: 'flex', gap: 10, padding: '9px 0', borderBottom: '1px solid var(--ink-100)' }}>
+    <li style={{ display: 'flex', gap: 10, padding: '9px 0', borderBottom: '1px solid var(--divider-row)' }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, flex: 'none', borderRadius: '50%', background: 'var(--surface)', border: '1px solid var(--border)', color: meta.tint, marginTop: 1 }}>
         <Icon name={meta.icon} size={12} />
       </span>
@@ -175,6 +176,8 @@ function Fact({ label, children }) {
 
 export default function Users() {
   const [tab, setTab] = useState('users');
+  // "Review access" on the Dashboard means the queue, not the directory.
+  useOpenFromLink('tab', 'requests', () => setTab('requests'));
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -351,8 +354,13 @@ export default function Users() {
         await api.post(`/users/${u.id}/archive/`);
         toast.success(`${nameOf(u)} deactivated`);
       } else if (kind === 'reactivate') {
-        await api.post(`/users/${u.id}/reactivate/`);
-        toast.success(`${nameOf(u)} reactivated — they must set a new password at next sign-in`);
+        const { data } = await api.post(`/users/${u.id}/reactivate/`);
+        // Only true where there is a password to change. A colleague who signs
+        // in with Google has none, and telling them to set one sends them
+        // looking for a screen that cannot help them.
+        toast.success(data?.must_change_password
+          ? `${nameOf(u)} reactivated — they must set a new password at next sign-in`
+          : `${nameOf(u)} reactivated — they sign in with Google as before`);
       } else if (kind === 'reset') {
         const { data } = await api.post(`/users/${u.id}/reset-password/`);
         setResetResult({ user: u, temp_password: data.temp_password, email_queued: data.email_queued });
@@ -472,9 +480,20 @@ export default function Users() {
 
   return (
     <div style={{ ...PAGE, position: 'relative' }}>
+      <PageHeader
+        title="User Management"
+        subtitle="Accounts, roles and the access queue — the only access control this system has"
+      >
+        <Button variant="primary" onClick={openCreate} iconLeft={<Icon name="user-plus" size={18} />}>Create account</Button>
+      </PageHeader>
+
+      {/* Tabs, filters and rows in one card: the queue, the directory and the
+          handoffs are three views of the same object, and three separate
+          slabs made them look like three unrelated screens. */}
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-card)', overflow: 'hidden' }}>
       <Tabs
         tabs={[
-          { id: 'users', label: 'Users' },
+          { id: 'users', label: 'Directory', count: counts.all || undefined },
           // Second, not last: someone is waiting on this one, and a queue an
           // administrator has to go looking for is a queue that sits.
           { id: 'requests', label: 'Access Requests', count: counts.requested || undefined },
@@ -482,7 +501,6 @@ export default function Users() {
         ]}
         active={tab}
         onChange={setTab}
-        style={{ marginBottom: 18 }}
       />
 
       {tab === 'requests' ? (
@@ -493,9 +511,10 @@ export default function Users() {
         <CredentialHandoffs />
       ) : (
         <>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
-            <div style={{ width: 340, maxWidth: '100%' }}>
+          <div style={TOOLBAR}>
+            <div style={{ width: 280, maxWidth: '100%' }}>
               <Input
+                size="sm"
                 value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search users"
                 placeholder="Search name, email, contact or role…"
                 leading={<Icon name="search" size={16} />}
@@ -506,10 +525,6 @@ export default function Users() {
                 ) : null}
               />
             </div>
-            <Button variant="primary" onClick={openCreate} iconLeft={<Icon name="user-plus" size={17} />}>Add User</Button>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <FilterPills
                 label="Filter users by account status"
@@ -536,12 +551,13 @@ export default function Users() {
                 </Select>
               </div>
             </div>
-            <div aria-live="polite" style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
+            <span style={{ flex: 1 }} />
+            <div aria-live="polite" style={{ fontWeight: 600, fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
               Showing <strong style={{ color: 'var(--text-strong)' }}>{visible.length}</strong> of {users.length} accounts
             </div>
           </div>
 
-          <Card padding="0">
+          <>
             {loadError ? (
               <div style={{ padding: 20 }}>
                 <Alert tone="danger" title="The directory could not be loaded" icon={<Icon name="wifi-off" size={18} />}>
@@ -577,7 +593,7 @@ export default function Users() {
                   </thead>
                   <tbody>
                     {loading && Array.from({ length: 5 }).map((_, i) => (
-                      <tr key={`skeleton-${i}`} style={{ borderBottom: '1px solid var(--ink-100)' }}>
+                      <tr key={`skeleton-${i}`} style={{ borderBottom: '1px solid var(--divider-row)' }}>
                         <td style={TD}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
                             <Skeleton width={30} height={30} radius="50%" />
@@ -600,19 +616,28 @@ export default function Users() {
                       const off = state === 'deactivated';
                       return (
                         <tr
-                          key={u.id} tabIndex={0} role="button"
-                          aria-label={`${nameOf(u)} — ${u.role_name || 'no role'}, ${LIFECYCLE[state].label}. Open account.`}
+                          key={u.id}
                           onClick={() => openEdit(u)}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEdit(u); } }}
                           onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--blue-50)'; }}
                           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                          style={{ borderBottom: '1px solid var(--ink-100)', cursor: 'pointer', transition: 'background var(--dur-fast) var(--ease-out)', opacity: off ? 0.66 : 1 }}
+                          style={{ borderBottom: '1px solid var(--divider-row)', cursor: 'pointer', transition: 'background var(--dur-fast) var(--ease-out)', opacity: off ? 0.66 : 1 }}
                         >
                           <td style={TD}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 11, minWidth: 0 }}>
                               <Avatar name={nameOf(u)} tone={off ? 'neutral' : toneFor(u.role_name)} size="sm" />
                               <div style={{ minWidth: 0 }}>
-                                <div style={{ fontWeight: 700, fontSize: 13.5, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nameOf(u)}</div>
+                                {/* The focusable thing in the row, rather than
+                                    the row itself. Everything the row's old
+                                    aria-label said is said here, on a control
+                                    a keyboard can actually reach. */}
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); openEdit(u); }}
+                                  aria-label={`${nameOf(u)} — ${u.role_name || 'no role'}, ${LIFECYCLE[state].label}. Open account.`}
+                                  style={{ all: 'unset', cursor: 'pointer', display: 'block', maxWidth: '100%', fontFamily: 'var(--font-sans)', fontWeight: 700, fontSize: 13.5, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                >
+                                  {nameOf(u)}
+                                </button>
                                 <div className="racco-mono" style={{ fontSize: 11.5, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email}</div>
                               </div>
                             </div>
@@ -657,9 +682,10 @@ export default function Users() {
                 </table>
               </div>
             )}
-          </Card>
+          </>
         </>
       )}
+      </div>
 
       {form && (
         <Drawer

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../../api/client';
 import { useToast } from '../../context/ToastContext';
 import { Button, Badge, Select, FormField, Avatar, Icon, iconBtn, hoverLift } from '../../ui';
@@ -15,6 +16,7 @@ import { PURPOSE_LABEL, StatusChip, fmtDay, fmtTime, localDate } from './shared'
 
 export default function ChildDrawer({ child, upcoming = [], canEdit, canTerminate, isAdmin = false, others = [], onEdit, onTerminate, onReopen, onClose }) {
   const toast = useToast();
+  const navigate = useNavigate();
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -23,6 +25,68 @@ export default function ChildDrawer({ child, upcoming = [], canEdit, canTerminat
   // "Next possible sessions" — when can this child next be counseled, given
   // their assigned psychologist's availability. Named function (not an
   // inline effect body) so a later task can re-invoke it after booking.
+  /* The referral documents themselves, not just whether one exists. The list
+     gives a boolean so the chip can paint immediately; this fetch is what lets
+     somebody open the file and check it, and replace it if it is the wrong
+     one — which is the whole point of being able to see it. */
+  const [referrals, setReferrals] = useState(null);
+  const [refBusy, setRefBusy] = useState(false);
+  const [replacing, setReplacing] = useState(null);   // the row being swapped out
+  const referralFileRef = useRef(null);
+  const loadReferrals = useCallback(() => {
+    api.get(`/case-referrals/?child=${child.id}`)
+      .then((r) => setReferrals(r.data))
+      .catch(() => setReferrals([]));
+  }, [child.id]);
+  useEffect(() => { loadReferrals(); }, [loadReferrals]);
+
+  // Straight from the list until the fetch lands, then from the fetch — so the
+  // chip is right the instant the drawer opens AND after an upload, without
+  // waiting for the caseload behind it to be re-fetched.
+  const hasReferral = referrals === null ? !!child.has_case_referral : referrals.length > 0;
+
+  const openReferral = async (row) => {
+    try {
+      const res = await api.get(`/case-referrals/${row.id}/download/`, { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      window.open(url, '_blank', 'noopener');
+      // Revoked on a delay: revoking immediately can beat the new tab to it.
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch {
+      toast.error('Could not open that file.');
+    }
+  };
+
+  /* Replace is upload-then-remove, in that order. If the upload fails the old
+     document is still there, which is the right way round: a child left with
+     no referral cannot be booked, so losing the old one to a failed upload
+     would be worse than keeping a wrong file a minute longer. */
+  const replaceReferral = async (file) => {
+    if (!file || !replacing) return;
+    setRefBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('child', child.id);
+      fd.append('file', file);
+      fd.append('description', 'Case referral');
+      await api.post('/case-referrals/', fd);
+      try {
+        await api.delete(`/case-referrals/${replacing.id}/`);
+      } catch {
+        toast.error('New file uploaded, but the old one could not be removed.');
+      }
+      toast.success('Case referral replaced');
+      setReplacing(null);
+      loadReferrals();
+    } catch (err) {
+      const detail = err.response?.data?.file || err.response?.data?.detail;
+      toast.error(Array.isArray(detail) ? detail[0]
+        : detail || 'Could not upload that file. PDF or Word only.');
+    } finally {
+      setRefBusy(false);
+    }
+  };
+
   const [slots, setSlots] = useState(null);
   const canSuggestSlots = child.status === 'active' && !!child.psychologist_name;
   const loadSlots = useCallback(() => {
@@ -99,7 +163,7 @@ export default function ChildDrawer({ child, upcoming = [], canEdit, canTerminat
           <div className="racco-case-grid">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               {fields.map(([k, v]) => (
-                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, paddingBottom: 12, borderBottom: '1px solid var(--ink-100)' }}>
+                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, paddingBottom: 12, borderBottom: '1px solid var(--divider-row)' }}>
                   <span style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 600 }}>{k}</span>
                   <span style={{ fontSize: 13.5, color: 'var(--text-strong)', fontWeight: 700, textAlign: 'right' }}>{v}</span>
                 </div>
@@ -132,7 +196,7 @@ export default function ChildDrawer({ child, upcoming = [], canEdit, canTerminat
                   {child.recommendation && <p style={{ fontSize: 13, color: 'var(--text-body)', margin: '0 0 10px', lineHeight: 1.55 }}>{child.recommendation}</p>}
                   {[['Referral Source', child.referral_source], ['Educational Placement', child.education_level], ['Current Whereabouts', child.current_placement]]
                     .filter(([, v]) => v).map(([k, v]) => (
-                      <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, paddingBottom: 10, borderBottom: '1px solid var(--ink-100)', marginBottom: 10 }}>
+                      <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, paddingBottom: 10, borderBottom: '1px solid var(--divider-row)', marginBottom: 10 }}>
                         <span style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 600 }}>{k}</span>
                         <span style={{ fontSize: 13.5, color: 'var(--text-strong)', fontWeight: 700, textAlign: 'right' }}>{v}</span>
                       </div>
@@ -151,6 +215,70 @@ export default function ChildDrawer({ child, upcoming = [], canEdit, canTerminat
                   <p style={{ fontSize: 13, color: 'var(--text-body)', margin: 0, lineHeight: 1.55 }}>{child.medical_notes}</p>
                 </div>
               )}
+              {/* Whether this child can be booked at all, said before the
+                  sessions are listed rather than discovered in the booking
+                  form. Sessions are refused without a referral on file, and
+                  the only way to learn that used to be to pick a day and read
+                  the refusal. */}
+              <div>
+                <div className="racco-eyebrow" style={{ fontSize: 10, marginBottom: 8 }}>Case referral</div>
+                {hasReferral ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {/* One row per document, because duplicates happen — an
+                        upload that looked like it failed and was tried again
+                        leaves two, and you cannot tidy what you cannot see. */}
+                    {(referrals || []).map((row) => (
+                      <div key={row.id} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 13px', borderRadius: 'var(--radius-lg)', background: 'var(--success-50, var(--ink-50))', border: '1px solid var(--border)', flexWrap: 'wrap' }}>
+                        <Icon name="check-circle" size={17} style={{ color: 'var(--success-600)', flex: 'none' }} />
+                        <button
+                          type="button"
+                          onClick={() => openReferral(row)}
+                          title="Open this file"
+                          style={{ all: 'unset', cursor: 'pointer', flex: 1, minWidth: 0, fontFamily: 'var(--font-sans)', fontSize: 13, fontWeight: 700, color: 'var(--text-link)', textDecoration: 'underline', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        >
+                          {row.original_filename || 'Case referral'}
+                        </button>
+                        <span style={{ fontSize: 11.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                          {row.uploaded_by_name || '—'} · {(row.created_at || '').slice(0, 10)}
+                        </span>
+                        {canEdit && (
+                          <Button
+                            variant="ghost" size="sm" disabled={refBusy}
+                            onClick={() => { setReplacing(row); referralFileRef.current?.click(); }}
+                            iconLeft={<Icon name="refresh-cw" size={14} />}
+                          >
+                            Replace
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                    {referrals === null && (
+                      <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>On file. Loading the document…</div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 13px', borderRadius: 'var(--radius-lg)', background: 'var(--amber-50, var(--ink-50))', border: '1px solid var(--amber-300, var(--border))', flexWrap: 'wrap' }}>
+                    <Icon name="alert-triangle" size={17} style={{ color: 'var(--amber-600, var(--text-muted))', flex: 'none' }} />
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-strong)' }}>Not uploaded</span>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: 'var(--text-muted)' }}>
+                      No sessions can be booked until it is.
+                    </span>
+                    {canEdit && (
+                      <Button
+                        variant="secondary" size="sm"
+                        onClick={() => navigate(`/reports?upload=1&child=${child.id}`)}
+                        iconLeft={<Icon name="upload" size={14} />}
+                      >
+                        Upload
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+              <input
+                ref={referralFileRef} type="file" accept=".pdf,.doc,.docx" style={{ display: 'none' }}
+                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; replaceReferral(f); }}
+              />
               {upcoming.length > 0 && (
                 <div>
                   <div className="racco-eyebrow" style={{ fontSize: 10, marginBottom: 8 }}>Upcoming appointments</div>

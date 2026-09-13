@@ -8,6 +8,14 @@ Every imported child is reassigned to a psychologist that exists here. The
 fixture's assignee ids belong to the local machine and mean nothing on the
 branch — left alone, every child would point at the wrong person or at nobody,
 and a caseload nobody can see is not a demo.
+
+It also finishes the job, because loading rows is not the same as loading a
+working system. Booking refuses a child with no case referral and a
+psychologist with no posted hours, and the fixture carries neither: referrals
+are files rather than rows, and availability belongs to the accounts on the
+branch, not to the seeder's. `fix_demo_schedule` repairs both and refuses to
+run against a hosted database — so without this, a deployed demo had no
+supported way to become bookable at all.
 """
 import json
 
@@ -18,6 +26,8 @@ from django.db import transaction
 
 from accounts.models import Role
 from children.models import Child
+from clinical import demo_referrals
+from scheduling import demo_schedule
 
 
 class Command(BaseCommand):
@@ -66,6 +76,17 @@ class Command(BaseCommand):
         for index, child in enumerate(imported):
             child.assigned_psychologist = psychologists[index % len(psychologists)]
         Child.objects.bulk_update(imported, ["assigned_psychologist"])
+
+        # Rows alone are not a working demo. Both of these are what the
+        # booking endpoint checks, and the fixture can carry neither: a
+        # referral is a file, and availability belongs to the accounts that
+        # live on this database rather than the seeder's.
+        blocks = demo_schedule.install_availability(psychologists)
+        self.stdout.write(f"  availability: {blocks} block(s) added")
+        referrals = demo_referrals.install_referrals(
+            list(Child.objects.filter(status=Child.ACTIVE)),
+            uploaded_by=User.objects.filter(role__role_name=Role.STAFF).first())
+        self.stdout.write(f"  case referrals: {referrals} written")
 
         if email:
             user = User.objects.get(email=email)

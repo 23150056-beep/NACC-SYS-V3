@@ -12,6 +12,7 @@ from activity.models import ActivityLog
 from activity.services import log_activity
 from children.models import Child, TerminationRecord
 from children.notifications import send_assignment_notification
+from accounts.sms_notifications import notify_new_assignment
 from children.serializers import ChildSerializer
 
 
@@ -68,6 +69,7 @@ class ChildViewSet(_ArchivableViewSet):
         self._log(obj, ActivityLog.CREATED)
         if getattr(obj, "assigned_psychologist", None) is not None:
             send_assignment_notification(obj)
+            notify_new_assignment(obj)
 
     def perform_update(self, serializer):
         # Read the old assignee before save() overwrites it: the email is for a
@@ -77,6 +79,7 @@ class ChildViewSet(_ArchivableViewSet):
         self._log(obj, ActivityLog.UPDATED)
         if obj.assigned_psychologist_id and obj.assigned_psychologist_id != old:
             send_assignment_notification(obj)
+            notify_new_assignment(obj)
 
     def get_queryset(self):
         # Inactive (terminated) cases stay reachable by id - the profile view
@@ -88,7 +91,11 @@ class ChildViewSet(_ArchivableViewSet):
         else:
             qs = super().get_queryset()
         # consents feed the derived pre_assessment_status (No Consent Yet, …).
-        qs = qs.prefetch_related("pre_assessments__instruments", "terminations", "consents")
+        # case_referrals joins the prefetch so has_case_referral costs one
+        # query for the page rather than one per child — the list returns
+        # the whole caseload on several screens.
+        qs = qs.prefetch_related("pre_assessments__instruments", "terminations",
+                                 "consents", "case_referrals")
         # psychologist_name is rendered on every row, so without this the list
         # costs an extra query per child: 47 for 40 children, against 7 with
         # it. The guardian join went with guardian_name — nothing reads it.

@@ -78,6 +78,7 @@ INSTALLED_APPS = [
     "activity",
     "samd",
     "assistant",
+    "adoption",
 ]
 
 MIDDLEWARE = [
@@ -196,6 +197,12 @@ STATIC_ROOT = Path(os.getenv("STATIC_ROOT", BASE_DIR / "staticfiles"))
 # via urlpatterns, and the S3 bucket below stays private for the same reason.
 MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", BASE_DIR / "media"))
 MEDIA_URL = "media/"
+
+# Django isolates the test database and not the test files. Without this, a
+# test that saves a FileField writes into MEDIA_ROOT above and leaves it
+# there — 1,485 orphans had collected under media/case-referrals.
+TEST_RUNNER = "config.test_runner.IsolatedMediaRunner"
+
 FILE_UPLOAD_MAX_MEMORY_SIZE = int(
     os.getenv("FILE_UPLOAD_MAX_MB", "15")
 ) * 1024 * 1024
@@ -382,6 +389,44 @@ LOGGING = {
 BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
 BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL", "racco1nacc@gmail.com")
 BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME", "NACC RACCO1")
+
+# --- SMS (temporary passwords, assignments, session reminders) -------------
+#
+# Unset provider = "console": messages are written to the log and no gateway is
+# contacted. That is the default on purpose. A missing key should not crash a
+# save, and it should not silently do nothing either — the log line says
+# exactly what would have been sent.
+#
+# SMS_PROVIDER is the only thing that changes to move gateways. "semaphore" is
+# a Philippine aggregator reaching every local network over domestic
+# interconnects; a global CPaaS charges roughly ten times as much per message
+# into the Philippines for the same delivery, because international A2P
+# termination here is expensive.
+#
+# The same data rule as the mail applies, and harder: no child names, no case
+# details, no passwords. A text sits unencrypted on a lock screen.
+SMS_PROVIDER = os.getenv("SMS_PROVIDER", "console")
+SMS_API_KEY = os.getenv("SMS_API_KEY", "")
+# Unset means "whatever the chosen provider's own URL is" - see
+# accounts/sms.py DEFAULT_ENDPOINTS. It used to default to Semaphore's URL
+# for every provider, so switching gateway without also changing this
+# posted the new provider's payload at the old provider.
+SMS_ENDPOINT = os.getenv("SMS_ENDPOINT", "")
+# The name a message appears to come from. Has to be registered with the
+# gateway first; unset means their default shared sender.
+SMS_SENDER_NAME = os.getenv("SMS_SENDER_NAME", "")
+# Only meaningful for the "textbee" provider, and only when more than one
+# handset is paired. Unset sends from whichever phone was most recently
+# active, which is the right answer when there is exactly one.
+SMS_DEVICE_ID = os.getenv("SMS_DEVICE_ID", "")
+
+# The shared token that lets a scheduler trigger the daily session reminder.
+# Render's free plan has no cron, so the job is exposed as an endpoint and
+# something free calls it — see docs/CLOUD-DEPLOYMENT.md §9c.
+#
+# Unset means the endpoint 404s. An unconfigured deployment has no extra
+# surface, which is the right default for a route that takes no login.
+SESSION_REMINDER_TOKEN = os.getenv("SESSION_REMINDER_TOKEN", "")
 
 
 # ---- Hosted model (optional; the demo deployment only) --------------------

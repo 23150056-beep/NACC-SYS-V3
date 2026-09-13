@@ -2,7 +2,7 @@ import { useState } from 'react';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { Button, FormField, Input, Alert, Icon } from '../ui';
+import { Button, FormField, PasswordInput, Alert, Icon } from '../ui';
 
 // Full-screen "set a new password" card, styled like the Login page's card
 // views. Used in two places: right after a login whose response carries
@@ -12,7 +12,7 @@ import { Button, FormField, Input, Alert, Icon } from '../ui';
 // The server enforces the lockout independently (accounts/authentication.py);
 // this is just the compliant path out of it.
 export default function PasswordChangeGate({ prefillCurrent = '', title = 'Set a new password', subtitle, onDone }) {
-  const { updateUser } = useAuth();
+  const { updateUser, logout } = useAuth();
   const toast = useToast();
   const [current, setCurrent] = useState(prefillCurrent);
   const [next, setNext] = useState('');
@@ -27,7 +27,15 @@ export default function PasswordChangeGate({ prefillCurrent = '', title = 'Set a
     if (next !== confirm) { setError('Passwords do not match.'); return; }
     setBusy(true);
     try {
-      await api.post('/auth/change-password/', { current_password: current, new_password: next });
+      const { data } = await api.post('/auth/change-password/', { current_password: current, new_password: next });
+      // Every token minted under the old password stopped working the moment
+      // it changed, so carrying on with this session is not an option the
+      // server leaves open — signing back in is the only way forward.
+      if (data?.reauthenticate) {
+        toast.success('Password updated. Please sign in with your new password.');
+        logout();
+        return;
+      }
       updateUser({ must_change_password: false });
       toast.success('Password updated.');
       if (onDone) onDone();
@@ -51,13 +59,13 @@ export default function PasswordChangeGate({ prefillCurrent = '', title = 'Set a
         <form onSubmit={submit} style={{ marginTop: 22, display: 'flex', flexDirection: 'column', gap: 16 }}>
           {error && <Alert tone="danger" icon={<Icon name="alert-triangle" size={18} />}>{error}</Alert>}
           <FormField label="Current Password">
-            <Input type="password" value={current} onChange={(e) => setCurrent(e.target.value.replace(/\s/g, ''))} placeholder="••••••••" leading={<Icon name="lock" size={16} />} required autoFocus={!prefillCurrent} />
+            <PasswordInput value={current} onChange={(e) => setCurrent(e.target.value.replace(/\s/g, ''))} placeholder="••••••••" leading={<Icon name="lock" size={16} />} required autoFocus={!prefillCurrent} />
           </FormField>
           <FormField label="New Password">
-            <Input type="password" value={next} onChange={(e) => setNext(e.target.value.replace(/\s/g, ''))} placeholder="••••••••" leading={<Icon name="lock-keyhole" size={16} />} required autoFocus={!!prefillCurrent} />
+            <PasswordInput value={next} onChange={(e) => setNext(e.target.value.replace(/\s/g, ''))} placeholder="••••••••" leading={<Icon name="lock-keyhole" size={16} />} required autoFocus={!!prefillCurrent} />
           </FormField>
           <FormField label="Confirm New Password">
-            <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value.replace(/\s/g, ''))} placeholder="••••••••" leading={<Icon name="lock-keyhole" size={16} />} required />
+            <PasswordInput value={confirm} onChange={(e) => setConfirm(e.target.value.replace(/\s/g, ''))} placeholder="••••••••" leading={<Icon name="lock-keyhole" size={16} />} required />
           </FormField>
           <Button type="submit" variant="primary" size="lg" fullWidth disabled={busy} iconRight={busy ? null : <Icon name="check" size={18} />}>
             {busy ? 'Updating…' : 'Set New Password'}

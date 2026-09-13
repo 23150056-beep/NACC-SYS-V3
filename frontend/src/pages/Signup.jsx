@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Input, FormField, Alert, Icon, ROLE_META } from '../ui';
+import { Button, Input, PasswordInput, FormField, Alert, Icon, ROLE_META } from '../ui';
 import AuthLayout, { AuthLink } from '../components/AuthLayout';
 import GoogleSignInButton from '../components/GoogleSignInButton';
 import { useAuth } from '../context/AuthContext';
@@ -59,11 +59,19 @@ export default function Signup() {
   // every psychologist who clicked Google first was silently filed as
   // claiming to be Staff.
   const [role, setRole] = useState(null);
-  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [done, setDone] = useState(false);
+  // The address has to be proved before an administrator can approve the
+  // request — approval emails a temporary password, and an unverified address
+  // is one that credential could be handed to by mistake. Until the code is
+  // entered the request sits in the queue and cannot be approved, so this step
+  // is not optional decoration.
+  const [code, setCode] = useState('');
+  const [codeError, setCodeError] = useState('');
+  const [verified, setVerified] = useState(false);
+  const [verifying, setVerifying] = useState(false);
 
   const set = (k) => (e) => {
     const value = k === 'password' ? e.target.value.replace(/\s/g, '') : e.target.value;
@@ -127,6 +135,54 @@ export default function Signup() {
       setBusy(false);
     }
   };
+
+  const verify = async (e) => {
+    e.preventDefault();
+    setCodeError('');
+    setVerifying(true);
+    try {
+      await api.post('/auth/signup/verify-email/', { email: form.email, code });
+      setVerified(true);
+    } catch (err) {
+      setCodeError(err.response?.data?.detail
+        || 'That code is not right, or it has expired.');
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  if (done && !verified) {
+    return (
+      <AuthLayout
+        title="Confirm your email"
+        heading="Confirm your email"
+        subheading={`We sent a six-digit code to ${form.email}.`}
+        footer={<AuthLink to="/login">Back to sign in</AuthLink>}
+      >
+        <form onSubmit={verify} className="racco-auth-stack"
+              style={{ marginTop: 'clamp(12px, 2vh, 22px)', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {codeError && (
+            <Alert tone="danger" icon={<Icon name="alert-triangle" size={18} />}>{codeError}</Alert>
+          )}
+          <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: 'var(--text-body)' }}>
+            Your request is in the queue, but an administrator cannot approve it
+            until the address is confirmed &mdash; approval sends a temporary
+            password to it.
+          </p>
+          <FormField label="Six-digit code" required>
+            <Input
+              value={code} onChange={(e) => setCode(e.target.value)}
+              inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+              placeholder="000000"
+            />
+          </FormField>
+          <Button type="submit" variant="primary" fullWidth disabled={verifying || code.length < 6}>
+            {verifying ? 'Checking…' : 'Confirm my email'}
+          </Button>
+        </form>
+      </AuthLayout>
+    );
+  }
 
   if (done) {
     return (
@@ -267,22 +323,10 @@ export default function Signup() {
           </FormField>
 
           <FormField label="Password" error={fieldErrors.password}>
-            <Input
-              type={showPassword ? 'text' : 'password'}
+            <PasswordInput
               value={form.password} onChange={set('password')}
               placeholder="••••••••"
               autoComplete="new-password"
-              leading={<Icon name="lock" size={16} />}
-              trailing={(
-                <button type="button" onClick={() => setShowPassword((v) => !v)}
-                        title={showPassword ? 'Hide password' : 'Show password'}
-                        aria-label={showPassword ? 'Hide password' : 'Show password'}
-                        style={{ display: 'inline-flex', alignItems: 'center', padding: 2,
-                                 border: 'none', background: 'none',
-                                 color: 'var(--text-faint)', cursor: 'pointer' }}>
-                  <Icon name={showPassword ? 'eye-off' : 'eye'} size={17} />
-                </button>
-              )}
               required
             />
           </FormField>
@@ -290,7 +334,7 @@ export default function Signup() {
           {/* Says what is still missing rather than only that it is wrong. */}
           {form.password && (
             <div style={{ marginTop: -6 }}>
-              <div style={{ height: 4, borderRadius: 3, background: 'var(--ink-100)', overflow: 'hidden' }}>
+              <div style={{ height: 4, borderRadius: 3, background: 'var(--divider-row)', overflow: 'hidden' }}>
                 <div style={{ height: '100%', width: `${strength?.pct || 0}%`,
                               background: strength?.tone, transition: 'width var(--dur-fast) var(--ease-out)' }} />
               </div>

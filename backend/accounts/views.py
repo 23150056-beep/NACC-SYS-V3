@@ -7,6 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import Count, Q
 
@@ -14,6 +15,7 @@ from accounts.google_auth import (
     AccessRequestPending, SignupThrottled, link_google_account,
     resolve_google_user, verify_google_credential,
 )
+from accounts import email_verification
 from accounts.lockout import client_ip, clear_failures, is_locked, register_failure
 from accounts.models import Role, UserProfile
 from accounts import signup_limit
@@ -28,6 +30,12 @@ from activity.models import ActivityLog
 from activity.serializers import ActivityLogSerializer
 from activity.services import log_activity
 from children.notifications import send_temporary_password_notification
+from accounts.sms_notifications import (
+    notify_temporary_password, start_phone_verification,
+    confirm_phone_verification)
+from accounts.sms import check_gateway, send_sms
+from accounts.phone import (normalise_ph_mobile, InvalidPhilippineMobile,
+                            as_typed as phone_as_typed)
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +148,38 @@ class GoogleLoginView(generics.GenericAPIView):
         }, status=status.HTTP_200_OK)
 
 
+class VerifySignupEmailView(generics.GenericAPIView):
+    """Confirm a typed address by the code mailed to it.
+
+    Open, and it has to be: the applicant cannot sign in — a PENDING account is
+    refused by design — so there is no session to authenticate this against.
+    What protects it is that the code is six digits, short-lived, guess-limited
+    and burned on use.
+
+    Every failure reads the same from outside, for the reason the sign-up form
+    gives one refusal for every address already spoken for: a different answer
+    would turn this into a way to ask whether somebody works at the agency.
+    """
+
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+    serializer_class = None
+
+    def post(self, request):
+        email = (request.data.get("email") or "").strip().lower()
+        ok, message = email_verification.confirm(email, request.data.get("code"))
+        if not ok:
+            return Response({"detail": message}, status=status.HTTP_400_BAD_REQUEST)
+        user = User.objects.filter(email__iexact=email).first()
+        if user is None:
+            # A confirmed code with no row behind it: nothing to mark, and
+            # saying so would leak which addresses exist.
+            return Response({"detail": message}, status=status.HTTP_200_OK)
+        user.email_verified = True
+        user.save(update_fields=["email_verified", "updated_at"])
+        return Response({"detail": message}, status=status.HTTP_200_OK)
+
+
 class SignupView(generics.GenericAPIView):
     """Open sign-up: creates a request, never an account with access.
 
@@ -177,6 +217,10 @@ class SignupView(generics.GenericAPIView):
 
         user = serializer.save()
         signup_limit.register_attempt(ip)
+        # A typed address is only what somebody typed. Approval emails a
+        # temporary password, so the address has to be proved before an
+        # administrator can hand a credential to a typo.
+        email_verification.start(user.email)
         log_activity(
             None, ActivityLog.CREATED, ActivityLog.SECURITY,
             entity_type="User",
@@ -261,7 +305,12 @@ class ChangePasswordView(generics.GenericAPIView):
         log_activity(
             request.user, ActivityLog.UPDATED, ActivityLog.SECURITY,
             entity_type="User", entity_label="Changed own password", entity_id=request.user.id)
-        return Response({"detail": "Password changed."}, status=status.HTTP_200_OK)
+        # Every token minted under the old password stopped working the moment
+        # it changed - see accounts/token_auth.py. Saying so here means the two
+        # screens that change a password do not each decide for themselves
+        # whether to sign the person out.
+        return Response({"detail": "Password changed.", "reauthenticate": True},
+                        status=status.HTTP_200_OK)
 
 
 class MyProfileView(generics.RetrieveUpdateAPIView):
@@ -283,6 +332,133 @@ class MyProfileView(generics.RetrieveUpdateAPIView):
     def get_object(self):
         profile, _ = UserProfile.objects.get_or_create(user=self.request.user)
         return profile
+
+
+class MyPhoneView(generics.GenericAPIView):
+    """Your own mobile number: set it, and prove it is yours.
+
+    Bound to request.user and taking no id, like the profile endpoint beside
+    it. POST starts verification by texting a code; PUT confirms one.
+
+    Kept off the ordinary user-edit path on purpose. An administrator can type
+    a number into somebody's record, but only the person holding the handset
+    can mark it verified, and only a verified number ever gets a message.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = None
+
+    def get(self, request):
+        user = request.user
+        return Response({
+            "phone": user.phone,
+            "phone_display": phone_as_typed(user.phone),
+            "phone_verified": user.phone_verified,
+        })
+
+    def post(self, request):
+        """Send a code to the number supplied."""
+        try:
+            number = normalise_ph_mobile(request.data.get("phone"))
+        except InvalidPhilippineMobile as exc:
+            return Response({"phone": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        if not number:
+            return Response({"phone": "Enter your mobile number."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        result = start_phone_verification(request.user, number)
+        if not result.ok:
+            # The gateway's own words. A code that never arrives with no
+            # explanation is how the mail integration cost a day.
+            return Response({"detail": result.detail},
+                            status=status.HTTP_502_BAD_GATEWAY)
+        return Response({"detail": f"We sent a code to {phone_as_typed(number)}. "
+                                   f"It expires in 10 minutes."},
+                        status=status.HTTP_200_OK)
+
+    def put(self, request):
+        """Confirm the code, which is what marks the number usable."""
+        ok, message = confirm_phone_verification(
+            request.user, request.data.get("code"))
+        if not ok:
+            return Response({"code": message}, status=status.HTTP_400_BAD_REQUEST)
+        log_activity(request.user, ActivityLog.UPDATED, ActivityLog.SECURITY,
+                     entity_type="User", entity_label="Verified own mobile number",
+                     entity_id=request.user.id)
+        return Response({"detail": message,
+                         "phone": request.user.phone,
+                         "phone_display": phone_as_typed(request.user.phone),
+                         "phone_verified": True}, status=status.HTTP_200_OK)
+
+    def delete(self, request):
+        """Stop texts without waiting for an administrator."""
+        user = request.user
+        user.phone = ""
+        user.phone_verified = False
+        user.save(update_fields=["phone", "phone_verified", "updated_at"])
+        return Response({"detail": "Number removed. You will not get text "
+                                   "notifications.", "phone": "",
+                         "phone_verified": False}, status=status.HTTP_200_OK)
+
+
+class SmsConfigTestView(generics.GenericAPIView):
+    """Ask the gateway, and print exactly what it says.
+
+    The mirror of the email test button, and it exists for the same reason:
+    every SMS send is fire-and-forget on a background thread, so a refused
+    message looks precisely like a delivered one from the outside. This is
+    synchronous, and it reports the gateway's own words.
+
+    Sends only to the administrator's own verified number — a diagnostic that
+    can text arbitrary numbers is a diagnostic somebody will point at a
+    stranger.
+    """
+
+    permission_classes = [IsAdministrator]
+    serializer_class = None
+
+    def get(self, request):
+        """Confirm the key and the balance without spending a message.
+
+        GET asks, POST sends - which is the ordinary meaning of both verbs and
+        also the order somebody should do them in. PhilSMS ships five free
+        credits and has no sandbox, so the key has to be diagnosable without
+        burning one, and this needs no verified handset either: requiring one
+        first is what made a bad key hard to tell from a bad number.
+        """
+        result = check_gateway()
+        return Response({
+            "ok": result.ok,
+            "detail": result.detail,
+            "provider": settings.SMS_PROVIDER or "console",
+            "sender": settings.SMS_SENDER_NAME or "(the gateway default)",
+        }, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        user = request.user
+        if not user.phone:
+            return Response(
+                {"ok": False,
+                 "detail": "Add your own mobile number first — this sends the "
+                           "test to you, not to anyone else."},
+                status=status.HTTP_400_BAD_REQUEST)
+        # A different reference each time. The gateway's own guidance is that
+        # repeatedly sending nearly identical text to one number is classified
+        # as spam by the telcos, and this is the single message an
+        # administrator sends over and over while getting the key right.
+        reference = f"{secrets.randbelow(1_000_000):06d}"
+        result = send_sms(
+            user.phone,
+            f"NACC SYS: test message {reference}. If you can read this, text "
+            f"notifications are working.",
+            "configuration test")
+        return Response({
+            "ok": result.ok,
+            "detail": result.detail,
+            "provider": settings.SMS_PROVIDER,
+            "sender": settings.SMS_SENDER_NAME or "(the gateway default)",
+            "recipient": phone_as_typed(user.phone),
+        }, status=status.HTTP_200_OK)
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -348,10 +524,13 @@ class UserViewSet(viewsets.ModelViewSet):
             update_fields.append("admin_takeover_pending")
         user.save(update_fields=update_fields)
         email_queued = send_temporary_password_notification(user, temp_password)
+        # The password travels by email only. This says one is waiting.
+        sms_queued = notify_temporary_password(user)
         self._log(user, ActivityLog.CREATED)
         data = UserSerializer(user).data
         data["temp_password"] = temp_password
         data["email_queued"] = email_queued
+        data["sms_queued"] = sms_queued
         return Response(data, status=status.HTTP_201_CREATED)
 
     def perform_update(self, serializer):
@@ -383,7 +562,16 @@ class UserViewSet(viewsets.ModelViewSet):
         The old password is left working — an account is usually deactivated
         when someone leaves, so it is flagged for a forced change instead:
         whoever comes back signs in once with the old credentials and has to
-        set a new password before they reach any case data."""
+        set a new password before they reach any case data.
+
+        That flag is set only where there is a password to change. An account
+        created through the Google door has `set_unusable_password()`, and the
+        gate the flag raises asks for the CURRENT password and checks it with
+        `check_password()` — which no value can satisfy on an unusable one. So
+        flagging a Google colleague on the way back in forced nothing and shut
+        them out for good; the only route back was a new account. They
+        re-authenticate with Google, which is the credential they actually
+        have."""
         user = self.get_object()
         if user.status != User.ARCHIVED:
             return Response({"detail": "This account is already active."},
@@ -404,10 +592,13 @@ class UserViewSet(viewsets.ModelViewSet):
                            "Access Requests instead."},
                 status=status.HTTP_400_BAD_REQUEST)
         user.status = User.ACTIVE
-        user.must_change_password = True
+        user.must_change_password = user.has_usable_password()
         user.save(update_fields=["status", "must_change_password", "updated_at"])
         self._log(user, ActivityLog.UPDATED)
-        return Response({"status": user.status}, status=status.HTTP_200_OK)
+        return Response(
+            {"status": user.status,
+             "must_change_password": user.must_change_password},
+            status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["get"])
     def activity(self, request, pk=None):
@@ -450,6 +641,17 @@ class UserViewSet(viewsets.ModelViewSet):
         if user.status != User.PENDING:
             return Response({"detail": "This account is not awaiting approval."},
                             status=status.HTTP_400_BAD_REQUEST)
+        # Approving emails a temporary password. An address nobody has proved
+        # exists is an address that credential may be handed to by mistake, so
+        # the check bites here rather than merely showing beside the row.
+        # Google requests arrive verified — Google checked the address.
+        if not user.email_verified:
+            return Response(
+                {"detail": "This applicant has not confirmed their email "
+                           "address yet, and approving would send a temporary "
+                           "password to an address nobody has verified. Ask "
+                           "them to enter the code sent when they registered."},
+                status=status.HTTP_400_BAD_REQUEST)
 
         role_id = request.data.get("role")
         if not role_id:
@@ -523,9 +725,13 @@ class UserViewSet(viewsets.ModelViewSet):
         user.must_change_password = True
         user.save(update_fields=["password", "must_change_password", "updated_at"])
         email_queued = send_temporary_password_notification(user, temp_password)
+        # The password travels by email only. This says one is waiting.
+        sms_queued = notify_temporary_password(user)
         self._log(user, ActivityLog.UPDATED)
-        return Response({"temp_password": temp_password, "email_queued": email_queued},
-                status=status.HTTP_200_OK)
+        return Response({"temp_password": temp_password,
+                         "email_queued": email_queued,
+                         "sms_queued": sms_queued},
+                        status=status.HTTP_200_OK)
 
 
 class RoleListView(generics.ListAPIView):
