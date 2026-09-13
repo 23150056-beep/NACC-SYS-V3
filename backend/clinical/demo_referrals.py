@@ -13,10 +13,21 @@ built against it inherits the difference.
 Each document says in its own first line that it is invented. A file that
 reads like a genuine referral is a file somebody eventually mistakes for one,
 and this one is about a child who does not exist.
+
+Written as a PDF because that is what the upload form accepts. As .txt these
+satisfied the booking gate while the form would have refused the same file —
+one system giving two answers about whether a referral is valid, which only
+shows when somebody tries to replace one.
 """
 from django.core.files.base import ContentFile
 
+from clinical.demo_pdf import build_pdf
 from clinical.models import CaseReferral
+
+# How this seeder recognises its own work. Only a document carrying this
+# exact description may be replaced — anything else might be a real referral
+# somebody scanned, and that is not this module's to touch.
+DEMO_DESCRIPTION = "Case referral (demonstration document)"
 
 TEMPLATE = """CASE REFERRAL — DEMONSTRATION DOCUMENT
 
@@ -51,18 +62,34 @@ def install_referrals(children, uploaded_by=None):
     """
     made = 0
     for child in children:
-        if CaseReferral.objects.filter(child=child).exists():
-            continue
+        existing = list(CaseReferral.objects.filter(child=child))
+        if existing:
+            # Databases seeded before this wrote .txt, which the upload form
+            # refuses — so the file satisfied the booking gate while the form
+            # would have rejected the very same document. The seeder may
+            # replace what it wrote itself, and nothing else: an upload that
+            # did not come from here might be a real scan.
+            stale = [r for r in existing
+                     if r.description == DEMO_DESCRIPTION
+                     and not (r.original_filename or "").lower().endswith(".pdf")]
+            if len(stale) != len(existing):
+                continue
+            for row in stale:
+                row.file.delete(save=False)
+                row.delete()
         slug = "".join(c if c.isalnum() else "-" for c in child.fullname).strip("-").lower()
-        filename = f"case-referral-{slug or child.pk}.txt"
+        filename = f"case-referral-{slug or child.pk}.pdf"
+        body = build_text(child)
         referral = CaseReferral(
             child=child,
             uploaded_by=uploaded_by,
             original_filename=filename,
-            description="Case referral (demonstration document)",
-            extracted_text=build_text(child),
+            description=DEMO_DESCRIPTION,
+            # The text is kept alongside the PDF so the document-summary path
+            # has something to read without a PDF parser.
+            extracted_text=body,
         )
-        referral.file.save(filename, ContentFile(build_text(child).encode("utf-8")),
+        referral.file.save(filename, ContentFile(build_pdf(body.splitlines())),
                            save=False)
         referral.save()
         made += 1

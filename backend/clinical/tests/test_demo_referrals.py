@@ -62,6 +62,36 @@ class InstallReferralsTest(TestCase):
         self.assertEqual(existing.pk,
                          CaseReferral.objects.get(child=self.children[0]).pk)
 
+    def test_it_upgrades_a_demo_document_it_wrote_as_txt(self):
+        """Databases seeded before this wrote .txt, which the upload form
+        refuses. The seeder may replace its OWN artifacts."""
+        from django.core.files.base import ContentFile
+        stale = CaseReferral.objects.create(
+            child=self.children[0],
+            original_filename="case-referral-ana-lopez.txt",
+            description=demo_referrals.DEMO_DESCRIPTION,
+        )
+        stale.file.save("case-referral-ana-lopez.txt", ContentFile(b"old text"), save=True)
+
+        demo_referrals.install_referrals(self.children, uploaded_by=self.staff)
+
+        fresh = CaseReferral.objects.get(child=self.children[0])
+        self.assertTrue(fresh.original_filename.endswith(".pdf"))
+        self.assertEqual(1, CaseReferral.objects.filter(child=self.children[0]).count())
+
+    def test_it_never_replaces_a_document_somebody_uploaded(self):
+        """The guard on the above. A real referral is not this seeder's to
+        overwrite, whatever extension it happens to have."""
+        real = CaseReferral.objects.create(
+            child=self.children[0],
+            original_filename="scan-from-the-office.txt",
+            description="Uploaded by the social worker",
+        )
+        demo_referrals.install_referrals(self.children, uploaded_by=self.staff)
+        kept = CaseReferral.objects.get(child=self.children[0])
+        self.assertEqual(real.pk, kept.pk)
+        self.assertEqual("scan-from-the-office.txt", kept.original_filename)
+
     def test_the_document_says_it_is_invented(self):
         demo_referrals.install_referrals(self.children, uploaded_by=self.staff)
         referral = CaseReferral.objects.get(child=self.children[0])

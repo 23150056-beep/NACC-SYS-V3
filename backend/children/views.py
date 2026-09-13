@@ -91,7 +91,11 @@ class ChildViewSet(_ArchivableViewSet):
         else:
             qs = super().get_queryset()
         # consents feed the derived pre_assessment_status (No Consent Yet, …).
-        qs = qs.prefetch_related("pre_assessments__instruments", "terminations", "consents")
+        # case_referrals joins the prefetch so has_case_referral costs one
+        # query for the page rather than one per child — the list returns
+        # the whole caseload on several screens.
+        qs = qs.prefetch_related("pre_assessments__instruments", "terminations",
+                                 "consents", "case_referrals")
         # psychologist_name is rendered on every row, so without this the list
         # costs an extra query per child: 47 for 40 children, against 7 with
         # it. The guardian join went with guardian_name — nothing reads it.
